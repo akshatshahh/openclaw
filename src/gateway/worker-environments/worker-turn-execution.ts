@@ -41,7 +41,10 @@ import { prepareWorkerDesktopLaunchPlan } from "./worker-desktop-launch-plan.js"
 import { boundedWorkerError } from "./worker-error.js";
 import type { WorkerGatewayToolRuntime } from "./worker-gateway-tool-contract.js";
 import { createWorkerGatewayToolRuntime } from "./worker-gateway-tool-runtime.js";
-import { prepareWorkerGitHubBinding } from "./worker-github-binding.js";
+import {
+  prepareWorkerGitHubBindingGrant,
+  type WorkerGitHubBindingGrant,
+} from "./worker-github-binding.js";
 import { createWorkerReplyMedia } from "./worker-reply-media.js";
 import { resolveWorkerToolAuthority } from "./worker-tool-authority.js";
 import { releaseClaimIfOwned, waitForTurnOperation } from "./worker-turn-admission.js";
@@ -104,11 +107,8 @@ export async function executeWorkerTurn(
     assertCurrent: () =>
       !turn.abortSignal?.aborted && params.placements.validateTurnClaim(params.turnClaim),
   };
-  const [github, githubPublicationAvailable] = await raceNodeWorkerOperation(
-    Promise.all([
-      prepareWorkerGitHubBinding(githubContext),
-      prepareGitHubPublicationAvailability(githubContext),
-    ]),
+  const githubPublicationAvailable = await raceNodeWorkerOperation(
+    prepareGitHubPublicationAvailability(githubContext),
     turn.abortSignal,
   );
   params.assertRunCurrent?.();
@@ -335,6 +335,7 @@ export async function executeWorkerTurn(
       throw new Error("Worker tool surface owner changed");
     }
   };
+  let githubGrant: WorkerGitHubBindingGrant | undefined;
   try {
     const isAuthorized = () => {
       try {
@@ -354,6 +355,13 @@ export async function executeWorkerTurn(
     if (!bootstrapReceipt.protocolFeatures.includes(WORKER_GATEWAY_TOOLS_PROTOCOL_FEATURE)) {
       throw new StaleWorkerBuildError();
     }
+    githubGrant = await prepareWorkerGitHubBindingGrant({
+      sessionId: placement.sessionId,
+      sessionKey: placement.sessionKey,
+      agentId: placement.agentId,
+      assertCurrent: isAuthorized,
+    });
+    const github = githubGrant?.binding;
     const skillWorkshop = turn.skillLibraryAuthoring
       ? createLibrarySkillWorkshopTool({ ...turn.skillLibraryAuthoring, defaultTarget: "personal" })
       : undefined;
@@ -699,6 +707,7 @@ export async function executeWorkerTurn(
       startedAt,
     });
   } finally {
+    await githubGrant?.revoke();
     await toolRuntime?.close();
     stopWatchingClaim();
     stopWatchingRun();
