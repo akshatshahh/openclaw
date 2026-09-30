@@ -23,7 +23,6 @@ import { createLibrarySkillWorkshopTool } from "../../agents/tools/skill-worksho
 import { resolveProviderThinkingLevel } from "../../auto-reply/thinking.js";
 import { registerAgentRunDelegatedAuthorityClosedHandler } from "../../infra/agent-run-registry.js";
 import { logInfo } from "../../logger.js";
-import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import { prepareSkillResourceDelivery } from "../../skills/runtime/resources.js";
 import { parseWorkerLaunchPlan } from "../../worker/launch-descriptor.js";
@@ -73,8 +72,6 @@ import {
   type executeRemoteExecTurn,
   recoverWorkspaceBeforeTurn,
 } from "./workspace-result-finalize.js";
-
-const log = createSubsystemLogger("gateway/worker-turn");
 
 export async function executeWorkerTurn(
   params: Omit<Parameters<typeof executeRemoteExecTurn>[0], "environments" | "runLocal"> & {
@@ -303,9 +300,11 @@ export async function executeWorkerTurn(
   assertActive();
   const authority = runtimeIdentity.approvalAuthority;
   const authorityAbort = new AbortController();
-  const signal = turn.abortSignal
-    ? AbortSignal.any([turn.abortSignal, authorityAbort.signal])
-    : authorityAbort.signal;
+  const signal = AbortSignal.any(
+    [turn.abortSignal, operatorAuthority?.signal, authorityAbort.signal].filter(
+      (source): source is AbortSignal => source !== undefined,
+    ),
+  );
   const cancel = () => authorityAbort.abort(new Error("Worker turn authority closed"));
   // Keep exact closure wired through transfer and launch dispatch, including awaited
   // node readiness. The workspace/tunnel lifetime alone outlives this admitted turn.
@@ -361,12 +360,17 @@ export async function executeWorkerTurn(
     }
     githubGrant = await prepareWorkerGitHubBindingGrant({
       operatorAuthority,
+      signal,
       requireOperatorAuthority: true,
       sessionId: placement.sessionId,
       sessionKey: placement.sessionKey,
       agentId: placement.agentId,
       assertCurrent: isAuthorized,
     });
+    if (signal.aborted) {
+      await githubGrant?.revoke();
+      signal.throwIfAborted();
+    }
     const github = githubGrant?.binding;
     const skillWorkshop = turn.skillLibraryAuthoring
       ? createLibrarySkillWorkshopTool({ ...turn.skillLibraryAuthoring, defaultTarget: "personal" })
@@ -675,7 +679,11 @@ export async function executeWorkerTurn(
         turnClaim: params.turnClaim,
         timeoutMs: turn.timeoutMs,
         credentialExpiresAtMs: credential.expiresAtMs,
-        signal: AbortSignal.any([signal, handoffAbort.signal]),
+        signal: AbortSignal.any(
+          [signal, handoffAbort.signal, githubGrant?.signal].filter(
+            (source): source is AbortSignal => source !== undefined,
+          ),
+        ),
         onDispatchReady,
       });
     } finally {
@@ -702,6 +710,9 @@ export async function executeWorkerTurn(
       baseLeafId,
       promptContext,
       prepareReplyMedia,
+      revokeExecutionCredentials: async () => {
+        await githubGrant?.revoke();
+      },
       takeFinishingOutcome: () => takeFinishingOutcome(credential.deliveryId),
       settleSteering: async () => {
         if (steering.lease) {
@@ -713,13 +724,9 @@ export async function executeWorkerTurn(
       startedAt,
     });
   } finally {
+    await githubGrant?.revoke();
     await toolRuntime?.close();
     stopWatchingClaim();
     stopWatchingRun();
-    try {
-      await githubGrant?.revoke();
-    } catch {
-      log.warn("Worker GitHub token revocation failed; the installation token will expire.");
-    }
   }
 }
