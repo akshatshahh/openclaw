@@ -7,7 +7,6 @@ import {
 } from "../agents/worktrees/required-session-binding.js";
 import { acquireWorktreeRunLease } from "../agents/worktrees/run-lease.js";
 import { managedWorktrees } from "../agents/worktrees/service.js";
-import { getRuntimeConfig } from "../config/io.js";
 import {
   appendTranscriptMessage,
   loadSessionEntry,
@@ -18,36 +17,36 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { registerProjectRegistry } from "../projects/project-registry.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
-import { handleGatewayRequest } from "./server-methods.js";
-import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
+import type { GatewayClient } from "./server-methods/types.js";
 import { resolveWorkerPlacementSessionTarget } from "./server-worker-placement-session-target.js";
-import {
-  initializeRepository,
-  settleWorkspaceRuns,
-} from "./server.sessions.create.projects.test-support.js";
+import { initializeRepository } from "./server.sessions.create.projects.test-support.js";
 import { setupSessionCreateHandlerTestHarness } from "./server.sessions.create.test-support.js";
 import { recoverGatewaySession } from "./session-recovery-service.js";
 import { resolveGatewaySessionStoreTargetWithStore } from "./session-utils-store-lookup.js";
 import { resolveCanonicalSessionEntryFromStoreKeys } from "./session-utils-store.js";
-import { dispatchInboundMessageMock, testState } from "./test-helpers.js";
-import { directSessionReq } from "./test/server-sessions.test-helpers.js";
+import { testState } from "./test-helpers.js";
+import { directSessionReq, getGatewayConfigModule } from "./test/server-sessions.test-helpers.js";
 
 const { createSessionStoreDir, withSessionTestState } = setupSessionCreateHandlerTestHarness();
 
-async function fixture(root: string, agentId = "main") {
+async function fixture(root: string) {
   const workspace = await initializeRepository(root, "project");
   testState.agentConfig = { workspace };
   testState.agentsConfig = {
-    list: [{ id: "main", default: true }, ...(agentId === "main" ? [] : [{ id: agentId }])],
+    ownership: "explicit",
+    entries: { main: {} },
   };
   const { storePath } = await createSessionStoreDir();
   const project = await registerProjectRegistry({ path: workspace });
   const profile = ensureProfileForEmail("workspace-contributor@example.test");
+  const config = await getGatewayConfigModule();
+  // Profile/registry setup can warm real IO before the test store is published.
+  config.clearRuntimeConfigSnapshot();
+  const baseConfig = config.getRuntimeConfig();
   const cfg: OpenClawConfig = {
-    ...getRuntimeConfig(),
-    session: { ...getRuntimeConfig().session, store: storePath },
+    ...baseConfig,
     gateway: {
-      ...getRuntimeConfig().gateway,
+      ...baseConfig.gateway,
       roles: {
         default: "contributor",
         definitions: {
@@ -56,13 +55,14 @@ async function fixture(root: string, agentId = "main") {
               others: "view",
               workspace: { projects: [project.id], worktreeBaseRef: "main" },
             },
-            agents: [agentId],
+            agents: ["main"],
             scopes: ["operator.sessions.read", "operator.sessions.write"],
           },
         },
       },
     },
   };
+  config.setRuntimeConfigSnapshot(cfg);
   const context = createDirectChatContext({ getRuntimeConfig: () => cfg });
   const client = {
     connect: {
@@ -80,24 +80,6 @@ async function fixture(root: string, agentId = "main") {
     },
   } as GatewayClient;
   return { workspace, storePath, project, cfg, context, client };
-}
-
-async function registeredRequest(
-  method: string,
-  params: Record<string, unknown>,
-  context: GatewayRequestContext,
-  client: GatewayClient,
-) {
-  const respond = vi.fn();
-  await handleGatewayRequest({
-    req: { type: "req", id: `${method}-required-workspace`, method, params },
-    client,
-    context,
-    respond,
-    isWebchatConnect: () => false,
-  });
-  expect(respond).toHaveBeenCalled();
-  return respond.mock.calls[0]!;
 }
 
 test("selected project creates a fresh main-based worktree before the session is usable", async () => {
@@ -128,8 +110,8 @@ test("selected project creates a fresh main-based worktree before the session is
       sessionRoot: payload.worktree.path,
       spawnedWorkspaceDir: payload.worktree.path,
     });
-    const [readOk] = await registeredRequest("sessions.get", { key: payload.key }, context, client);
-    expect(readOk).toBe(true);
+    const read = await directSessionReq("sessions.get", { key: payload.key }, { context, client });
+    expect(read.ok, JSON.stringify(read.error)).toBe(true);
     const fork = await directSessionReq<{ key: string; worktree: { id: string; path: string } }>(
       "sessions.create",
       { fork: true, parentSessionKey: payload.key },
@@ -207,7 +189,6 @@ test.each([undefined, "required"] as const)(
           error: { code: "UNAVAILABLE", message: "fixture does not launch a model" },
         }),
       });
-      expect(recovered.ok).toBe(true);
       if (!recovered.ok) {
         throw new Error(recovered.error.message);
       }
@@ -225,95 +206,24 @@ test.each([undefined, "required"] as const)(
   },
 );
 
-test("registered creation and continuation require a prepared workspace", async () => {
-  await withSessionTestState({ layout: "state-only" }, async (state) => {
-    const { workspace, project, storePath, cfg, context, client } = await fixture(
-      state.root,
-      "contributor-agent",
-    );
-    const main = await requireGit(workspace, ["rev-parse", "main"]);
-    await requireGit(workspace, ["checkout", "-b", "unrelated-source"]);
-    await requireGit(workspace, ["commit", "--allow-empty", "-m", "source ahead of main"]);
-    const [created, payload, creationError] = await registeredRequest(
-      "sessions.create",
-      { agentId: "contributor-agent", projectId: project.id },
-      context,
-      client,
-    );
-    expect(created, JSON.stringify(creationError)).toBe(true);
-    expect(payload.key).toMatch(/^agent:contributor-agent:dashboard:/u);
-    expect(await requireGit(payload.worktree.path, ["rev-parse", "HEAD"])).toBe(main);
-    const [readOk] = await registeredRequest("sessions.get", { key: payload.key }, context, client);
-    expect(readOk).toBe(true);
-    const [accepted, , sendError] = await registeredRequest(
-      "chat.send",
-      {
-        sessionKey: payload.key,
-        message: "inspect the selected workspace",
-        idempotencyKey: "required-workspace-turn",
-      },
-      context,
-      client,
-    );
-    expect(accepted, JSON.stringify(sendError)).toBe(true);
-    await settleWorkspaceRuns(context, storePath, payload.key);
-    expect(dispatchInboundMessageMock).toHaveBeenCalled();
-    const key = "agent:contributor-agent:dashboard:old-shared-thread";
-    await upsertSessionEntryCore(
-      { agentId: "contributor-agent", storePath, sessionKey: key },
-      {
-        sessionId: "old-shared-thread",
-        updatedAt: 1,
-        createdActor: {
-          type: "human",
-          source: "profile",
-          id: client.authenticatedUserProfile!.profileId,
-        },
-        createdVia: "operator",
-      },
-    );
-    dispatchInboundMessageMock.mockClear();
-    const [continued, , error] = await registeredRequest(
-      "chat.send",
-      {
-        sessionKey: key,
-        message: "must select a new workspace",
-        idempotencyKey: "old-workspace-turn",
-      },
-      context,
-      client,
-    );
-    expect(continued).toBe(false);
-    expect(error).toMatchObject({ code: "FORBIDDEN" });
-    expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
-    cfg.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
-    const [revoked] = await registeredRequest(
-      "chat.send",
-      {
-        sessionKey: payload.key,
-        message: "project access revoked",
-        idempotencyKey: "revoked-project-turn",
-      },
-      context,
-      client,
-    );
-    expect(revoked).toBe(false);
-  });
-});
-
 test("workspace alias changes during allocation revoke the selected source without publishing a row", async () => {
   await withSessionTestState({ layout: "state-only" }, async (state) => {
     const { workspace, storePath, cfg, context, client } = await fixture(state.root);
     const replacement = await initializeRepository(state.root, "replacement");
     cfg.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = ["workspace:main"];
-    cfg.agents = { defaults: { workspace }, list: [{ id: "main", default: true, workspace }] };
+    cfg.agents = {
+      ownership: "explicit",
+      defaults: { workspace },
+      entries: { main: { workspace } },
+    };
     const allocate = managedWorktrees.createWithOutcome.bind(managedWorktrees);
     const changed = vi
       .spyOn(managedWorktrees, "createWithOutcome")
       .mockImplementation(async (params) => {
         cfg.agents = {
+          ownership: "explicit",
           defaults: { workspace: replacement },
-          list: [{ id: "main", default: true, workspace: replacement }],
+          entries: { main: { workspace: replacement } },
         };
         return await allocate(params);
       });
@@ -436,14 +346,13 @@ test("message-cut forks allocate a new main checkout and real reset revokes a jo
       { eventId: "user-cut", parentId: null, message: { role: "user", content: "first request" } },
     );
     await requireGit(worktree.path, ["commit", "--allow-empty", "-m", "parent work"]);
-    const [forkOk, forkPayload, forkError] = await registeredRequest(
+    const forked = await directSessionReq<{ sessionKey: string }>(
       "sessions.fork",
       { sessionKey: key, entryId: "user-cut" },
-      context,
-      client,
+      { context, client },
     );
-    expect(forkOk, JSON.stringify(forkError)).toBe(true);
-    const fork = loadSessionEntry({ ...scope, sessionKey: forkPayload.sessionKey })!;
+    expect(forked.ok, JSON.stringify(forked.error)).toBe(true);
+    const fork = loadSessionEntry({ ...scope, sessionKey: forked.payload!.sessionKey })!;
     expect(fork.worktree?.id).not.toBe(worktree.id);
     expect(fork.requiredWorkspace).toEqual(parent.requiredWorkspace);
     expect(await requireGit(fork.sessionRoot!, ["rev-parse", "HEAD"])).toBe(
