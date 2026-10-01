@@ -66,11 +66,13 @@ function requesterProfile(text: string) {
 }
 
 describe("prepareChatSendUserTurn", () => {
-  it.each(["user", "system", "synthetic", "unverified"] as const)(
+  it.each(["user", "system", "synthetic", "unverified", "disconnected"] as const)(
     "carries only authenticated user input from the real chat producer into admission: %s",
     async (kind) => {
       const { controller } = createUserTurnInputController("hello");
+      const connection = new AbortController();
       const client = {
+        connectionSignal: connection.signal,
         authenticatedUserProfile: { profileId: "source", hasAvatar: false, updatedAt: 1 },
         internal: kind === "synthetic" ? { syntheticClient: true as const } : undefined,
         connect: {
@@ -113,6 +115,7 @@ describe("prepareChatSendUserTurn", () => {
         logGateway: { warn: vi.fn() } as never,
         userTurn: controller,
       });
+      if (kind === "disconnected") connection.abort();
       const admission = prepareChannelRunAdmission({
         cfg: {},
         runId: `foreground-${kind}`,
@@ -123,7 +126,11 @@ describe("prepareChatSendUserTurn", () => {
       });
       try {
         const context = await admission.admit("embedded");
-        if (kind === "user") {
+        if (kind === "disconnected") {
+          // Accepted staff work retains its existing source owner after disconnect.
+          // Tightening this same run to an immutable foreground session still fails.
+          expect(() => requireAdmittedRunForeground(context)).toThrow("no longer active");
+        } else if (kind === "user") {
           expect(() => requireAdmittedRunForeground(context)).not.toThrow();
         } else {
           expect(() => requireAdmittedRunForeground(context)).toThrow(

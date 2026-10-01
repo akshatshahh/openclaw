@@ -14,7 +14,7 @@ import {
 import { combineForegroundUserRequests, getForegroundUserRequest } from "./foreground-request.js";
 import { requireAdmittedRunForeground } from "./run-execution-policy.js";
 
-function acceptedInput() {
+function acceptedInput(assertCurrent: () => void = () => {}) {
   const client = {};
   attachGatewayLocalUserIngress(
     client,
@@ -26,7 +26,7 @@ function acceptedInput() {
     }),
   );
   const input = {};
-  bindGatewayForegroundUserRequest(client, input, () => {});
+  bindGatewayForegroundUserRequest(client, input, assertCurrent);
   return getForegroundUserRequest({ ...input });
 }
 
@@ -44,6 +44,38 @@ const restricted = () =>
   });
 
 describe("accepted foreground input", () => {
+  it("leaves ordinary queued admissions unclaimed until a session requires foreground execution", async () => {
+    let current = true;
+    const request = acceptedInput(() => {
+      if (!current) throw new Error("source retired");
+    });
+    const prepare = (runId: string) =>
+      prepareChannelRunAdmission({
+        cfg: {},
+        runId,
+        agentId: "main",
+        ingressKind: "channel",
+        boundary: "test",
+        foregroundRequest: request,
+      });
+    const first = prepare("staff-first");
+    const delayed = prepare("staff-delayed");
+    try {
+      const firstContext = await first.admit("embedded");
+      current = false;
+      const delayedContext = await delayed.admit("embedded");
+      expect(() => requireAdmittedRunForeground(delayedContext)).toThrow("source retired");
+      current = true;
+      requireAdmittedRunForeground(firstContext);
+      expect(() => requireAdmittedRunForeground(delayedContext)).toThrow(
+        "another foreground request",
+      );
+    } finally {
+      await first.close();
+      await delayed.close();
+    }
+  });
+
   it.each(["heartbeat", "cron", "restart", "continuation"])(
     "does not grant execution from a live %s admission or retained operator",
     async (boundary) => {

@@ -22,7 +22,10 @@ import {
 import type { GatewayAccessGrantRef } from "../plugins/gateway-access-policy.types.js";
 import { prepareGatewayContextBindingOwner } from "../plugins/runtime/gateway-context-binding-owner.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import { claimForegroundUserRequest, type ForegroundUserRequest } from "./foreground-request.js";
+import {
+  prepareForegroundUserRequestClaim,
+  type ForegroundUserRequest,
+} from "./foreground-request.js";
 import type { PreparedOperatorModelPolicy } from "./operator-model-policy.types.js";
 
 /** Operational lifecycle correlation. This is never identity or authorization evidence. */
@@ -601,7 +604,7 @@ export function prepareAgentRunAdmission(params: {
           ...(params.recovery ? { recovery: params.recovery } : {}),
         });
         const foregroundRequest = !params.recovery
-          ? claimForegroundUserRequest(params.foregroundRequest, operationalRunInstance)
+          ? prepareForegroundUserRequestClaim(params.foregroundRequest, operationalRunInstance)
           : undefined;
         bindAdmittedRunDelegatedAuthority(
           context,

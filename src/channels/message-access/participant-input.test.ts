@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { createAdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import { getForegroundUserRequest } from "../../agents/foreground-request.js";
 import { requireAdmittedRunForeground } from "../../agents/run-execution-policy.js";
 import { prepareChannelRunAdmission } from "../../auto-reply/reply/channel-run-admission.js";
@@ -23,7 +24,7 @@ vi.mock("../../sessions/session-participant-recording.js", () => ({
   recordSessionParticipantBestEffort: recordParticipant,
 }));
 
-it.each(["user", "heartbeat", "system", "retired"] as const)(
+it.each(["user", "heartbeat", "system", "retired", "retired-role"] as const)(
   "admits foreground work only from current verified channel input with audit disabled: %s",
   async (kind) => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
@@ -70,7 +71,7 @@ it.each(["user", "heartbeat", "system", "retired"] as const)(
         channelIngress: ingress,
       });
       expect(readChannelContextAdmissionEvidence(context)).toBeUndefined();
-      live = kind !== "retired";
+      live = !kind.startsWith("retired");
       const admission = prepareChannelRunAdmission({
         cfg: {},
         runId: `channel-${kind}`,
@@ -78,13 +79,29 @@ it.each(["user", "heartbeat", "system", "retired"] as const)(
         ingressKind: "channel",
         boundary: "test",
         foregroundRequest: getForegroundUserRequest({ ...context }),
+        operatorAuthority:
+          kind === "retired-role"
+            ? createAdmittedRunOperatorAuthority({
+                profileId: "source",
+                scopes: ["operator.write"],
+                assertCurrent() {},
+                rolePolicy: {
+                  sessionAccessCap: "none",
+                  sandboxRequired: true,
+                  agents: "*",
+                  execution: "foreground-only",
+                },
+              })
+            : undefined,
       });
       try {
-        if (kind === "retired") {
+        if (kind === "retired-role") {
           await expect(admission.admit("embedded")).rejects.toThrow("no longer active");
         } else {
           const admitted = await admission.admit("embedded");
-          if (kind === "user") {
+          if (kind === "retired") {
+            expect(() => requireAdmittedRunForeground(admitted)).toThrow("no longer active");
+          } else if (kind === "user") {
             expect(() => requireAdmittedRunForeground(admitted)).not.toThrow();
           } else {
             expect(() => requireAdmittedRunForeground(admitted)).toThrow(

@@ -40,22 +40,22 @@ export function combineForegroundUserRequests(
     : undefined;
 }
 
-/** A request belongs to one operational incarnation; retries reuse that exact owner. */
-export function claimForegroundUserRequest(
+/** Claim only when foreground policy is required; ordinary queued work keeps its existing lifetime. */
+export function prepareForegroundUserRequestClaim(
   request: ForegroundUserRequest | undefined,
   owner: OperationalRunInstanceRef,
 ): (() => void) | undefined {
   const batch = request && sources.get(request);
   if (!batch) return undefined;
-  const assertCurrent = () => {
+  return () => {
     for (const source of batch) {
       if (source.owner && source.owner !== owner) {
         throw new Error("User input already belongs to another foreground request.");
       }
       source.assertCurrent();
     }
+    // Validate every collected source before atomically claiming the batch.
+    // A retry may keep its incarnation; another restricted run cannot reuse it.
+    for (const source of batch) source.owner = owner;
   };
-  assertCurrent();
-  for (const source of batch) source.owner = owner;
-  return assertCurrent;
 }
