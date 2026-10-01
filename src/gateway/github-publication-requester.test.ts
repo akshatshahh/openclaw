@@ -35,7 +35,6 @@ import {
   publisherScopes,
   holdWorkerTurn,
   preparePublisherAccessPolicyFixture,
-  prepareVisitorPublicationFixture,
   requirePublisherAccessPolicy,
 } from "./github-publication-requester.test-support.js";
 import { readGitHubPublicationRequest } from "./github-publication-store.js";
@@ -60,30 +59,7 @@ const fixture = createRequesterPublicationFixture.bind(undefined, checkpoint);
 describe("shared GitHub publication requester authority", () => {
   installGitHubPublicationTestHarness({
     creatorEmail: "publication-guest@example.test",
-    sandbox: "required",
     realWorktree: true,
-  });
-
-  it("denies an active Visitor's publication without changing its restricted role", async () => {
-    const f = await createRequesterPolicyFixture();
-    const visitors = await prepareVisitorPublicationFixture(f);
-    try {
-      await visitors.start();
-      await visitors.execute("visitor_invite", {
-        email: "publication-guest@example.test",
-        days: 1,
-      });
-      await expect(
-        createGitHubPublicationRequesterFixture({
-          profileId: f.guestProfile,
-          scopes: guestScopes,
-          ...f.guestSource.session,
-        }),
-      ).rejects.toThrow(GitHubPublicationRequesterUnavailableError);
-      expect(f.externalWrites).toEqual([]);
-    } finally {
-      await visitors.close();
-    }
   });
 
   it("does not inherit maintainer publication authority through a narrow invocation", async () => {

@@ -1,5 +1,6 @@
 import { GATEWAY_OWNER_PROFILE_ID } from "../../packages/gateway-protocol/src/schema/users.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getGatewayRestartDrainSignal } from "../process/gateway-work-admission.js";
 import { roleScopesAllow } from "../shared/operator-scope-compat.js";
 import {
   decodeGitHubPublicationRequester,
@@ -68,6 +69,13 @@ export type GitHubPublicationRequester = GitHubPublicationRequesterPolicy &
   Readonly<{
     /** An accepted row keeps its own policy while the current invocation retains its fences. */
     assertInvocationCurrent: () => void;
+    requiresReview?: boolean;
+    /** Only a live captured source can transfer a bounded candidate confirmation. */
+    retainForReview?: () => {
+      requester: GitHubPublicationRequester;
+      signal: AbortSignal;
+      release: () => void;
+    };
   }>;
 
 function prepareRequesterPolicy(
@@ -178,10 +186,19 @@ export async function captureGitHubPublicationRequester(
   const source = await captureGatewayOperatorRunAuthority(options);
   let identity: PreparedProfileIdentity | undefined;
   let sessionFacts: PreparedPublicationSession | undefined;
-  const release = () => {
+  let references = 1;
+  let released = false;
+  const releaseReference = () => {
+    references -= 1;
+    if (references !== 0) return;
     sessionFacts?.release();
     identity?.release();
     source?.release();
+  };
+  const release = () => {
+    if (released) return;
+    released = true;
+    releaseReference();
   };
   try {
     const actor = source
@@ -235,6 +252,7 @@ export async function captureGitHubPublicationRequester(
     );
     const assertInvocationCurrent = () => {
       try {
+        if (released) throw new GitHubPublicationRequesterUnavailableError();
         options.signal?.throwIfAborted();
         if (options.hasCurrentClientAuthority?.() === false) {
           throw new GitHubPublicationRequesterUnavailableError();
@@ -247,11 +265,51 @@ export async function captureGitHubPublicationRequester(
     };
     const requester = Object.freeze({
       snapshot,
+      requiresReview: source?.authority.rolePolicy?.sandboxRequired === true,
       assertInvocationCurrent,
       assertCurrent: () => {
         assertInvocationCurrent();
         assertPolicy();
         assertInvocationCurrent();
+      },
+      retainForReview: () => {
+        requester.assertCurrent();
+        if (!source) throw new GitHubPublicationRequesterUnavailableError();
+        const lifetime = new AbortController();
+        const signals = [source.authority.signal, getGatewayRestartDrainSignal()];
+        references += 1;
+        const release = () => {
+          if (lifetime.signal.aborted) return;
+          lifetime.abort(new GitHubPublicationRequesterUnavailableError());
+          for (const signal of signals) signal.removeEventListener("abort", release);
+          releaseReference();
+        };
+        for (const signal of signals) signal.addEventListener("abort", release, { once: true });
+        if (signals.some((signal) => signal.aborted)) release();
+        const assertSource = () => {
+          lifetime.signal.throwIfAborted();
+          source.authority.assertCurrent();
+          lifetime.signal.throwIfAborted();
+        };
+        // The accepted publication owns this hold. The completed tool/RPC no longer
+        // owns its lifetime, but original source, role, grant and session policy still do.
+        const held = Object.freeze({
+          snapshot,
+          requiresReview: requester.requiresReview,
+          assertInvocationCurrent: assertSource,
+          assertCurrent: () => {
+            assertSource();
+            assertPolicy();
+            assertSource();
+          },
+        });
+        try {
+          held.assertCurrent();
+          return { requester: held, signal: lifetime.signal, release };
+        } catch (error) {
+          release();
+          throw error;
+        }
       },
     });
     requester.assertCurrent();

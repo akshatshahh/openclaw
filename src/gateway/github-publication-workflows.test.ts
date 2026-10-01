@@ -169,31 +169,66 @@ describe("accepted GitHub workflow publication", () => {
                 agentId: "main",
                 sessionKey: SESSION_KEY,
                 ...(original ? { operatorAuthority: original.authority } : {}),
-                operationalRunInstance: {
-                  instanceId: "publication-tool",
-                  runId: "publication-run",
-                },
                 receiptAuthority: () => original?.authority.assertCurrent(),
                 gatewayContextResolver: () => context,
               },
-              async () =>
-                route === "tool"
-                  ? (await createGitHubPublishTool().execute(operation, {})).details
-                  : await callGatewayTool(
-                      "sessions.github.publish",
+              async () => {
+                if (route === "tool") {
+                  const tool = createGitHubPublishTool();
+                  if (!allowed) return (await tool.execute(operation, {})).details;
+                  const prepared = (
+                    await tool.execute(`${operation}-prepare`, { action: "prepare" })
+                  ).details as { reviewId: string; digest: string };
+                  const review = { reviewId: prepared.reviewId, digest: prepared.digest };
+                  let offset: number | null = 0;
+                  do {
+                    const page = (
+                      await tool.execute(`${operation}-diff-${offset}`, {
+                        action: "diff",
+                        review,
+                        offset,
+                      })
+                    ).details as { nextOffset: number | null };
+                    offset = page.nextOffset;
+                  } while (offset !== null);
+                  return (await tool.execute(operation, { action: "confirm", review })).details;
+                }
+                const authority =
+                  route === "gateway"
+                    ? undefined
+                    : {
+                        scopes:
+                          route === "gateway-empty"
+                            ? []
+                            : route === "gateway-write"
+                              ? ["operator.write"]
+                              : ["operator.sessions.write"],
+                      };
+                const prepared = allowed
+                  ? ((await callGatewayTool(
+                      "sessions.github.review",
                       {},
-                      { sessionKey: SESSION_KEY, idempotencyKey: operation },
-                      route === "gateway"
-                        ? undefined
-                        : {
-                            scopes:
-                              route === "gateway-empty"
-                                ? []
-                                : route === "gateway-write"
-                                  ? ["operator.write"]
-                                  : ["operator.sessions.write"],
-                          },
-                    ),
+                      {
+                        sessionKey: SESSION_KEY,
+                        action: "prepare",
+                        idempotencyKey: `candidate:${operation}`,
+                      },
+                      authority,
+                    )) as { reviewId: string; digest: string })
+                  : undefined;
+                return await callGatewayTool(
+                  "sessions.github.publish",
+                  {},
+                  {
+                    sessionKey: SESSION_KEY,
+                    idempotencyKey: operation,
+                    ...(prepared
+                      ? { review: { reviewId: prepared.reviewId, digest: prepared.digest } }
+                      : {}),
+                  },
+                  authority,
+                );
+              },
             ),
         );
         if (!allowed) {
@@ -211,7 +246,29 @@ describe("accepted GitHub workflow publication", () => {
         );
       } else {
         const respond = vi.fn();
-        const params = { sessionKey: SESSION_KEY, idempotencyKey: operation };
+        const params: {
+          sessionKey: string;
+          idempotencyKey: string;
+          review?: { reviewId: string; digest: string };
+        } = { sessionKey: SESSION_KEY, idempotencyKey: operation };
+        if (allowed) {
+          const prepared = vi.fn();
+          await handleGatewayRequest({
+            req: {
+              type: "req",
+              id: `prepare:${operation}`,
+              method: "sessions.github.review",
+              params: { ...params, action: "prepare" },
+            },
+            context,
+            client,
+            isWebchatConnect: () => false,
+            respond: prepared,
+          });
+          expect(prepared).toHaveBeenCalledWith(true, expect.objectContaining({ status: "ready" }));
+          const candidate = prepared.mock.calls[0]![1];
+          params.review = { reviewId: candidate.reviewId, digest: candidate.digest };
+        }
         await handleGatewayRequest({
           req: { type: "req", id: operation, method: "sessions.github.publish", params },
           context,
@@ -242,22 +299,24 @@ describe("accepted GitHub workflow publication", () => {
     },
   );
 
-  it("checks the accepted tree while leaving later workflow edits unpublished", async () => {
+  it("rejects workflow edits introduced after review without publishing them", async () => {
     const f = await createRequesters();
     const workspace = f.local;
     const file = path.join(workspace.cwd, ".github/workflows/later.yml");
+    const reviewed = await f.reviewedRequest("immutable-workflows", f.publisher);
     const resolveRepository = mocks.resolveRepository.getMockImplementation()!;
     mocks.resolveRepository.mockImplementationOnce(async () => {
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.writeFile(file, workflow);
       return await resolveRepository();
     });
-    expect(
-      await f.coordinator.requestForSession(f.request("immutable-workflows", f.publisher)),
-    ).toMatchObject({ status: "published" });
+    expect(await f.coordinator.requestForSession(reviewed)).toMatchObject({
+      status: "failed",
+      code: "workspace_changed",
+    });
     expect(await workspace.git("ls-tree", "HEAD", ".github/workflows")).toBe("");
     expect(await fs.readFile(file, "utf8")).toBe(workflow);
-    expect(workspace.effects).toEqual(["push", "pull_request"]);
+    expect(workspace.effects).toEqual([]);
   });
 
   it("rechecks publication authority before push while settling an accepted local commit", async () => {
@@ -266,6 +325,7 @@ describe("accepted GitHub workflow publication", () => {
     const file = path.join(workspace.cwd, ".github/workflows/example.yml");
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, workflow);
+    const reviewed = await f.reviewedRequest("permission-before-push", f.maintainer);
     const transport = mocks.runCommand.getMockImplementation()!;
     mocks.runCommand.mockImplementation(async (args, options) => {
       const result = await transport(args, options);
@@ -275,9 +335,10 @@ describe("accepted GitHub workflow publication", () => {
       }
       return result;
     });
-    expect(
-      await f.coordinator.requestForSession(f.request("permission-before-push", f.maintainer)),
-    ).toMatchObject({ status: "failed", code: "identity_changed" });
+    expect(await f.coordinator.requestForSession(reviewed)).toMatchObject({
+      status: "failed",
+      code: "identity_changed",
+    });
     expect(workspace.effects).toEqual([]);
     expect(await workspace.git("show", "HEAD:.github/workflows/example.yml")).toBe(workflow.trim());
     expect(await workspace.git("diff", "--cached", "HEAD")).toBe("");
@@ -291,6 +352,7 @@ describe("accepted GitHub workflow publication", () => {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, workflow);
     const head = await workspace.git("rev-parse", "HEAD");
+    const reviewed = await f.reviewedRequest("permission-before-cas", f.maintainer);
     const transport = mocks.runCommand.getMockImplementation()!;
     mocks.runCommand.mockImplementation(async (args, options) => {
       const result = await transport(args, options);
@@ -300,9 +362,10 @@ describe("accepted GitHub workflow publication", () => {
       }
       return result;
     });
-    await expect(
-      f.coordinator.requestForSession(f.request("permission-before-cas", f.maintainer)),
-    ).resolves.toMatchObject({ status: "failed", code: "identity_changed" });
+    await expect(f.coordinator.requestForSession(reviewed)).resolves.toMatchObject({
+      status: "failed",
+      code: "identity_changed",
+    });
     expect(workspace.effects).toEqual([]);
     expect(await workspace.git("rev-parse", "HEAD")).toBe(head);
     await expect(fs.stat(path.join(workspace.cwd, ".git/index.lock"))).rejects.toMatchObject({
@@ -321,6 +384,7 @@ describe("accepted GitHub workflow publication", () => {
     const file = path.join(f.local.cwd, ".github/workflows/example.yml");
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, workflow);
+    const reviewed = await f.reviewedRequest("publisher-at-push", f.maintainer);
     const execute = publicationExecutor.executeGitHubPublication;
     let publisherRevoked = false;
     const intercepted = vi
@@ -339,9 +403,9 @@ describe("accepted GitHub workflow publication", () => {
       );
     onTestFinished(() => intercepted.mockRestore());
 
-    await expect(
-      f.coordinator.requestForSession(f.request("publisher-at-push", f.maintainer)),
-    ).rejects.toThrow(GitHubPublicationRecoveryPendingError);
+    await expect(f.coordinator.requestForSession(reviewed)).rejects.toThrow(
+      GitHubPublicationRecoveryPendingError,
+    );
     expect(publisherRevoked).toBe(true);
     expect(f.maintainer.assertCurrent).not.toThrow();
     expect(f.local.effects).toEqual([]);

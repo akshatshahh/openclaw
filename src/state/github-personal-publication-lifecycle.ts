@@ -115,7 +115,8 @@ export function deletePersonalGitHubSessionReceiptsInDatabase(
     "github_repository_publication_requests",
   ] as const;
   const existing = tables.filter((table) => tableExists(database.db, table));
-  if (existing.length === 0 || params.sessionKeys.length === 0) {
+  const hasReviews = tableExists(database.db, "github_publication_review_candidates");
+  if ((existing.length === 0 && !hasReviews) || params.sessionKeys.length === 0) {
     return;
   }
   runOpenClawStateWriteTransaction(
@@ -126,6 +127,25 @@ export function deletePersonalGitHubSessionReceiptsInDatabase(
         { lookup: "logical" },
       );
       const query = getNodeSqliteKysely<DB>(db);
+      // Archive retains review history. Permanent deletion removes only captured
+      // incarnations, never a replacement conversation that reused the key.
+      if (hasReviews) {
+        for (const generation of params.generations) {
+          executeSqliteQuerySync(
+            db,
+            query
+              .deleteFrom("github_publication_review_candidates")
+              .where("agent_id", "=", params.agentId)
+              .where("session_key", "=", generation.sessionKey)
+              .where("session_id", "=", generation.sessionId)
+              .where(
+                "lifecycle_revision",
+                generation.lifecycleRevision === null ? "is" : "=",
+                generation.lifecycleRevision,
+              ),
+          );
+        }
+      }
       const hasLifecycles = tableExists(db, "github_publication_session_lifecycles");
       const current = readSessionReceiptDeletionIdentitiesInDatabase(database, params);
       for (const table of existing) {

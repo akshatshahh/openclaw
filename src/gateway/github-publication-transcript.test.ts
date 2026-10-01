@@ -23,6 +23,38 @@ afterEach(() => {
 });
 
 describe("GitHub publication transcript reporting", () => {
+  it("keeps a delayed review request out of a replacement transcript generation", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const identity = {
+        agentId: "main",
+        sessionKey: "agent:main:review",
+        sessionId: "review-generation",
+      };
+      await upsertSessionEntryCore(identity, {
+        sessionId: identity.sessionId,
+        updatedAt: 1,
+        lifecycleRevision: "current-generation",
+      });
+      const markReported = vi.fn();
+      const report = createGitHubPublicationTranscriptReporter(() => import("./session-utils.js"), {
+        markReported,
+      });
+      const result = {
+        requestId: "review-request",
+        status: "requested" as const,
+        message: "Review requested.",
+      };
+      for (const lifecycleRevision of [null, "previous-generation"]) {
+        await expect(report({ ...identity, lifecycleRevision, result })).rejects.toThrow(
+          "generation changed",
+        );
+      }
+      expect(markReported).not.toHaveBeenCalled();
+      expect(await loadTranscriptEvents(identity)).toEqual([]);
+      await report({ ...identity, lifecycleRevision: "current-generation", result });
+      expect(markReported).toHaveBeenCalledWith(result.requestId);
+    });
+  });
   it.each(
     [
       {

@@ -241,6 +241,7 @@ export function insertGitHubPublicationRequest(
     identity: Pick<PreparedGitHubPublicationIdentity, "source" | "profileId" | "account">;
     claim?: WorkerSessionTurnClaim;
     snapshot?: { sourceHeadCommit: string; sourceIndexTree: string; workspaceTree: string };
+    bindReview?: (db: Parameters<typeof getNodeSqliteKysely>[0], requestId: string) => void;
   },
 ): GitHubPublicationRow {
   input.assertCurrent();
@@ -322,6 +323,7 @@ export function insertGitHubPublicationRequest(
     }
   }
   input.assertCurrent();
+  input.bindReview?.(db, stored.request_id);
   if (inserted.numAffectedRows === 1n) {
     deferSharedGitHubPublicationChanged(db, stored);
   }

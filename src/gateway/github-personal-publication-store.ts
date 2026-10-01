@@ -128,6 +128,7 @@ export function insertPersonalGitHubPublication(
   row: PersonalGitHubPublicationRow,
   lifecycleRevision: string | null,
   assertCurrent: () => void,
+  bindReview?: (db: Parameters<typeof getNodeSqliteKysely>[0], requestId: string) => void,
 ): PersonalGitHubPublicationRow {
   return runOpenClawStateWriteTransaction(
     ({ db }) => {
@@ -140,6 +141,8 @@ export function insertPersonalGitHubPublication(
         requestId: row.request_id,
         lifecycleRevision,
       });
+      bindReview?.(db, row.request_id);
+      assertCurrent();
       return row;
     },
     undefined,

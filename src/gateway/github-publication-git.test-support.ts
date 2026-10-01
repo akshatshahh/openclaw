@@ -120,6 +120,15 @@ export async function createRealPublicationWorkspace({
   mocks.runCommand.mockImplementation(
     async (argv: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string }) => {
       if (argv[0] === "gh") {
+        if (
+          argv.some((arg) => arg.startsWith("repos/openclaw/openclaw/git/matching-refs/heads/"))
+        ) {
+          return commandResult(
+            JSON.stringify(
+              remoteHead ? [{ ref: `refs/heads/${branch}`, object: { sha: remoteHead } }] : [],
+            ),
+          );
+        }
         const commitPath = "repos/openclaw/openclaw/git/commits/";
         const commit = argv.find((arg) => arg.startsWith(commitPath))?.slice(commitPath.length);
         if (commit) {

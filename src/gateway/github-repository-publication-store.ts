@@ -149,6 +149,7 @@ export function readKnownRepositoryGitHubPublicationPullRequestUrlsInDatabase(
 export function insertRepositoryGitHubPublication(
   row: RepositoryGitHubPublicationRow,
   assertCurrent: () => void,
+  bindReview?: (db: Parameters<typeof getNodeSqliteKysely>[0], requestId: string) => void,
 ) {
   return runOpenClawStateWriteTransaction(
     ({ db }) => {
@@ -210,6 +211,7 @@ export function insertRepositoryGitHubPublication(
       }
       checked(stored);
       assertCurrent();
+      bindReview?.(db, stored.request_id);
       if (inserted.numAffectedRows === 1n) {
         deferSharedGitHubPublicationChanged(db, stored);
       }
