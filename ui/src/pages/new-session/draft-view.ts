@@ -47,7 +47,15 @@ export function renderNewSessionDraftView(options: {
   } = options;
   const capabilities = submission.capabilities;
   const preferences = context?.theme.settings;
-  const voiceControl = dictation.render(draftOwnerKey, preferences?.realtimeTalkInputDeviceId);
+  const voiceInputDisabledReason =
+    place.browser.creationPolicy?.execution === "foreground-only"
+      ? t("chat.composer.foregroundVoiceUnavailable")
+      : undefined;
+  const voiceControl = dictation.render(
+    draftOwnerKey,
+    preferences?.realtimeTalkInputDeviceId,
+    voiceInputDisabledReason,
+  );
   const dictationLocked = dictation.active;
   const submitBlock = submission.submitBlock();
   const placementReason = submitBlock?.gate === "execution-policy" ? submitBlock.reason : undefined;
@@ -95,7 +103,7 @@ export function renderNewSessionDraftView(options: {
       ${
         !isCatalogTarget && place.browser.creationPolicy?.execution === "foreground-only"
           ? html`<div class="new-session-page__menu-note" role="status" data-execution-policy>
-              ${t("newSession.foregroundOnly")}
+              ${t("newSession.foregroundOnly")} ${voiceInputDisabledReason}
             </div>`
           : nothing
       }

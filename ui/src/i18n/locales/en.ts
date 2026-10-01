@@ -4062,6 +4062,8 @@ export const en: TranslationMap & {
       realtimeTalkCapability: "Tap to talk",
       dictationCapability: "Dictation",
       realtimeTalkProviderUnavailable: "No realtime voice provider is configured.",
+      foregroundVoiceUnavailable:
+        "Talk and dictation cannot confirm foreground cleanup. Send a new chat message on this Gateway.",
       dictationProviderUnavailableShort: "No transcription provider is configured.",
       talkCapabilityChecking: "Checking provider availability…",
       talkCapabilityUnknown: "Provider availability could not be verified.",

@@ -206,6 +206,13 @@ suite.define(() => {
         await pollLocatorText(page.locator("[data-execution-policy]")).toContain(
           "Each turn requires a new message",
         );
+        await pollLocatorText(page.locator("[data-execution-policy]")).toContain(
+          "Talk and dictation cannot confirm foreground cleanup",
+        );
+        await expect
+          .poll(() => page.getByRole("button", { name: "Dictate", exact: true }).isDisabled())
+          .toBe(true);
+        expect(await gateway.getRequests("talk.session.create")).toHaveLength(0);
         expect(await page.locator("#new-session-checkout-trigger").count()).toBe(0);
         await expect.poll(() => start.isEnabled()).toBe(true);
         await captureProjectUiProof(suite, page, `required-${name}-ready.png`);
