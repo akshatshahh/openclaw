@@ -3912,6 +3912,8 @@ export const en: TranslationMap & {
       waitingForWorkerSetup: "Received · waiting for worker setup",
       resuming:
         "Interrupted by a Gateway restart. This saved message will resume when the session is ready.",
+      stoppedForRestart:
+        "Stopped when the Gateway restarted. This session requires a new message to continue; copy this message and send it again.",
       cancelled:
         "Cancelled before the agent started it. It will not run automatically; copy it and send again.",
       interrupted:
