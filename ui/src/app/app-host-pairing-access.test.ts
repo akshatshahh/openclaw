@@ -439,9 +439,8 @@ describe("application shell pairing access", () => {
       '.settings-sidebar__loading[role="status"][aria-busy="true"]',
     );
     expect(loadingSkeleton?.getAttribute("aria-label")).toBe("Loading…");
-    // Legacy operator auth (no scopes) resolves to admin access, so the skeleton
-    // must draw the full admin navigation.
-    const expectedItems = visibleSettingsNavigationGroups(true).reduce(
+    // Unknown grants expose personal preferences while the connection negotiates.
+    const expectedItems = visibleSettingsNavigationGroups([]).reduce(
       (count, group) => count + group.routes.length,
       0,
     );

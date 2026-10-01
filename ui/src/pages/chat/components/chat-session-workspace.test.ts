@@ -22,6 +22,44 @@ import {
 import type { SidebarContent, SidebarSelection } from "./chat-sidebar.ts";
 
 describe("session workspace state", () => {
+  it("opens scoped Review only for the creator and discards results after access changes", async () => {
+    const pending = createDeferred<{
+      sessionKey: string;
+      files: [];
+      additions: number;
+      deletions: number;
+    }>();
+    const request = vi.fn(() => pending.promise);
+    const state = {
+      client: { request },
+      connected: true,
+      connectionEpoch: 1,
+      handleOpenSidebar: vi.fn(),
+      hello: gatewayHelloForMethods(["sessions.diff"], ["operator.sessions.write"]),
+      sessionKey: "agent:main:own",
+      sidebarContent: null,
+      sessions: {},
+    } as unknown as SessionWorkspaceHost;
+    expect(
+      createSessionWorkspaceProps(state, { session: { sharingRole: "viewer" } }).onOpenDiff,
+    ).toBeUndefined();
+    expect(
+      createSessionWorkspaceProps(state, { session: { sharingRole: "owner" } }).onOpenDiff,
+    ).toBeTypeOf("function");
+    const content = resolveSessionDiffSidebarContent(state);
+    if (content?.kind !== "session-diff") throw new Error("Expected scoped Review");
+    const result = content.load({ scope: "all" });
+    const outcome = expect(result).rejects.toThrow("creator");
+    createSessionWorkspaceProps(state, { session: { sharingRole: "viewer" } });
+    pending.resolve({ sessionKey: state.sessionKey, files: [], additions: 1, deletions: 0 });
+    await outcome;
+    expect(request).toHaveBeenCalledExactlyOnceWith("sessions.diff", {
+      sessionKey: state.sessionKey,
+      agentId: "main",
+      scope: "all",
+    });
+  });
+
   it("keeps filter changes in the current session and resets them for a new session", () => {
     const requestUpdate = vi.fn();
     const state = {
