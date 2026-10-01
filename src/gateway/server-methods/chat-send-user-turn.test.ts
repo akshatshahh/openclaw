@@ -9,13 +9,17 @@ import { createSolidPngBuffer } from "../../../test/helpers/image-fixtures.js";
 import { resolveBootstrapContextForRun } from "../../agents/bootstrap-files.js";
 import { pruneProcessedHistoryImages } from "../../agents/embedded-agent-runner/run/history-image-prune.js";
 import { hydratePromptMediaMessages } from "../../agents/embedded-agent-runner/run/images.js";
+import { getForegroundUserRequest } from "../../agents/foreground-request.js";
+import { requireAdmittedRunForeground } from "../../agents/run-execution-policy.js";
 import type { AgentMessage } from "../../agents/runtime/index.js";
 import { resolveCommandAuthorization } from "../../auto-reply/command-auth.js";
 import { normalizeCommandBody } from "../../auto-reply/commands-registry.js";
+import { prepareChannelRunAdmission } from "../../auto-reply/reply/channel-run-admission.js";
 import { resolveReplyDirectiveRouting } from "../../auto-reply/reply/get-reply-directives-routing.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
 import { buildInboundUserContextPrefix } from "../../auto-reply/reply/inbound-meta.js";
 import { resolveSessionResetCommand } from "../../auto-reply/reply/session-reset-command.js";
+import { initSessionState } from "../../auto-reply/reply/session.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { resolveStateDir } from "../../config/paths.js";
 import {
@@ -24,6 +28,7 @@ import {
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import { sessionPersonalProfileId } from "../../config/sessions/session-entry-provenance.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { recordAcceptedSessionParticipantInput } from "../../sessions/session-participant-input-recording.js";
 import {
@@ -32,9 +37,19 @@ import {
 } from "../../sessions/session-participant-input.js";
 import { buildPersistedUserTurnMessage } from "../../sessions/user-turn-transcript.js";
 import { runOpenClawAgentWriteAdmission } from "../../state/openclaw-agent-write-admission.js";
-import { ensureGatewayOwnerProfile, ensureProfileForEmail } from "../../state/user-profiles.js";
+import {
+  ensureGatewayOwnerProfile,
+  ensureProfileForEmail,
+  setUserProfileRole,
+} from "../../state/user-profiles.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import * as chatAttachments from "../chat-attachments.js";
+import {
+  attachGatewayLocalUserIngress,
+  prepareGatewayLocalUserIngress,
+} from "../local-user-ingress.js";
+import { invalidateOperatorRolePolicy } from "../operator-role-policy.js";
+import { prepareChatSendSessionEntry } from "./chat-send-session.js";
 import { applyChatSendManagedMedia, prepareChatSendUserTurn } from "./chat-send-user-turn.js";
 import {
   createUserTurnInputController,
@@ -51,6 +66,76 @@ function requesterProfile(text: string) {
 }
 
 describe("prepareChatSendUserTurn", () => {
+  it.each(["user", "system", "synthetic", "unverified"] as const)(
+    "carries only authenticated user input from the real chat producer into admission: %s",
+    async (kind) => {
+      const { controller } = createUserTurnInputController("hello");
+      const client = {
+        authenticatedUserProfile: { profileId: "source", hasAvatar: false, updatedAt: 1 },
+        internal: kind === "synthetic" ? { syntheticClient: true as const } : undefined,
+        connect: {
+          minProtocol: 1,
+          maxProtocol: 1,
+          client: createClientInfo(),
+          scopes: ["operator.write"],
+        },
+      };
+      if (kind !== "unverified") {
+        attachGatewayLocalUserIngress(
+          client,
+          prepareGatewayLocalUserIngress({
+            authMethod: "token",
+            authenticatedUserExpected: true,
+            isLocalClient: false,
+            profile: { profileId: "source" },
+          }),
+        );
+      }
+      const prepared = prepareChatSendUserTurn({
+        request: {
+          inboundMessage: "hello",
+          clientInfo: createClientInfo(),
+          suppressCommandInterpretation: false,
+          systemInputProvenance:
+            kind === "system" ? { kind: "internal_system", sourceTool: "fixture" } : undefined,
+          systemProvenanceReceipt: undefined,
+        },
+        session: {
+          agentId: "main",
+          clientRunId: `foreground-${kind}`,
+          sessionKey: "agent:main:main",
+        },
+        admission: {
+          originatingRoute: { originatingChannel: "webchat", explicitDeliverRoute: false },
+        },
+        attachments: createAttachments(),
+        client,
+        logGateway: { warn: vi.fn() } as never,
+        userTurn: controller,
+      });
+      const admission = prepareChannelRunAdmission({
+        cfg: {},
+        runId: `foreground-${kind}`,
+        agentId: "main",
+        ingressKind: "gateway-client",
+        boundary: "test",
+        foregroundRequest: getForegroundUserRequest(finalizeInboundContext({ ...prepared.ctx })),
+      });
+      try {
+        const context = await admission.admit("embedded");
+        if (kind === "user") {
+          expect(() => requireAdmittedRunForeground(context)).not.toThrow();
+        } else {
+          expect(() => requireAdmittedRunForeground(context)).toThrow(
+            "fresh authenticated user request",
+          );
+        }
+      } finally {
+        await admission.close();
+      }
+    },
+  );
+
   it.each([
     { profileId: "profile-ada", synthetic: false, verified: true, allowed: true },
     { profileId: "profile-other", synthetic: false, verified: true, allowed: false },
@@ -244,69 +329,113 @@ describe("prepareChatSendUserTurn", () => {
     },
   );
 
-  it.each([false, true])(
-    "preserves sandbox policy for attributed chat (system actor: %s)",
-    async (systemActor) => {
-      await withOpenClawTestState({ scenario: "minimal" }, async () => {
-        const profile = systemActor
-          ? ensureGatewayOwnerProfile("Gateway Owner")
-          : ensureProfileForEmail("chat-sandbox-creator@example.com");
-        const { controller } = createUserTurnInputController();
-        const prepared = prepareChatSendUserTurn({
-          request: {
-            inboundMessage: "hello",
-            clientInfo: createClientInfo(),
-            suppressCommandInterpretation: false,
-            systemInputProvenance: undefined,
-            systemProvenanceReceipt: undefined,
-          },
-          session: {
-            agentId: "main",
-            clientRunId: "run-1",
-            sessionKey: "agent:main:dashboard:guest-chat",
-            cfg: {
-              gateway: {
-                roles: {
-                  default: "guest",
-                  definitions: {
-                    guest: {
-                      sessions: { others: "view" },
-                      agents: "*",
-                      scopes: ["operator.write"],
-                      sandbox: "required",
-                    },
-                  },
-                },
+  it.each(
+    [false, true].flatMap((systemActor) =>
+      [false, true].map((foreground) => ({ systemActor, foreground })),
+    ),
+  )("preserves creator lifetime for attributed chat: %j", async ({ systemActor, foreground }) => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const profile = systemActor
+        ? ensureGatewayOwnerProfile("Gateway Owner")
+        : ensureProfileForEmail("chat-sandbox-creator@example.com");
+      const cfg: OpenClawConfig = {
+        gateway: {
+          roles: {
+            default: "guest",
+            definitions: {
+              guest: {
+                sessions: { others: "view" },
+                agents: "*",
+                scopes: ["operator.write"],
+                ...(foreground
+                  ? { execution: "foreground-only" as const }
+                  : { sandbox: "required" as const }),
               },
             },
           },
-          admission: {
-            originatingRoute: { originatingChannel: "webchat", explicitDeliverRoute: false },
+        },
+      };
+      const { controller } = createUserTurnInputController();
+      const prepared = prepareChatSendUserTurn({
+        request: {
+          inboundMessage: "hello",
+          clientInfo: createClientInfo(),
+          suppressCommandInterpretation: false,
+          systemInputProvenance: undefined,
+          systemProvenanceReceipt: undefined,
+        },
+        session: {
+          agentId: "main",
+          clientRunId: "run-1",
+          sessionKey: "agent:main:dashboard:guest-chat",
+          cfg,
+        },
+        admission: {
+          originatingRoute: { originatingChannel: "webchat", explicitDeliverRoute: false },
+        },
+        attachments: createAttachments(),
+        client: {
+          ...(systemActor ? { internal: { operatorRoleActor: { kind: "system" } } } : {}),
+          authenticatedUserProfile: {
+            profileId: profile.id,
+            displayName: profile.displayName,
+            hasAvatar: false,
+            updatedAt: profile.updatedAt,
           },
-          attachments: createAttachments(),
-          client: {
-            ...(systemActor ? { internal: { operatorRoleActor: { kind: "system" } } } : {}),
-            authenticatedUserProfile: {
-              profileId: profile.id,
-              displayName: profile.displayName,
-              hasAvatar: false,
-              updatedAt: profile.updatedAt,
-            },
-            connect: { scopes: ["operator.write"] },
-          } as never,
-          logGateway: { warn: vi.fn() } as never,
-          userTurn: controller,
-        });
-
-        expect(prepared.ctx.SessionCreation).toEqual({
-          via: "operator",
-          actor: { type: "human", source: "profile", id: profile.id },
-          ...(systemActor ? {} : { sandbox: "required" }),
-          skillLibrarySelections: [],
-        });
+          connect: { scopes: ["operator.write"] },
+        } as never,
+        logGateway: { warn: vi.fn() } as never,
+        userTurn: controller,
       });
-    },
-  );
+
+      expect(prepared.ctx.SessionCreation).toEqual({
+        via: "operator",
+        actor: { type: "human", source: "profile", id: profile.id },
+        ...(systemActor
+          ? {}
+          : { sandbox: "required", ...(foreground ? { execution: "foreground-only" } : {}) }),
+        skillLibrarySelections: [],
+      });
+      const client = { authenticatedUserProfile: { profileId: profile.id } } as never;
+      const creation = prepareChatSendSessionEntry({
+        cfg,
+        client,
+        agentId: "main",
+        getRuntimeConfig: () => cfg,
+      });
+      expect(creation.entry.execution).toBe(
+        !systemActor && foreground ? "foreground-only" : undefined,
+      );
+      if (!systemActor && foreground) {
+        const initialized = await initSessionState({
+          cfg,
+          commandAuthorized: true,
+          ctx: finalizeInboundContext({ ...prepared.ctx, ChatType: "direct" }),
+        });
+        expect(initialized.sessionEntry.execution).toBe("foreground-only");
+        setUserProfileRole(profile.id, "maintainer");
+        invalidateOperatorRolePolicy(profile.id);
+        const second = await initSessionState({
+          cfg: {},
+          commandAuthorized: true,
+          ctx: finalizeInboundContext({
+            ...prepared.ctx,
+            RawBody: "fresh maintainer request",
+            Body: "fresh maintainer request",
+            SessionCreation: {
+              via: "operator",
+              actor: { type: "human", source: "profile", id: profile.id },
+            },
+          }),
+        });
+        expect(second.sessionEntry.execution).toBe("foreground-only");
+        expect(
+          loadSessionEntryReadOnly({ agentId: "main", sessionKey: prepared.ctx.SessionKey! })
+            ?.execution,
+        ).toBe("foreground-only");
+      }
+    });
+  });
 
   it.each([
     { name: "status", inboundMessage: "/status", suppressed: false },
