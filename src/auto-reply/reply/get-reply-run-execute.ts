@@ -342,6 +342,11 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     opts?.userTurnTranscriptRecorder ??
     (userTurnInput
       ? createUserTurnTranscriptRecorder({
+          foregroundOnlyRunId:
+            opts?.operatorAuthority?.rolePolicy?.execution === "foreground-only" ||
+            preparedSessionState.sessionEntry?.execution === "foreground-only"
+              ? (sourceTurnId ?? sourceMessageId ?? crypto.randomUUID())
+              : undefined,
           input: userTurnInput,
           target: () => ({
             sessionId: preparedSessionState.sessionId,
