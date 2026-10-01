@@ -31,16 +31,16 @@ describe("registered session GitHub publication access", () => {
   });
 
   it.each([
-    { target: "own", policy: "absent", actor: "guest", outcome: "published" },
-    { target: "foreign", policy: "view", actor: "guest", outcome: "INVALID_REQUEST" },
-    { target: "foreign", policy: "absent", actor: "guest", outcome: "UNAVAILABLE" },
-    { target: "foreign", policy: "write", actor: "guest", outcome: "UNAVAILABLE" },
-    { target: "member", policy: "write", actor: "guest", outcome: "UNAVAILABLE" },
-    { target: "missing", policy: "absent", actor: "guest", outcome: "INVALID_REQUEST" },
+    { target: "own", policy: "absent", actor: "guest", outcome: "FORBIDDEN" },
+    { target: "foreign", policy: "view", actor: "guest", outcome: "FORBIDDEN" },
+    { target: "foreign", policy: "absent", actor: "guest", outcome: "FORBIDDEN" },
+    { target: "foreign", policy: "write", actor: "guest", outcome: "FORBIDDEN" },
+    { target: "member", policy: "write", actor: "guest", outcome: "FORBIDDEN" },
+    { target: "missing", policy: "absent", actor: "guest", outcome: "FORBIDDEN" },
     { target: "foreign", policy: "write", actor: "staff", outcome: "published" },
     { target: "foreign", policy: "absent", actor: "system", outcome: "published" },
-    { target: "own", policy: "write", actor: "mixed", outcome: "published" },
-    { target: "member", policy: "write", actor: "mixed", outcome: "UNAVAILABLE" },
+    { target: "own", policy: "write", actor: "mixed", outcome: "FORBIDDEN" },
+    { target: "member", policy: "write", actor: "mixed", outcome: "FORBIDDEN" },
   ] as const)(
     "checks $target target for $actor with role policy=$policy",
     async ({ target, policy, actor, outcome }) => {
@@ -122,7 +122,7 @@ describe("registered session GitHub publication access", () => {
           actor === "system"
             ? createSyntheticPluginRuntimeClient({
                 operatorRoleActor: { kind: "system" },
-                scopes: guestScopes,
+                scopes: ["operator.write"],
               })
             : person,
         isWebchatConnect: () => false,

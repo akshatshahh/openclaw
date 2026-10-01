@@ -1,4 +1,6 @@
 import os from "node:os";
+import { prepareGitHubReadIdentity } from "../agents/github-tool-identity.js";
+import { getRuntimeConfig } from "../config/config.js";
 import { patchSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { gitNullConfigPath } from "../infra/git-exec.js";
@@ -7,7 +9,9 @@ import {
   ProjectCloneError,
 } from "../projects/project-clone-runtime.js";
 import { materializeProjectClone } from "../projects/project-clone.js";
+import { getActiveSecretsRuntimeConfigSnapshot } from "../secrets/runtime-state.js";
 import { getSessionRepositoryWorkspaceStore } from "../state/session-repository-workspaces.js";
+import { requestCurrentGitHubOAuthRefresh } from "./github-oauth-lifecycle.js";
 import { parseGitHubPublicationBaseBranch } from "./github-publication-base.js";
 import {
   assertSafeGitPublicationWorkspace,
@@ -19,7 +23,6 @@ import { readRepositoryGitHubPublicationBranch } from "./github-repository-publi
 import { loadGatewaySessionEntryReadOnly } from "./session-utils-store.js";
 import { prepareSessionWorktree } from "./session-worktree-preparation.js";
 import { withSessionRepositoryCheckpoint } from "./worker-environments/session-repository-checkpoints.js";
-import { prepareWorkerGitHubBinding } from "./worker-environments/worker-github-binding.js";
 import { applyStagedWorkerWorkspace } from "./worker-environments/workspace-reconcile-apply.js";
 
 /** Explicit Gateway moves and failed-placement recovery restore only accepted source results. */
@@ -67,7 +70,7 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
       "Repository publication is awaiting a GitHub effect observation; retry the Gateway move after publication settles",
     );
   }
-  const assertCurrent = () => {
+  const assertWorkspaceCurrent = () => {
     params.signal?.throwIfAborted();
     params.assertCurrent();
     const currentBranch = branch();
@@ -85,18 +88,21 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
       throw new Error("Repository workspace changed during Gateway materialization; retry move");
     }
   };
-  assertCurrent();
-  const github = await prepareWorkerGitHubBinding({
-    sessionId: params.sessionId,
-    sessionKey: initial.canonicalKey,
+  assertWorkspaceCurrent();
+  // Source reads stay on the Gateway; worker execution never receives this bearer.
+  const github = await prepareGitHubReadIdentity({
+    config: params.cfg,
+    sourceConfig: getActiveSecretsRuntimeConfigSnapshot()?.sourceConfig ?? params.cfg,
+    getCurrentConfig: getRuntimeConfig,
     agentId: params.agentId,
-    assertCurrent: () => {
-      assertCurrent();
-      return true;
-    },
+    assertActive: assertWorkspaceCurrent,
+    refresh: () => requestCurrentGitHubOAuthRefresh(params.agentId),
+    allowAnonymous: true,
   });
-  // Optional launch binding absorbs unavailable auth, including a thrown owner
-  // assertion. A closed move must never proceed as an anonymous clone.
+  const assertCurrent = () => {
+    assertWorkspaceCurrent();
+    github.assertSelected();
+  };
   assertCurrent();
   const project = await materializeProjectClone(
     {
@@ -104,7 +110,7 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
       gitUrl: repository.url,
       requiredCommit: published?.pushed_head_commit ?? repository.baseCommit,
     },
-    { signal: params.signal, token: github?.token },
+    { signal: params.signal, token: github.token },
   ).catch((error: unknown) => {
     if (error instanceof ProjectCloneError && error.failure === "auth_required") {
       throw new ProjectCloneError(
@@ -116,7 +122,7 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
   });
   assertCurrent();
   const { step, require: command, run } = createGitHubPublicationCommandRunner(assertCurrent);
-  const cloneOptions = { signal: params.signal, token: github?.token };
+  const cloneOptions = { signal: params.signal, token: github.token };
   const source = { url: repository.url, target: project.repoRoot };
   const remoteHead = await step(() =>
     readProjectCheckoutRemoteHead({ ...source, branch: repository.branch }, cloneOptions),
