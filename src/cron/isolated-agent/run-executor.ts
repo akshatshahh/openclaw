@@ -648,9 +648,9 @@ function createCronPromptExecutor(
         params.lifecycle.capture("error", error);
         throw error;
       })
-      .finally(() => {
+      .finally(async () => {
         unregisterCronRunExecSource();
-        closePromptAdmission();
+        await closePromptAdmission();
       });
     const executionError =
       params.lifecycle.getDeferredError() ??

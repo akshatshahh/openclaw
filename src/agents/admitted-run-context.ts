@@ -21,6 +21,7 @@ import {
 } from "../infra/agent-run-registry.js";
 import type { GatewayAccessGrantRef } from "../plugins/gateway-access-policy.types.js";
 import { prepareGatewayContextBindingOwner } from "../plugins/runtime/gateway-context-binding-owner.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import type { PreparedOperatorModelPolicy } from "./operator-model-policy.types.js";
 
 /** Operational lifecycle correlation. This is never identity or authorization evidence. */
@@ -225,8 +226,8 @@ export type PreparedAgentRunAdmission = Readonly<{
   assertSourceCurrent: () => void;
   /** Host-only source restriction available before the runtime prepares its tools. */
   readOperatorAuthority?: () => AdmittedRunOperatorAuthority | undefined;
-  /** Idempotently closes the exact delegated approval lease, if admission occurred. */
-  close: () => void;
+  /** Closes admission immediately; await resource settlement before releasing the run owner. */
+  close: () => void | Promise<void>;
 }>;
 
 type DelegatedAuthorityLease = {
@@ -234,6 +235,8 @@ type DelegatedAuthorityLease = {
   foregroundClosed: boolean;
   assertSourceCurrent?: () => void;
   operatorAuthority?: AdmittedRunOperatorAuthority;
+  cleanups?: Array<() => Promise<void>>;
+  settlement?: Promise<void>;
 };
 
 const delegatedAuthorityLeases = new WeakMap<AdmittedRunContext, DelegatedAuthorityLease>();
@@ -334,14 +337,45 @@ export function resolveAdmittedRunActiveAssertion(
   };
 }
 
-/** Idempotently compare-releases the authority captured by this admission. */
-export function closeAdmittedRunDelegatedAuthority(context: AdmittedRunContext): boolean {
+/** Registers resource custody before exposing that resource to the admitted run. */
+export function registerAdmittedRunCleanup(
+  context: AdmittedRunContext,
+  cleanup: () => Promise<void>,
+): void {
   const lease = delegatedAuthorityLeases.get(context);
-  if (!lease || lease.foregroundClosed) {
+  if (!lease || !getAdmittedRunDelegatedAuthority(context)) {
+    throw new Error("admitted run resource owner is no longer active");
+  }
+  (lease.cleanups ??= []).push(cleanup);
+}
+
+/** Close execution admission immediately, then join the exact resources it acquired. */
+export async function closeAdmittedRunDelegatedAuthority(
+  context: AdmittedRunContext,
+): Promise<boolean> {
+  const lease = delegatedAuthorityLeases.get(context);
+  if (!lease) {
     return false;
   }
+  if (lease.foregroundClosed) {
+    await lease.settlement;
+    return false;
+  }
+  const completion = createDeferredCore();
+  lease.settlement = completion.promise;
   lease.foregroundClosed = true;
   releaseAgentRunDelegatedAuthority(lease.authority);
+  const cleanups = lease.cleanups?.splice(0) ?? [];
+  void (async () => {
+    const settled = await Promise.allSettled(cleanups.map(async (cleanup) => await cleanup()));
+    const failures = settled.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "admitted run resource cleanup failed");
+    }
+  })().then(completion.resolve, completion.reject);
+  await lease.settlement;
   return true;
 }
 
@@ -503,6 +537,7 @@ export function prepareAgentRunAdmission(params: {
   let admitted: Promise<AdmittedRunContext> | undefined;
   let admittedContext: AdmittedRunContext | undefined;
   let closed = false;
+  let settlement: Promise<void> | undefined;
   return Object.freeze({
     operationalRunInstance,
     assertSourceCurrent: () => assertSourceCurrent?.(),
@@ -517,15 +552,27 @@ export function prepareAgentRunAdmission(params: {
     },
     close: () => {
       if (closed) {
-        return;
+        return settlement ?? Promise.resolve();
       }
+      const completion = createDeferredCore();
+      settlement = completion.promise;
       closed = true;
-      if (admittedContext) {
-        closeAdmittedRunDelegatedAuthority(admittedContext);
-      } else {
-        void admitted?.then(closeAdmittedRunDelegatedAuthority).catch(() => undefined);
-      }
-      releaseOperatorAuthority?.();
+      // Revoke synchronously, including while the admission callback is still
+      // acquiring resources. That callback must settle before its source can retire.
+      const cleanup = admittedContext
+        ? closeAdmittedRunDelegatedAuthority(admittedContext)
+        : Promise.resolve(false);
+      void (async () => {
+        try {
+          const [resources] = await Promise.allSettled([cleanup, admitted]);
+          if (resources.status === "rejected") {
+            throw resources.reason;
+          }
+        } finally {
+          releaseOperatorAuthority?.();
+        }
+      })().then(completion.resolve, completion.reject);
+      return settlement;
     },
     admit: (runtimeKind, runtimeInstanceId) => {
       if (closed) {
@@ -535,7 +582,11 @@ export function prepareAgentRunAdmission(params: {
       // Later fallback paths reuse this exact admission instead of recapturing identity.
       const fixedRuntimeKind = (admittedRuntimeKind ??= runtimeKind);
       admittedRuntimeInstanceId ??= runtimeInstanceId?.trim() || undefined;
-      admitted ??= (async () => {
+      // Publish the pending owner before a callback can synchronously close it.
+      admitted ??= Promise.resolve().then(async () => {
+        if (closed) {
+          throw new Error("prepared execution context is already closed");
+        }
         assertSourceCurrent?.();
         const facts = executionIdentitySpawnAdmission({
           operation: "attach",
@@ -559,10 +610,10 @@ export function prepareAgentRunAdmission(params: {
           }
           return context;
         } catch (error) {
-          closeAdmittedRunDelegatedAuthority(context);
+          await closeAdmittedRunDelegatedAuthority(context);
           throw error;
         }
-      })();
+      });
       return admitted;
     },
   });

@@ -1625,7 +1625,7 @@ export async function runMemoryFlushIfNeeded(params: {
     if (flushRunRegistered) {
       clearAgentRunContext(flushRunId);
     }
-    preparedRunAdmission.close();
+    await preparedRunAdmission.close();
   }
 }
 

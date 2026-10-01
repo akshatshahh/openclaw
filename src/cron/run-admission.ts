@@ -81,7 +81,8 @@ export function prepareCronRunAdmission(params: {
     : undefined;
   const deliveryAttemptFence = params.deliveryAttemptFence;
   if (scheduledMessageAuthority && !deliveryAttemptFence) {
-    preparedRunAdmission.close();
+    // No admission or resource acquisition has occurred on this refusal path.
+    void preparedRunAdmission.close();
     throw new Error("scheduled message authority requires its occurrence delivery fence");
   }
   // This opaque token remains unusable until this exact operational instance
@@ -124,9 +125,9 @@ export function prepareCronRunAdmission(params: {
   return {
     preparedRunAdmission,
     messageActionTurnCapability,
-    close: () => {
+    close: async () => {
       revokeMessageActionTurnCapability(messageActionTurnCapability);
-      preparedRunAdmission.close();
+      await preparedRunAdmission.close();
     },
   };
 }

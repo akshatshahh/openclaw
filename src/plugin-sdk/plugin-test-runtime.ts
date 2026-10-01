@@ -46,9 +46,9 @@ export async function createAgentHarnessHostCapabilitiesForTest(params: {
   });
   return {
     capabilities: host.capabilities,
-    close: () => {
+    close: async () => {
       host.close();
-      admission.close();
+      await admission.close();
     },
   };
 }

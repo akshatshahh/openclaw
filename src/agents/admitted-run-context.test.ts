@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import {
   configureExecutionIdentityAdmissionSink,
   createExecutionIdentityAdmissionToken,
@@ -24,6 +25,7 @@ import {
   prepareAgentRunAdmission,
   readAdmittedRunOperatorAuthority,
   readPreparedRunOperatorAuthority,
+  registerAdmittedRunCleanup,
   retainAdmittedRunBeforeToolCallRecovery,
   resolveAdmittedRunActiveAssertion,
   resolvePreparedRunAdmission,
@@ -47,6 +49,65 @@ afterEach(() => {
 });
 
 describe("prepared run admission", () => {
+  it("closes admission before joining owned resources and retains the source until settlement", async () => {
+    const resource = createDeferred<void>();
+    const started = createDeferred<void>();
+    const release = vi.fn();
+    const prepared = prepareAgentRunAdmission({
+      cfg: {},
+      facts,
+      operationalRunInstance: createOperationalRunInstanceRef(facts.runId),
+      operatorAuthority: createAdmittedRunOperatorAuthority({
+        profileId: "foreground-owner",
+        scopes: ["operator.sessions.write"],
+        assertCurrent() {},
+        retain: () => release,
+      }),
+    });
+    const context = await prepared.admit("embedded");
+    registerAdmittedRunCleanup(context, async () => {
+      started.resolve();
+      await resource.promise;
+    });
+    const closing = prepared.close();
+    await started.promise;
+    expect(getAdmittedRunDelegatedAuthority(context)).toBeUndefined();
+    expect(() => registerAdmittedRunCleanup(context, async () => {})).toThrow("no longer active");
+    expect(release).not.toHaveBeenCalled();
+    expect(prepared.close()).toBe(closing);
+    resource.resolve();
+    await closing;
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("joins every cleanup and preserves a failed settlement on repeated close", async () => {
+    const resource = createDeferred<void>();
+    const started = createDeferred<void>();
+    const failure = new Error("container exit unconfirmed");
+    const prepared = prepareAgentRunAdmission({
+      cfg: {},
+      facts,
+      operationalRunInstance: createOperationalRunInstanceRef(facts.runId),
+    });
+    const context = await prepared.admit("plugin-harness");
+    registerAdmittedRunCleanup(context, async () => {
+      throw failure;
+    });
+    registerAdmittedRunCleanup(context, async () => {
+      started.resolve();
+      await resource.promise;
+    });
+    const closing = prepared.close();
+    const rejected = expect(closing).rejects.toMatchObject({ errors: [failure] });
+    await started.promise;
+    resource.resolve();
+    await rejected;
+    await expect(prepared.close()).rejects.toMatchObject({ errors: [failure] });
+    await expect(closeAdmittedRunDelegatedAuthority(context)).rejects.toMatchObject({
+      errors: [failure],
+    });
+  });
+
   it.each([false, true])(
     "owns real fixture authority across module resets and runner settlement (reject=%s)",
     async (reject) => {
@@ -122,7 +183,7 @@ describe("prepared run admission", () => {
         expect(clearGatewayContextResolver(admitted)).toBe(true);
         expect(getGatewayContextResolver(admitted)).toBeUndefined();
       } finally {
-        prepared.close();
+        await prepared.close();
       }
     },
   );
@@ -312,11 +373,11 @@ describe("prepared run admission", () => {
       }),
     ).resolves.toBe(admitted);
     expect(getAdmittedRunDelegatedAuthority(admitted)).toBe(first);
-    prepared.close();
+    await prepared.close();
     expect(() => prepared.assertSourceCurrent()).not.toThrow();
     expect(validateAgentRunDelegatedAuthority(first)).toBe(false);
     expect(getAdmittedRunSource(first)).toBeUndefined();
-    expect(closeAdmittedRunDelegatedAuthority(admitted)).toBe(false);
+    expect(await closeAdmittedRunDelegatedAuthority(admitted)).toBe(false);
     await expect(prepared.admit(runtime.kind)).rejects.toThrow("already closed");
   });
 
@@ -342,8 +403,8 @@ describe("prepared run admission", () => {
         );
         expect(getAdmittedRunSource(authority)).toBe(admissionSource);
       } finally {
-        replacement.close();
-        original.close();
+        await replacement.close();
+        await original.close();
       }
     },
   );
@@ -374,8 +435,8 @@ describe("prepared run admission", () => {
         }
         expect(getAdmittedRunSource(authority)).toBeUndefined();
       } finally {
-        replacement.close();
-        original.close();
+        await replacement.close();
+        await original.close();
       }
     },
   );
@@ -395,7 +456,7 @@ describe("prepared run admission", () => {
     expect(() => assertActive?.()).not.toThrow();
     abort.abort();
     expect(() => assertActive?.()).toThrow("no longer active");
-    prepared.close();
+    await prepared.close();
     expect(() => assertActive?.()).toThrow("no longer active");
   });
 
@@ -434,7 +495,7 @@ describe("prepared run admission", () => {
         }),
       );
     } finally {
-      prepared.close();
+      await prepared.close();
     }
   });
 
@@ -451,7 +512,7 @@ describe("prepared run admission", () => {
 
     expect(authority).toBeDefined();
     expect(recovery).toBeDefined();
-    expect(closeAdmittedRunDelegatedAuthority(admitted)).toBe(true);
+    expect(await closeAdmittedRunDelegatedAuthority(admitted)).toBe(true);
     expect(getAdmittedRunDelegatedAuthority(admitted)).toBeUndefined();
     expect(validateAgentRunDelegatedAuthority(authority!)).toBe(false);
     expect(() => recovery?.assertActive()).not.toThrow();
@@ -507,11 +568,11 @@ describe("prepared run admission", () => {
           try {
             await expect(refused.admit(runtime.kind)).rejects.toThrow("already bound");
           } finally {
-            refused.close();
+            await refused.close();
           }
           expect(() => recovery!.assertActive()).not.toThrow();
         }
-        prepared.close();
+        await prepared.close();
         expect(sourceHolds).toBe(1);
         expect(() => readAdmittedRunOperatorAuthority(admitted)).toThrow("no longer active");
         expect(() => readPreparedRunOperatorAuthority(prepared)).toThrow("no longer active");
@@ -528,7 +589,7 @@ describe("prepared run admission", () => {
         );
       } finally {
         recovery?.release();
-        prepared.close();
+        await prepared.close();
         expect(sourceHolds).toBe(0);
       }
     },
@@ -556,6 +617,8 @@ describe("prepared run admission", () => {
     const { runtime, ...admissionFacts } = facts;
     let releaseHook: (() => void) | undefined;
     let authority: ReturnType<typeof getAdmittedRunDelegatedAuthority>;
+    const releaseSource = vi.fn();
+    const reclaimLateResource = vi.fn();
     const hookPending = new Promise<void>((resolve) => {
       releaseHook = resolve;
     });
@@ -563,18 +626,39 @@ describe("prepared run admission", () => {
       cfg: {},
       facts: { ...admissionFacts, runId: "run-close-during-binding" },
       operationalRunInstance: createOperationalRunInstanceRef("run-close-during-binding"),
+      operatorAuthority: createAdmittedRunOperatorAuthority({
+        profileId: "source-owner",
+        scopes: [],
+        assertCurrent() {},
+        retain: () => releaseSource,
+      }),
       onAdmitted: async (context) => {
         authority = getAdmittedRunDelegatedAuthority(context);
         await hookPending;
+        try {
+          registerAdmittedRunCleanup(context, async () => {});
+        } catch (error) {
+          // Acquisition lost admission; its producer still owns reclamation.
+          reclaimLateResource();
+          throw error;
+        }
       },
     });
     const admission = prepared.admit(runtime.kind);
     await vi.waitFor(() => expect(authority).toBeDefined());
 
-    prepared.close();
+    const closing = prepared.close();
+    const settled = vi.fn();
+    void Promise.resolve(closing).then(settled);
 
     expect(validateAgentRunDelegatedAuthority(authority!)).toBe(false);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    expect(releaseSource).not.toHaveBeenCalled();
     releaseHook?.();
-    await expect(admission).rejects.toThrow("closed during admission");
+    await expect(admission).rejects.toThrow("resource owner is no longer active");
+    await closing;
+    expect(reclaimLateResource).toHaveBeenCalledOnce();
+    expect(releaseSource).toHaveBeenCalledOnce();
   });
 });
