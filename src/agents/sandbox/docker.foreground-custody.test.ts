@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -141,6 +142,8 @@ describe("foreground allocation with the native registry owner", () => {
     async (boundary) => {
       await withOpenClawTestState({ label: `foreground-${boundary}` }, async (fixture) => {
         const transport = nativeTransport();
+        const retainedFile = path.join(fixture.workspaceDir, "draft.txt");
+        await fs.writeFile(retainedFile, "retained draft");
         const { prepared, native } = await owner(`foreground-${boundary}`);
         const reached = createDeferred<void>();
         const resume = createDeferred<void>();
@@ -167,8 +170,6 @@ describe("foreground allocation with the native registry owner", () => {
             }
           });
         const cfg = { ...resolveSandboxConfigForAgent(), workspaceAccess: "rw" as const };
-        const retainedFile = fixture.path("workspace", "draft.txt");
-        await fs.writeFile(retainedFile, "retained draft");
         const allocation = native.custody.runProducer(
           () =>
             ensureSandboxContainer({
