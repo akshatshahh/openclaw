@@ -37,11 +37,8 @@ import {
 } from "../../sessions/session-participant-input.js";
 import { buildPersistedUserTurnMessage } from "../../sessions/user-turn-transcript.js";
 import { runOpenClawAgentWriteAdmission } from "../../state/openclaw-agent-write-admission.js";
-import {
-  ensureGatewayOwnerProfile,
-  ensureProfileForEmail,
-  setUserProfileRole,
-} from "../../state/user-profiles.js";
+import { setCanonicalUserProfileRole } from "../../state/user-profile-writes.js";
+import { ensureGatewayOwnerProfile, ensureProfileForEmail } from "../../state/user-profiles.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import * as chatAttachments from "../chat-attachments.js";
 import {
@@ -427,8 +424,9 @@ describe("prepareChatSendUserTurn", () => {
           ctx: finalizeInboundContext({ ...prepared.ctx, ChatType: "direct" }),
         });
         expect(initialized.sessionEntry.execution).toBe("foreground-only");
-        setUserProfileRole(profile.id, "maintainer");
-        invalidateOperatorRolePolicy(profile.id);
+        await setCanonicalUserProfileRole(profile.id, "maintainer", {
+          onCommitted: invalidateOperatorRolePolicy,
+        });
         const second = await initSessionState({
           cfg: {},
           commandAuthorized: true,
