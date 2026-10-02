@@ -1,4 +1,5 @@
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { expect, test, vi } from "vitest";
 import { requireGit } from "../agents/worktrees/git.js";
 import {
@@ -22,7 +23,7 @@ import {
 } from "./server.auth.test-helpers.js";
 import { initializeRepository } from "./server.sessions.create.projects.test-support.js";
 import { setupSessionCreateHandlerTestHarness } from "./server.sessions.create.test-support.js";
-import { gatewayReplyMock } from "./test-helpers.js";
+import { gatewayReplyMock, writeSessionStore } from "./test-helpers.js";
 import { settleGatewaySessionStoreFixture } from "./test/server-sessions-resources.test-helpers.js";
 import { getGatewayConfigModule } from "./test/server-sessions.test-helpers.js";
 
@@ -45,6 +46,8 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
       entries: { main: {}, "contributor-agent": {} },
     };
     const { dir, storePath } = await createSessionStoreDir();
+    // Sync the store before startup so the first RPC does not rewrite the source config.
+    await writeSessionStore({ entries: {}, storePath, agentId: "contributor-agent" });
     const project = await registerProjectRegistry({ path: workspace });
     const profile = ensureProfileForEmail("workspace-contributor@example.test");
     const origin = "https://control.example.test";
@@ -75,8 +78,9 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         },
       },
     };
-    await config.writeConfigFile(cfg);
     const configIO = await vi.importActual<typeof import("../config/io.js")>("../config/io.js");
+    // The reload owner must see the same fixture overrides in source and runtime.
+    await configIO.writeConfigFile(config.applyConfigOverrides(cfg), { inputBase: "source" });
     await withGatewayServer(async ({ port, server }) => {
       await server.startupSettled;
       const headers = {
@@ -174,7 +178,10 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         expect(prepared.snapshot.valid, JSON.stringify(prepared.snapshot.issues)).toBe(true);
         // Edit the source policy only; runtime defaults require unrelated service reloads.
         const revokedConfig = structuredClone(prepared.snapshot.sourceConfig);
-        revokedConfig.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
+        expectDefined(
+          revokedConfig.gateway?.roles?.definitions.contributor?.sessions.workspace,
+          "contributor workspace",
+        ).projects = [];
         const application = createRuntimeConfigWriteApplication();
         // The harness silences both sinks; retain the real reload owner's failure reason.
         setLoggerOverride({ level: "silent", consoleLevel: "info" });

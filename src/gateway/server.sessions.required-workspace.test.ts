@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { expectDefined } from "@openclaw/normalization-core";
 import { expect, test, vi } from "vitest";
 import { requireGit } from "../agents/worktrees/git.js";
 import {
@@ -18,6 +19,7 @@ import { registerProjectRegistry } from "../projects/project-registry.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
 import type { GatewayClient } from "./server-methods/types.js";
+import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 import { resolveWorkerPlacementSessionTarget } from "./server-worker-placement-session-target.js";
 import { initializeRepository } from "./server.sessions.create.projects.test-support.js";
 import { setupSessionCreateHandlerTestHarness } from "./server.sessions.create.test-support.js";
@@ -148,7 +150,8 @@ test.each([undefined, "required"] as const)(
   async (sandbox) => {
     await withSessionTestState({ layout: "state-only" }, async (state) => {
       const { workspace, project, storePath, cfg, context, client } = await fixture(state.root);
-      cfg.gateway!.roles!.definitions.contributor.sandbox = sandbox;
+      expectDefined(cfg.gateway?.roles?.definitions.contributor, "contributor role").sandbox =
+        sandbox;
       const created = await directSessionReq<{ key: string; entry: SessionEntry }>(
         "sessions.create",
         { projectId: project.id },
@@ -210,7 +213,10 @@ test("workspace alias changes during allocation revoke the selected source witho
   await withSessionTestState({ layout: "state-only" }, async (state) => {
     const { workspace, storePath, cfg, context, client } = await fixture(state.root);
     const replacement = await initializeRepository(state.root, "replacement");
-    cfg.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = ["workspace:main"];
+    expectDefined(
+      cfg.gateway?.roles?.definitions.contributor?.sessions.workspace,
+      "contributor workspace",
+    ).projects = ["workspace:main"];
     cfg.agents = {
       ownership: "explicit",
       defaults: { workspace },
@@ -259,18 +265,15 @@ test("trusted visible isolated spawn retains its parent's workspace requirement 
       { parentSessionKey: parent.payload!.key, spawnDepth: 1 },
       {
         context,
-        client: {
-          connect: { scopes: ["operator.write"] },
-          internal: {
-            syntheticClient: true,
-            sessionCreation: {
-              via: "spawn",
-              actor: { type: "agent", id: "main" },
-              requesterSessionKey: parent.payload!.key,
-              inheritedToolPolicy: { version: 1, allow: ["read"], deny: [] },
-            },
+        client: createSyntheticPluginRuntimeClient({
+          scopes: ["operator.write"],
+          sessionCreation: {
+            via: "spawn",
+            actor: { type: "agent", id: "main" },
+            requesterSessionKey: parent.payload!.key,
+            inheritedToolPolicy: { version: 1, allow: ["read"], deny: [] },
           },
-        } as GatewayClient,
+        }),
       },
     );
     expect(spawned.ok, JSON.stringify(spawned.error)).toBe(true);

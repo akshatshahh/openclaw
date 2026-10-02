@@ -13,7 +13,6 @@ import { lockWorktreeForProcess, unlockWorktree } from "./git-lock.js";
 import { readRegistryWorktree } from "./registry-read.js";
 import {
   claimWorktreeRemovalRow,
-  getRegistryWorktree,
   hasLiveWorktreeRunLeaseRow,
   listRegistryWorktrees,
   releaseWorktreeRunLeaseRow,

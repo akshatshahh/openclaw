@@ -372,8 +372,9 @@ export async function prepareAgentCommandExecution(
     candidatePaths: [resolvedCwd ?? workspaceDir, workspaceDir],
   });
   const runLease = worktreeId
-    ? await acquireWorktreeRunLease(worktreeId, {
-        ...(sessionEntryRaw?.requiredWorkspace
+    ? await acquireWorktreeRunLease(
+        worktreeId,
+        sessionEntryRaw?.requiredWorkspace
           ? {
               validateCheckout: async (record, assertLeaseCurrent) => {
                 await assertRequiredSessionWorktreeCheckout(record, () => {
@@ -382,8 +383,8 @@ export async function prepareAgentCommandExecution(
                 });
               },
             }
-          : {}),
-      })
+          : {},
+      )
     : undefined;
   try {
     const { resolveAcpAgentWorkspaceProvisioningForTurn } =
