@@ -402,8 +402,11 @@ together before a new session first runs, including chat, the OpenAI-compatible
 HTTP endpoints, Talk, recovery, forks, checkpoint branches, cron, outbound
 messages, and spawned children.
 Delegated child work inherits a required parent's original creator and sandbox
-policy, even after role changes. Recovery and branching requested by another
-person use that person's own role rather than the source session's policy.
+policy, even after role changes. When the source requires a sandbox, recovery and
+checkpoint forks retain that requirement and its original creator. Recovery also
+retains the original creator of required-workspace sessions. Recorded workspace
+and foreground execution restrictions survive both operations. The requesting
+person's current role may further restrict these operations.
 
 Required creation provenance is immutable. Role changes, sharing, participation,
 `sessions.patch`, whole-entry replacement, legacy imports, and canonical-key
