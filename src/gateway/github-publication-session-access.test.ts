@@ -19,6 +19,7 @@ import {
 import type { OperatorScope } from "./operator-scopes.js";
 import { handleGatewayRequest } from "./server-methods.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
+import { createContext } from "./server-plugin-in-process-dispatch.test-support.js";
 import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import { prepareGatewayConnectOperatorAccess } from "./server/ws-connection/connect-operator-access.js";
@@ -125,12 +126,13 @@ describe("registered session GitHub publication access", () => {
               scopes: ["operator.write"],
             })
           : person;
-      const context = {
+      const context: GatewayRequestContext = {
+        ...createContext(),
         ...f.guestSource.context,
         getClientConnIds: (filter?: (candidate: GatewayClient) => boolean) =>
           new Set(client.connId && (!filter || filter(client)) ? [client.connId] : []),
         githubPublicationService: f.coordinator,
-      } as GatewayRequestContext;
+      };
       if (outcome === "published") {
         const prepared = vi.fn();
         await handleGatewayRequest({
@@ -185,12 +187,13 @@ describe("registered session GitHub publication access", () => {
     mocks.prepareIdentity.mockClear();
     mocks.runCommand.mockClear();
     const client = f.guestSource.client;
-    const context = {
+    const context: GatewayRequestContext = {
+      ...createContext(),
       ...f.guestSource.context,
       getClientConnIds: (filter?: (candidate: GatewayClient) => boolean) =>
         new Set(client.connId && (!filter || filter(client)) ? [client.connId] : []),
       githubPublicationService: f.coordinator,
-    } as GatewayRequestContext;
+    };
     await handleGatewayRequest({
       req: {
         type: "req",

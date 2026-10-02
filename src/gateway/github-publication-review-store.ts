@@ -3,7 +3,10 @@ import {
   encodeGitHubPublicationRequester,
   type GitHubPublicationRequesterSnapshot,
 } from "../state/github-publication-requester.js";
-import { executeExistingOpenClawStateRead } from "../state/openclaw-state-db-readonly.js";
+import {
+  executeExistingOpenClawStateRead,
+  withArtifactPreservingStateReads,
+} from "../state/openclaw-state-db-readonly.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import type { PublicationSessionIdentity } from "./github-publication-availability.js";
@@ -27,15 +30,20 @@ async function read(
   input: GitHubPublicationReviewRead,
   context = captureOpenClawStateWorkerContext(),
 ) {
-  const result = await executeExistingOpenClawStateRead(
-    { path: context.admission.databasePath, env: context.environment },
-    { type: "publicationReview.read", input },
-    { context, current: true },
+  const result = await withArtifactPreservingStateReads(() =>
+    executeExistingOpenClawStateRead(
+      { path: context.admission.databasePath, env: context.environment },
+      { type: "publicationReview.read", input },
+      { context, current: true },
+    ),
   );
   context.admission.assertCurrent();
-  if (!result) return [];
-  if (!result.ok || result.type !== "publicationReview.read")
+  if (!result) {
+    return [];
+  }
+  if (!result.ok || result.type !== "publicationReview.read") {
     throw new Error("Publication reviews are unavailable.");
+  }
   return result.rows;
 }
 export async function readGitHubPublicationReview(

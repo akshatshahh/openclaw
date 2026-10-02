@@ -56,9 +56,13 @@ export async function readGitHubPublicationReviewTarget(input: {
   ]);
   assertCurrent();
   const refs: unknown = JSON.parse(headRaw);
-  if (!Array.isArray(refs)) throw new Error("The publication branch could not be verified.");
+  if (!Array.isArray(refs)) {
+    throw new Error("The publication branch could not be verified.");
+  }
   const exact = refs.filter((ref) => isRecord(ref) && ref.ref === `refs/heads/${target.branch}`);
-  if (exact.length > 1) throw new Error("The publication branch identity is ambiguous.");
+  if (exact.length > 1) {
+    throw new Error("The publication branch identity is ambiguous.");
+  }
   const ref: unknown = exact[0];
   const sha = isRecord(ref) && isRecord(ref.object) ? ref.object.sha : null;
   if (sha !== null && (typeof sha !== "string" || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(sha))) {

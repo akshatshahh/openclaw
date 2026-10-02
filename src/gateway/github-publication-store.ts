@@ -280,7 +280,7 @@ export function matchesGitHubPublicationIdentityRow(
 }
 
 /** Insert/replay shared intent inside the caller's admission transaction. */
-export function insertGitHubPublicationRequest(
+export function insertGitHubPublicationRequestInDatabase(
   db: Parameters<typeof getNodeSqliteKysely>[0],
   input: {
     request: {

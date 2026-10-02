@@ -32,7 +32,9 @@ export function readGitHubPublicationReviewsInDatabase(
   db: DatabaseSync,
   input: GitHubPublicationReviewRead,
 ): GitHubPublicationReviewRow[] {
-  if (!tableExists(db, table)) return [];
+  if (!tableExists(db, table)) {
+    return [];
+  }
   let selection = query(db).selectFrom(table).selectAll();
   switch (input.kind) {
     case "row": {
@@ -102,11 +104,14 @@ function insert(db: DatabaseSync, row: GitHubPublicationReviewRow) {
       existing.requested_review_id !== row.requested_review_id ||
       existing.requester_authority_json !== row.requester_authority_json ||
       existing.lifecycle_revision !== row.lifecycle_revision
-    )
+    ) {
       throw new Error("Publication review idempotency key was reused; start a new review.");
+    }
     return publicationCommit(existing);
   }
-  if (row.candidate_json) readGitHubPublicationReviewCandidate(row);
+  if (row.candidate_json) {
+    readGitHubPublicationReviewCandidate(row);
+  }
   if (row.requested_review_id) {
     const requested = readGitHubPublicationReviewsInDatabase(db, {
       kind: "row",
@@ -119,8 +124,9 @@ function insert(db: DatabaseSync, row: GitHubPublicationReviewRow) {
       requested.session_key !== row.session_key ||
       requested.agent_id !== row.agent_id ||
       requested.lifecycle_revision !== row.lifecycle_revision
-    )
+    ) {
       throw new Error("The original review request no longer matches this session.");
+    }
   }
   executeSqliteQuerySync(db, query(db).insertInto(table).values(row));
   return publicationCommit(row, [row]);
@@ -147,11 +153,14 @@ export function bindGitHubPublicationReviewInDatabase(
     current.agent_id !== session.agentId ||
     current.lifecycle_revision !== (session.lifecycleRevision ?? null) ||
     (current.publication_request_id && current.publication_request_id !== requestId)
-  )
+  ) {
     throw new Error("The reviewed candidate was already consumed or changed.");
+  }
   readGitHubPublicationReviewCandidate(current);
   // Replays refresh the bound observation without announcing another mutation.
-  if (current.publication_request_id === requestId) return { row: current, changed: false };
+  if (current.publication_request_id === requestId) {
+    return { row: current, changed: false };
+  }
   const updated = executeSqliteQueryTakeFirstSync(
     db,
     query(db)
@@ -163,7 +172,9 @@ export function bindGitHubPublicationReviewInDatabase(
       .where("stale_reason", "is", null)
       .returningAll(),
   );
-  if (!updated) throw new Error("The reviewed candidate was already consumed or changed.");
+  if (!updated) {
+    throw new Error("The reviewed candidate was already consumed or changed.");
+  }
   return { row: updated, changed: true };
 }
 
@@ -192,7 +203,7 @@ export const publicationReviewOperations = {
     context: WorkerOperationContext,
   ) =>
     transactGitHubPublication(context, (db) => {
-      if (tableExists(db, table))
+      if (tableExists(db, table)) {
         executeSqliteQuerySync(
           db,
           query(db)
@@ -201,6 +212,7 @@ export const publicationReviewOperations = {
             .where("review_id", "=", input.reviewId)
             .where("reported_at_ms", "is", null),
         );
+      }
       return publicationCommit(undefined);
     }),
   "publicationReview.retire": (

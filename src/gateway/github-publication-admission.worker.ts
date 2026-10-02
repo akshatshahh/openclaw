@@ -20,7 +20,7 @@ import {
 } from "./github-publication-review-store.worker.js";
 import {
   assertStoredGitHubPublicationClaim,
-  insertGitHubPublicationRequest,
+  insertGitHubPublicationRequestInDatabase,
   readGitHubPublicationRequest,
   sameGitHubPublicationClaim,
 } from "./github-publication-store.js";
@@ -42,11 +42,12 @@ export const publicationAdmissionOperations = {
         idempotencyKey: request.request.idempotencyKey,
       });
       const assertClaim = () => {
-        if (request.claim)
+        if (request.claim) {
           assertStoredGitHubPublicationClaim(db, { claim: request.claim, ...request.request });
+        }
       };
       assertClaim();
-      const row = insertGitHubPublicationRequest(db, request);
+      const row = insertGitHubPublicationRequestInDatabase(db, request);
       assertClaim();
       const bound = input.review
         ? bindGitHubPublicationReviewInDatabase(
@@ -61,10 +62,13 @@ export const publicationAdmissionOperations = {
             row.request_id,
           )
         : undefined;
-      if (request.claim && !sameGitHubPublicationClaim(row, request.claim))
+      if (request.claim && !sameGitHubPublicationClaim(row, request.claim)) {
         throw new Error("GitHub publication idempotency key was reused.");
+      }
       const result = publicationCommit(row, bound ? [bound.row] : [], bound?.changed);
-      if (!previous) result.sessions.push({ sessionKey: row.session_key, agentId: row.agent_id });
+      if (!previous) {
+        result.sessions.push({ sessionKey: row.session_key, agentId: row.agent_id });
+      }
       return result;
     }),
   "publicationAdmission.personal": (
@@ -115,8 +119,9 @@ export const publicationAdmissionOperations = {
           )
         : undefined;
       const result = publicationCommit(row, bound ? [bound.row] : [], bound?.changed);
-      if (!previous && row.request_id === input.row.request_id && row.owner_profile_id === null)
+      if (!previous && row.request_id === input.row.request_id && row.owner_profile_id === null) {
         result.sessions.push({ sessionKey: row.session_key, agentId: row.agent_id });
+      }
       return result;
     }),
 };

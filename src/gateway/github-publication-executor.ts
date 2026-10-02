@@ -321,7 +321,9 @@ export async function executeGitHubPublication<Row extends PublicationRow>(param
       baseBranch,
     );
     const assertReviewedTarget = async (ownHead?: string) => {
-      if (!params.review) return;
+      if (!params.review) {
+        return;
+      }
       const selectedIdentity = await refreshIdentity();
       assertGitHubPublicationReviewIdentity(params.review, selectedIdentity);
       const current = await readGitHubPublicationReviewTarget({

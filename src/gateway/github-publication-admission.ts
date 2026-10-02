@@ -3,7 +3,7 @@ import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worke
 import type { PersonalGitHubPublicationRow } from "./github-personal-publication-store.js";
 import { runGitHubPublicationMutation } from "./github-publication-mutation.js";
 import type { PreparedGitHubPublicationReview } from "./github-publication-review-contract.js";
-import type { insertGitHubPublicationRequest as insertShared } from "./github-publication-store.js";
+import type { insertGitHubPublicationRequestInDatabase as insertShared } from "./github-publication-store.js";
 
 export type GitHubPublicationReviewBinding = { reviewId: string; digest: string };
 export type SharedGitHubPublicationAdmission = Parameters<typeof insertShared>[1];

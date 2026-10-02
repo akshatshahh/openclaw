@@ -148,12 +148,13 @@ export async function executeRepositoryGitHubPublication(params: {
   let dispatched = row.last_effect !== null;
   try {
     assertCurrent();
-    if (params.review)
+    if (params.review) {
       assertGitHubPublicationReviewSnapshot(params.review, {
         sourceHeadCommit: snapshot.baseCommit,
         sourceIndexTree: snapshot.baseTree,
         workspaceTree: snapshot.workspaceTree,
       });
+    }
     const { push_repository: pushRepository, repository, base_branch: baseBranch, branch } = row;
     if (
       !pushRepository ||
@@ -260,7 +261,9 @@ export async function executeRepositoryGitHubPublication(params: {
     };
     let remoteHead = await observeHead();
     const assertReviewedTarget = async () => {
-      if (!params.review) return;
+      if (!params.review) {
+        return;
+      }
       const selectedIdentity = await refreshIdentity();
       assertGitHubPublicationReviewIdentity(params.review, selectedIdentity);
       const current = await readGitHubPublicationReviewTarget({

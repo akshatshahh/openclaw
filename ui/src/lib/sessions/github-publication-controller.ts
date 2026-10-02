@@ -344,8 +344,12 @@ export class GitHubPublicationController {
       this.refreshPending = false;
       if (this.result && !terminal(this.result)) {
         await this.readStatus(scope, current, this.result.requestId);
-        if (!current()) return;
-        if (!this.options?.reviewRequired && !this.options?.reviews?.length) return;
+        if (!current()) {
+          return;
+        }
+        if (!this.options?.reviewRequired && !this.options?.reviews?.length) {
+          return;
+        }
       }
       const sharedAttempt = this.attempt?.selection.source === "shared" ? this.attempt : null;
       const options = await scope.client.request<GitHubPublicationOptions>(
@@ -370,8 +374,9 @@ export class GitHubPublicationController {
             observed.digest !== this.review.digest ||
             observed.status === "stale" ||
             observed.status === "failed"
-          )
+          ) {
             this.reviewDiff = null;
+          }
           this.review = observed;
         }
       }
@@ -426,10 +431,13 @@ export class GitHubPublicationController {
     });
   }
   private async requestReview(presentation: Presentation): Promise<void> {
-    if (!presentation.scope?.canRequestReview) return;
+    if (!presentation.scope?.canRequestReview) {
+      return;
+    }
     await this.run(presentation, "review", async (owner, current) => {
-      if (this.review && ["published", "failed", "stale"].includes(this.review.status))
+      if (this.review && ["published", "failed", "stale"].includes(this.review.status)) {
         this.requestReviewKey = null;
+      }
       this.requestReviewKey ??= generateUUID();
       const review = await owner.client.request<SessionGitHubReviewResult>(
         "sessions.github.requestReview",
@@ -458,21 +466,23 @@ export class GitHubPublicationController {
     current: () => boolean,
     review: SessionGitHubReviewResult,
   ): Promise<void> {
-    if (!review.digest) return;
+    if (!review.digest) {
+      return;
+    }
     const chunks: string[] = [];
     let offset = 0;
     while (current()) {
-      const page = await owner.client.request<SessionGitHubReviewDiffResult>(
-        "sessions.github.review",
-        {
+      const page: SessionGitHubReviewDiffResult =
+        await owner.client.request<SessionGitHubReviewDiffResult>("sessions.github.review", {
           ...owner.target,
           action: "diff",
           reviewId: review.reviewId,
           digest: review.digest,
           offset,
-        },
-      );
-      if (!current()) return;
+        });
+      if (!current()) {
+        return;
+      }
       if (
         page.reviewId !== review.reviewId ||
         page.digest !== review.digest ||
@@ -486,15 +496,19 @@ export class GitHubPublicationController {
       chunks.push(page.text);
       const end = offset + page.text.length;
       if (page.complete) {
-        if (page.nextOffset !== null || end !== page.totalCharacters)
+        if (page.nextOffset !== null || end !== page.totalCharacters) {
           throw new Error(t("githubPublication.reviewIncomplete"));
-        if (this.review?.reviewId !== review.reviewId) this.confirmation = null;
+        }
+        if (this.review?.reviewId !== review.reviewId) {
+          this.confirmation = null;
+        }
         this.review = review;
         this.reviewDiff = chunks.join("");
         return;
       }
-      if (page.nextOffset !== end || end <= offset)
+      if (page.nextOffset !== end || end <= offset) {
         throw new Error(t("githubPublication.reviewIncomplete"));
+      }
       offset = end;
     }
   }
@@ -503,7 +517,9 @@ export class GitHubPublicationController {
     const selection =
       this.selection ??
       (!this.options?.shared ? personalGitHubPublicationSelection(this.options) : null);
-    if (!selection || !this.canPublish(presentation, selection.source) || this.locked) return;
+    if (!selection || !this.canPublish(presentation, selection.source) || this.locked) {
+      return;
+    }
     await this.run(presentation, "review", async (owner, current) => {
       this.reviewKey ??= generateUUID();
       const requested = this.options?.reviews?.find((item) => item.status === "requested");
@@ -517,7 +533,9 @@ export class GitHubPublicationController {
           ...(requested ? { requestedReviewId: requested.reviewId } : {}),
         },
       );
-      if (!current()) return;
+      if (!current()) {
+        return;
+      }
       this.review = review;
       this.reviewDiff = null;
       await this.loadReviewDiff(owner, current, review);
@@ -532,8 +550,9 @@ export class GitHubPublicationController {
       !review.publisher ||
       (review.status !== "ready" && review.status !== "needs_confirmation") ||
       !this.canPublish(presentation, review.publisher.source === "personal" ? "personal" : "shared")
-    )
+    ) {
       return;
+    }
     if (review.publisher.source === "personal" && this.confirmation) {
       await this.confirm(presentation);
       return;
@@ -548,7 +567,9 @@ export class GitHubPublicationController {
           review: { reviewId: review.reviewId, digest: review.digest },
         },
       );
-      if (!current()) return;
+      if (!current()) {
+        return;
+      }
       this.applyResult(result);
       this.review = {
         ...review,
@@ -558,8 +579,9 @@ export class GitHubPublicationController {
             ? result.status
             : "needs_confirmation",
       };
-      if (result.status === "needs_confirmation")
+      if (result.status === "needs_confirmation") {
         await this.readStatus(owner, current, result.requestId);
+      }
     });
   }
 
@@ -688,7 +710,9 @@ export class GitHubPublicationController {
         canPublish && !this.locked
           ? () =>
               invoke(() => {
-                if (this.review?.digest) this.reviewKey = null;
+                if (this.review?.digest) {
+                  this.reviewKey = null;
+                }
                 void this.prepareReview(presentation);
               })
           : undefined,

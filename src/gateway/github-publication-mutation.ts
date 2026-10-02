@@ -19,7 +19,9 @@ function isCommit(value: unknown): value is GitHubPublicationCommit<unknown> {
     value.kind === "github-publication" &&
     Array.isArray(value.reviews) &&
     value.reviews.every((change) => {
-      if (!isRecord(change) || typeof change.reviewId !== "string") return false;
+      if (!isRecord(change) || typeof change.reviewId !== "string") {
+        return false;
+      }
       const row = change.row;
       return (
         row === undefined ||
@@ -73,8 +75,9 @@ export async function runGitHubPublicationMutation<T>(
             grant();
             return;
           }
-          if (stage !== "commit" || current.stage !== "commit" || !isCommit(current.facts))
+          if (stage !== "commit" || current.stage !== "commit" || !isCommit(current.facts)) {
             throw new Error("Publication mutation omitted its admitted commit facts");
+          }
           stage = "complete";
           // SAFETY: The selected command binds T to its native receipt; transport validation checks the envelope.
           prepared = current.facts as GitHubPublicationCommit<T>;
@@ -88,8 +91,9 @@ export async function runGitHubPublicationMutation<T>(
           try {
             const receipt = acceptedAdmission.committed;
             if (receipt) {
-              if (!prepared || !isDeepStrictEqual(receipt.facts, prepared))
+              if (!prepared || !isDeepStrictEqual(receipt.facts, prepared)) {
                 throw new Error("Publication commit facts changed during native settlement");
+              }
               committed = true;
             }
             known = !granted || committed || settlement.kind === "completed";
@@ -102,8 +106,9 @@ export async function runGitHubPublicationMutation<T>(
             } catch {
               return;
             }
-            for (const session of prepared.sessions)
+            for (const session of prepared.sessions) {
               emitSessionLifecycleEvent({ ...session, reason: "github-publication" });
+            }
           }
         });
         void settled.catch(() => undefined);
@@ -114,8 +119,13 @@ export async function runGitHubPublicationMutation<T>(
     return result.value;
   } catch (error) {
     await settled;
-    if (prepared && admission?.committed && isDeepStrictEqual(admission.committed.facts, prepared))
+    if (
+      prepared &&
+      admission?.committed &&
+      isDeepStrictEqual(admission.committed.facts, prepared)
+    ) {
       return prepared.value;
+    }
     throw error;
   } finally {
     await settled;

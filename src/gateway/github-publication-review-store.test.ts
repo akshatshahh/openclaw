@@ -63,7 +63,9 @@ describe("publication review worker ownership", () => {
             insertGitHubPublicationReview({
               ...request,
               assertCurrent() {
-                if (!current) throw new Error("review source revoked");
+                if (!current) {
+                  throw new Error("review source revoked");
+                }
               },
             }),
           ).rejects.toThrow("review source revoked");
@@ -125,7 +127,9 @@ describe("publication review worker ownership", () => {
         .spyOn(stateWorker, "runOpenClawStateWorkerOperation")
         .mockImplementationOnce((context, operation, options) => {
           const createAdmission = options?.createAdmission;
-          if (!createAdmission) throw new Error("Expected publication admission");
+          if (!createAdmission) {
+            throw new Error("Expected publication admission");
+          }
           return execute(context, operation, {
             ...options,
             createAdmission: ({ settled }) =>
@@ -150,8 +154,9 @@ describe("publication review worker ownership", () => {
               isRecord(facts) &&
               isRecord(facts.value) &&
               typeof facts.value.review_id === "string"
-            )
+            ) {
               reviewId = facts.value.review_id;
+            }
             admit(nativeRequest, grant);
           }, attachment),
         );
@@ -178,7 +183,7 @@ describe("publication review worker ownership", () => {
         expect(observation.row).toEqual(row);
         expect(observation.current()?.review_id).toBe(row.review_id);
         await closeOpenClawStateDatabaseAsync();
-        expect(observation.current).toThrow();
+        expect(() => observation.current()).toThrow();
       } finally {
         release.resolve();
         await Promise.all([insertion, prepared]);

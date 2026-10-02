@@ -10,10 +10,11 @@ const account = z.strictObject({ accountId: z.number().int().positive(), login: 
 
 /** Durable review contains source bytes; it cannot outlive an incognito conversation. */
 export function assertDurableGitHubPublicationReview(sessionKey: string): void {
-  if (isIncognitoSessionKey(sessionKey))
+  if (isIncognitoSessionKey(sessionKey)) {
     throw new Error(
       "Publication review is unavailable in Incognito. Start a regular conversation and prepare its repository changes before requesting review.",
     );
+  }
 }
 
 /** Review bytes and authority facts have one durable owner; none are client-selected targets. */

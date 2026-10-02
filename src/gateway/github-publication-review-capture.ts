@@ -250,8 +250,9 @@ export async function captureGitHubPublicationReview(input: {
       }
     }
     const workspace = initial.workspace;
-    if (!workspace.checkpointRef)
+    if (!workspace.checkpointRef) {
       throw new Error("Finish the current turn and save a checkpoint before requesting review.");
+    }
     const assertCheckpoint = () => {
       assertCurrent();
       const owner = current();

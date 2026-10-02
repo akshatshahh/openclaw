@@ -9,7 +9,7 @@ import type { PublicationSessionIdentity } from "./github-publication-availabili
 import {
   digestGitHubPublicationRequest,
   ensureGitHubPublicationStore,
-  insertGitHubPublicationRequest,
+  insertGitHubPublicationRequestInDatabase,
 } from "./github-publication-store.js";
 import {
   BRANCH,
@@ -56,7 +56,7 @@ export function insertSharedWorktreeReceipt(
     idempotencyKey: options.idempotencyKey ?? requestId,
   };
   return runOpenClawStateWriteTransaction(({ db }) =>
-    insertGitHubPublicationRequest(db, {
+    insertGitHubPublicationRequestInDatabase(db, {
       request,
       requestId,
       requestDigest: digestGitHubPublicationRequest({ ...request, sessionId: session.sessionId }),

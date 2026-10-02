@@ -115,8 +115,9 @@ export function readGitHubPublicationReviewDiff(
     throw new Error("The review candidate changed; select it again.");
   }
   const candidate = readGitHubPublicationReviewCandidate(row);
-  if (offset > candidate.diff.length)
+  if (offset > candidate.diff.length) {
     throw new Error("The review diff page is outside this candidate.");
+  }
   const text = candidate.diff.slice(offset, offset + 4096);
   const end = offset + text.length;
   return {
@@ -133,7 +134,9 @@ export function readGitHubPublicationReviewDiff(
 export function publicationNeedsReviewConfirmation(
   result: SessionGitHubPublicationResult,
 ): SessionGitHubPublicationResult {
-  if (result.status === "published" || result.status === "failed") return result;
+  if (result.status === "published" || result.status === "failed") {
+    return result;
+  }
   return {
     requestId: result.requestId,
     publisher: result.publisher,
@@ -208,11 +211,12 @@ export async function prepareGitHubPublicationReviewConfirmation(
   try {
     assertWorkspace();
   } catch (error) {
-    if (error instanceof GitHubPublicationWorkspaceChangedError)
+    if (error instanceof GitHubPublicationWorkspaceChangedError) {
       await markGitHubPublicationReviewStale(
         row,
         "The reviewed workspace changed. Prepare a new candidate.",
       );
+    }
     throw error;
   }
   const create = (
@@ -238,13 +242,15 @@ export async function prepareGitHubPublicationReviewConfirmation(
       assertCurrent,
       assertBoundRequest(requestId) {
         assertCurrent();
-        if (observation.current()?.publication_request_id !== requestId)
+        if (observation.current()?.publication_request_id !== requestId) {
           throw new Error("Publication confirmation is not bound to this exact request.");
+        }
       },
       retain: () => {
         assertCurrent();
-        if (!authority.retainForReview)
+        if (!authority.retainForReview) {
           throw new Error("A deferred review requires a live original maintainer source.");
+        }
         const held = authority.retainForReview();
         // Only the coordinator's exact accepted-claim hold may advance checkpoint
         // metadata. A direct confirmation remains pinned across reservation waits.
@@ -281,14 +287,20 @@ export function createGitHubPublicationReviewHolds(placements: WorkerSessionPlac
     a.owner.environmentId === b.owner.environmentId &&
     a.owner.ownerEpoch === b.owner.ownerEpoch;
   const unregister = placements.registerTurnClaimClosedHandler((claim) => {
-    for (const [id, held] of active) if (sameClaim(held.claim, claim)) release(id);
+    for (const [id, held] of active) {
+      if (sameClaim(held.claim, claim)) {
+        release(id);
+      }
+    }
   });
   const drain = getGatewayRestartDrainSignal();
   drain.addEventListener(
     "abort",
     () => {
       unregister();
-      for (const id of active.keys()) release(id);
+      for (const id of active.keys()) {
+        release(id);
+      }
     },
     { once: true },
   );
@@ -302,8 +314,9 @@ export function createGitHubPublicationReviewHolds(placements: WorkerSessionPlac
       review.assertCurrent();
       drain.throwIfAborted();
       review.assertBoundRequest(requestId);
-      if (!placements.validateTurnClaim(claim))
+      if (!placements.validateTurnClaim(claim)) {
         throw new Error("Publication confirmation could not transfer to its exact accepted turn.");
+      }
       const held = review.retain();
       release(requestId);
       active.set(requestId, {
@@ -316,15 +329,20 @@ export function createGitHubPublicationReviewHolds(placements: WorkerSessionPlac
       });
       const revoked = () => release(requestId);
       held.signal.addEventListener("abort", revoked, { once: true });
-      if (held.signal.aborted) revoked();
+      if (held.signal.aborted) {
+        revoked();
+      }
     },
     current(requestId: string, claim: WorkerSessionTurnClaim) {
       const held = active.get(requestId);
-      if (!held || !sameClaim(held.claim, claim)) return undefined;
+      if (!held || !sameClaim(held.claim, claim)) {
+        return undefined;
+      }
       try {
         drain.throwIfAborted();
-        if (!placements.validateWorkspaceResultClaim(claim))
+        if (!placements.validateWorkspaceResultClaim(claim)) {
           throw new Error("Publication turn closed.");
+        }
         held.review.assertCurrent();
         return held.review;
       } catch {

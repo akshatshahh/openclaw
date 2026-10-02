@@ -7,7 +7,7 @@ import { GATEWAY_OWNER_PROFILE_ID } from "../../packages/gateway-protocol/src/sc
 import type { PreparedGitHubPublicationIdentity } from "../agents/github-tool-identity.js";
 import { acquireWorktreeRunLease } from "../agents/worktrees/run-lease.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { executeSqliteQuerySync, executeSqliteQueryTakeFirstSync } from "../infra/kysely-sync.js";
+import { executeSqliteQueryTakeFirstSync } from "../infra/kysely-sync.js";
 import { getOrCreatePromise } from "../shared/lazy-promise.js";
 import type { GitHubPublicationRow as PublicationRow } from "../state/github-publication-read.types.js";
 import { encodeGitHubPublicationRequester } from "../state/github-publication-requester.js";
@@ -28,9 +28,9 @@ import {
 } from "./github-publication-availability.js";
 import {
   createGitHubPublicationCoordinatorMethods,
+  exactClaimForPlacement,
   type GitHubPublicationClaimRequest,
 } from "./github-publication-coordinator-methods.js";
-import { exactClaimForPlacement } from "./github-publication-coordinator-methods.js";
 import { deferSharedGitHubPublicationChanged } from "./github-publication-events.js";
 import { GitHubPublicationAuthorityLostError } from "./github-publication-execution-identity.js";
 import {
@@ -193,8 +193,9 @@ export function createGitHubPublicationCoordinator(params: {
       },
       () => {
         assertRequester();
-        if (!params.placements.validateTurnClaim(request.claim))
+        if (!params.placements.validateTurnClaim(request.claim)) {
           throw new Error("GitHub publication turn authority changed before recording.");
+        }
         resolveGitHubPublicationWorktreeOwner({
           sessionId: request.claim.sessionId,
           sessionKey: request.sessionKey,
@@ -542,7 +543,9 @@ export function createGitHubPublicationCoordinator(params: {
     ...personal,
     retireReviewReport: retireGitHubPublicationReviewReport,
     reviewResult(review: GitHubPublicationReviewRow) {
-      if (!review.publication_request_id) return undefined;
+      if (!review.publication_request_id) {
+        return undefined;
+      }
       const id = review.publication_request_id;
       const row =
         readRepositoryGitHubPublication(id) ??
@@ -553,8 +556,9 @@ export function createGitHubPublicationCoordinator(params: {
         row.session_id !== review.session_id ||
         row.session_key !== review.session_key ||
         row.agent_id !== review.agent_id
-      )
+      ) {
         return undefined;
+      }
       return publicationResult(row);
     },
     async prepareReview(input: {
@@ -596,12 +600,13 @@ export function createGitHubPublicationCoordinator(params: {
         ) {
           throw new Error("Publication review idempotency key was reused; start a new review.");
         }
-        if (selection?.source === "shared")
+        if (selection?.source === "shared") {
           assertExpectedSharedGitHubPublisher(selection.expected, {
             source: candidate.publisher.source,
             accountId: candidate.publisher.accountId,
             login: candidate.publisher.login,
           });
+        }
         input.requester.assertCurrent();
         return previous;
       }

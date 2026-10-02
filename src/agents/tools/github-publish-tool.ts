@@ -64,10 +64,11 @@ export function createGitHubPublishTool(
         return jsonResult(metadata);
       }
       if (input.action === "diff") {
-        if (!input.review || input.offset === undefined)
+        if (!input.review || input.offset === undefined) {
           throw new Error(
             "Diff review requires reviewId, digest and an explicit offset; start at 0 and follow nextOffset until complete.",
           );
+        }
         return jsonResult(
           await callGateway<SessionGitHubReviewDiffResult>("sessions.github.review", {
             sessionKey: caller.sessionKey,
@@ -77,10 +78,11 @@ export function createGitHubPublishTool(
           }),
         );
       }
-      if (input.action === "confirm" && !input.review)
+      if (input.action === "confirm" && !input.review) {
         throw new Error(
           "Confirm requires the reviewed candidate's reviewId and digest. Prepare and read its complete diff first.",
         );
+      }
       const result = await callGateway<SessionGitHubPublicationResult>("sessions.github.publish", {
         sessionKey: caller.sessionKey,
         idempotencyKey: toolCallId,

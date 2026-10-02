@@ -78,7 +78,9 @@ export function createGitHubPublicationTranscriptReporter(
     let sessionEntryCurrent: SessionEntryCurrentCheck | undefined;
     if (params.lifecycleRevision !== undefined) {
       const assertCurrent = (facts: SessionEntryCurrentFacts | undefined) => {
-        if (!facts) throw new Error("GitHub publication review transcript owner is unavailable");
+        if (!facts) {
+          throw new Error("GitHub publication review transcript owner is unavailable");
+        }
         if (
           facts.sessionId !== params.sessionId ||
           (facts.lifecycleRevision ?? null) !== params.lifecycleRevision
@@ -90,11 +92,14 @@ export function createGitHubPublicationTranscriptReporter(
         scope,
         () => {},
         async (read, owner) => {
-          if (!read.ok) throw read.error;
+          if (!read.ok) {
+            throw read.error;
+          }
           assertCurrent(read.value);
           const captured = captureSessionEntryCurrentRead(scope, owner);
-          if (captured.kind !== "file")
+          if (captured.kind !== "file") {
             throw new Error("Publication review reporting requires its durable session owner");
+          }
           return {
             source: captured.source,
             assertCurrent: (facts) => {

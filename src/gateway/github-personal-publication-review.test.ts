@@ -35,7 +35,9 @@ async function fixture(backend: "local" | "repository") {
   await persistPublicationTestSession();
   const local = backend === "local" ? await createRealPublicationWorkspace() : undefined;
   const person = await createPersonalPublicationFixture();
-  if (repository) repository.runtime.accountId = personalPublicationAccount.accountId;
+  if (repository) {
+    repository.runtime.accountId = personalPublicationAccount.accountId;
+  }
   const selection = {
     source: "personal" as const,
     generation: person.generation,

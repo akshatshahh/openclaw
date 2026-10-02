@@ -1,6 +1,6 @@
 // Install shared transport mocks before publication owners enter the module cache.
 // oxfmt-ignore
-import { createGitHubPublicationRequesterFixture, createRealPublicationWorkspace, createTestGitHubPublicationCoordinator, createTestGitHubPublicationRuntime, persistPublicationTestSession, githubPublicationTestMocks, installGitHubPublicationTestHarness } from "./github-publication.test-support.js";
+import { createGitHubPublicationRequesterFixture, createRealPublicationWorkspace, createTestGitHubPublicationCoordinator, createTestGitHubPublicationRuntime, persistPublicationTestSession, installGitHubPublicationTestHarness } from "./github-publication.test-support.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -41,7 +41,6 @@ import { readGitHubPublicationRequest } from "./github-publication-store.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import { createContext } from "./server-plugin-in-process-dispatch.test-support.js";
 import { createWorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
-const mocks = githubPublicationTestMocks();
 const checkpoint = vi.hoisted(() => vi.fn());
 vi.mock("./worker-environments/session-repository-checkpoints.js", () => ({
   withSessionRepositoryCheckpoint: (...args: unknown[]) => checkpoint(...args),
@@ -145,8 +144,9 @@ describe("reviewed publication from restricted conversations", () => {
       expect(
         loadSessionEntryReadOnly({ agentId: "main", sessionKey: f.session.sessionKey }),
       ).toMatchObject({ sandbox: "required", createdActor: { id: f.guestProfile } });
-      for (const cwd of f.repository?.reviewWorkspaces ?? [])
+      for (const cwd of f.repository?.reviewWorkspaces ?? []) {
         await expect(fs.stat(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+      }
     },
   );
 
@@ -162,7 +162,9 @@ describe("reviewed publication from restricted conversations", () => {
       };
       const client = f.maintainerSource.client;
       const source = await captureGatewayOperatorRunAuthority({ client, context });
-      if (!source) throw new Error("Expected a captured maintainer source");
+      if (!source) {
+        throw new Error("Expected a captured maintainer source");
+      }
       let receiptId: string;
       try {
         receiptId = await withPluginRuntimeGatewayRequestScope(
@@ -231,7 +233,9 @@ describe("reviewed publication from restricted conversations", () => {
       expect(f.publisher.assertCurrent).toThrow();
       f.placements.markWorkspaceResultPending(claim);
       await f.coordinator.prepareClaimWorkspace(claim);
-      if (f.repository) await f.repository.capture("accepted first\n", "same-reviewed-source");
+      if (f.repository) {
+        await f.repository.capture("accepted first\n", "same-reviewed-source");
+      }
       f.placements.acceptWorkspaceResult(claim);
       expect(await f.coordinator.processClaim(claim)).toContainEqual(
         expect.objectContaining({ requestId: accepted.requestId, status: "published" }),
@@ -248,7 +252,7 @@ describe("reviewed publication from restricted conversations", () => {
       const input = await f.reviewedRequest("restart", f.publisher);
       const claim =
         backend === "local"
-          ? f.placements.claimTurn({
+          ? await f.placements.claimTurn({
               ...f.session,
               agentId: "main",
               claimId: "restart-local",
@@ -292,17 +296,21 @@ describe("reviewed publication from restricted conversations", () => {
     async (backend) => {
       const f = await fixture(backend);
       const input = await f.reviewedRequest("source-stale", f.publisher);
-      if (f.local) await fs.writeFile(path.join(f.local.cwd, "artifact.txt"), "unreviewed edit\n");
-      else await f.repository!.capture("unreviewed edit\n", "changed");
-      if (backend === "repository")
+      if (f.local) {
+        await fs.writeFile(path.join(f.local.cwd, "artifact.txt"), "unreviewed edit\n");
+      } else {
+        await f.repository!.capture("unreviewed edit\n", "changed");
+      }
+      if (backend === "repository") {
         await expect(f.coordinator.requestForSession(input)).rejects.toThrow(
           "reviewed workspace changed",
         );
-      else
+      } else {
         expect(await f.coordinator.requestForSession(input)).toMatchObject({
           status: "failed",
           code: "workspace_changed",
         });
+      }
       expect(f.externalWrites).toEqual([]);
     },
   );
@@ -345,7 +353,7 @@ describe("reviewed publication from restricted conversations", () => {
     await expect(f.reviewedRequest("idempotent", f.publisher, "different title")).rejects.toThrow(
       "idempotency key",
     );
-    const claim = f.placements.claimTurn({
+    const claim = await f.placements.claimTurn({
       ...f.session,
       agentId: "main",
       claimId: "binding",
@@ -388,7 +396,7 @@ describe("reviewed publication from restricted conversations", () => {
     async (stage) => {
       const f = await fixture("local");
       const input = await f.reviewedRequest(`revoked-${stage}`, f.publisher);
-      const claim = f.placements.claimTurn({
+      const claim = await f.placements.claimTurn({
         ...f.session,
         agentId: "main",
         claimId: stage,
@@ -471,7 +479,9 @@ describe("reviewed publication from restricted conversations", () => {
         "totalCharacters",
       ]);
       chunks.push(page.text);
-      if (page.complete) break;
+      if (page.complete) {
+        break;
+      }
       offset = page.nextOffset!;
     }
     expect(chunks.join("")).toBe(input.preparedReview.candidate.diff);
@@ -500,7 +510,7 @@ describe("reviewed publication from restricted conversations", () => {
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now++);
     let currentId: string;
     try {
-      for (let index = 0; index < 100; index++)
+      for (let index = 0; index < 100; index++) {
         oldIds.push(
           (
             await insertGitHubPublicationReview({
@@ -511,6 +521,7 @@ describe("reviewed publication from restricted conversations", () => {
             })
           ).review_id,
         );
+      }
       currentId = (
         await insertGitHubPublicationReview({
           session,
@@ -530,11 +541,12 @@ describe("reviewed publication from restricted conversations", () => {
     });
     await runtime.reconcilePublications();
     expect(warn).not.toHaveBeenCalled();
-    for (const reviewId of oldIds)
+    for (const reviewId of oldIds) {
       expect(await readGitHubPublicationReview({ reviewId })).toMatchObject({
         reported_at_ms: expect.any(Number),
         stale_reason: expect.stringContaining("not delivered"),
       });
+    }
     expect((await listUnreportedGitHubPublicationReviews()).map((row) => row.review_id)).toEqual([
       currentId!,
     ]);

@@ -264,7 +264,9 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
             workspaceTree: facts.workspace_tree!,
           });
         });
-        if (currentCheckpoint) return currentCheckpoint;
+        if (currentCheckpoint) {
+          return currentCheckpoint;
+        }
       }
       if (!row.checkpoint_ref) {
         if (
@@ -523,8 +525,9 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
         },
         input.claim,
       );
-      if (input.preparedReview && !terminalRepositoryGitHubPublication(row))
+      if (input.preparedReview && !terminalRepositoryGitHubPublication(row)) {
         params.reviews.retain(row.request_id, input.preparedReview, input.claim);
+      }
       return projectGitHubPublicationResult(row);
     },
     async requestForSession(input: SharedRequest) {
@@ -541,8 +544,9 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
       }
       const claim = input.expectedRunId !== undefined ? currentClaim : undefined;
       const row = await admitShared(input, claim);
-      if (claim && input.preparedReview && !terminalRepositoryGitHubPublication(row))
+      if (claim && input.preparedReview && !terminalRepositoryGitHubPublication(row)) {
         params.reviews.retain(row.request_id, input.preparedReview, claim);
+      }
       if (
         terminalRepositoryGitHubPublication(row) ||
         claim ||

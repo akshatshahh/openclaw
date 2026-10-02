@@ -21,7 +21,7 @@ import { executeGitHubPublication } from "./github-publication-executor.js";
 import { restoreGitHubPublicationRequester } from "./github-publication-requester.js";
 import {
   ensureGitHubPublicationStore,
-  insertGitHubPublicationRequest,
+  insertGitHubPublicationRequestInDatabase,
   claimGitHubPublicationExecution,
   createGitHubPublicationExecutionStore,
   isGitHubPublicationExecutionOwner,
@@ -406,7 +406,7 @@ it.each([
       ensureGitHubPublicationStore();
       const requestId = "local-publication";
       runOpenClawStateWriteTransaction(({ db }) =>
-        insertGitHubPublicationRequest(db, {
+        insertGitHubPublicationRequestInDatabase(db, {
           request: { ...scope, idempotencyKey: "local", title: "Continue" },
           requestId,
           requestDigest: createHash("sha256").update("local").digest("hex"),

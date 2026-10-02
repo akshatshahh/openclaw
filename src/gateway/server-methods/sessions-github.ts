@@ -277,11 +277,15 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
     validateSessionGitHubRequestReviewParams,
     async (options) => {
       assertDurableGitHubPublicationReview(options.params.sessionKey);
-      if (!options.context.githubPublicationService)
+      if (!options.context.githubPublicationService) {
         throw new Error("GitHub publication is unavailable.");
+      }
       const read = await prepareGitHubPublicationOptionsRead(options, options.params);
-      if (!(await hasSupportedGitHubPublicationTarget(read.currentSession(), read.currentSession)))
+      if (
+        !(await hasSupportedGitHubPublicationTarget(read.currentSession(), read.currentSession))
+      ) {
         throw new Error("Review requires this conversation's managed GitHub repository workspace.");
+      }
       read.currentSession();
       const actor = resolveGatewayOperatorRoleActor(options.client);
       const profileId =
@@ -290,7 +294,9 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
           : actor?.kind === "system"
             ? GATEWAY_OWNER_PROFILE_ID
             : undefined;
-      if (!profileId) throw new Error("Request review from an authenticated profile.");
+      if (!profileId) {
+        throw new Error("Request review from an authenticated profile.");
+      }
       const row = await insertGitHubPublicationReview({
         session: read.currentSession(),
         idempotencyKey: options.params.idempotencyKey,
@@ -309,11 +315,15 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
     async (options) => {
       const read = await prepareGitHubPublicationOptionsRead(options, options.params);
       const service = options.context.githubPublicationService;
-      if (!service) throw new Error("GitHub publication is unavailable.");
+      if (!service) {
+        throw new Error("GitHub publication is unavailable.");
+      }
       const request = options.params;
       if (request.action === "diff") {
         const row = await readGitHubPublicationReview({ reviewId: request.reviewId });
-        if (!row) throw new Error("The review candidate is unavailable.");
+        if (!row) {
+          throw new Error("The review candidate is unavailable.");
+        }
         assertGitHubPublicationReviewSession(row, read.currentSession());
         const result = readGitHubPublicationReviewDiff(row, request, request.offset);
         read.currentSession();
@@ -341,11 +351,12 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
               ? await preparePersonalGitHubPublicationSelection(personal, assertCurrent)
               : await prepareCurrentGitHubPublicationIdentity(session.agentId);
             assertCurrent();
-            if (request.selection?.source === "shared")
+            if (request.selection?.source === "shared") {
               assertExpectedSharedGitHubPublisher(request.selection.expected, {
                 source: identity.source,
                 ...identity.account,
               });
+            }
             return identity;
           },
         });
@@ -411,7 +422,9 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
         !isIncognitoSessionKey(session.sessionKey) &&
         (await hasSupportedGitHubPublicationTarget(session, read.currentSession));
       read.currentSession();
-      if (shared && read.sessionScoped && !reviewAvailable) shared = null;
+      if (shared && read.sessionScoped && !reviewAvailable) {
+        shared = null;
+      }
       const rows = await listGitHubPublicationReviews(session);
       const reviews = rows
         .filter(

@@ -342,13 +342,15 @@ export function createPersonalGitHubPublicationCoordinator(
     const reviewed = await readGitHubPublicationReview({ publicationRequestId: row.request_id });
     workspace.assertCurrent();
     const owner = resolveGitHubPublicationWorktreeOwner(action);
-    if (!review && (reviewed || owner.loaded.entry?.sandbox === "required"))
+    if (!review && (reviewed || owner.loaded.entry?.sandbox === "required")) {
       return publicationNeedsReviewConfirmation(projectGitHubPublicationResult(row));
+    }
     if (
       review &&
       (reviewed?.review_id !== review.id || reviewed.candidate_digest !== review.digest)
-    )
+    ) {
       throw new Error("Publication confirmation does not own this receipt.");
+    }
     review?.assertCurrent();
     const selected = {
       generation: row.connection_generation,
@@ -477,7 +479,9 @@ export function createPersonalGitHubPublicationCoordinator(
           assertCurrent,
         });
         assertCurrent();
-        if (review) assertGitHubPublicationReviewSnapshot(review, snapshot);
+        if (review) {
+          assertGitHubPublicationReviewSnapshot(review, snapshot);
+        }
         const now = Date.now();
         const row: PersonalGitHubPublicationRow = {
           request_id: randomUUID(),

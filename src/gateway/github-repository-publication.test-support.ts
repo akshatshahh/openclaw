@@ -221,7 +221,9 @@ export async function createRepositoryPublicationFixture(
     async (args: string[], options: Parameters<typeof runCommandBuffered>[1] = {}) => {
       if (args[0] !== "gh") {
         if (options.cwd && reviewWorkspaces.has(options.cwd)) {
-          if (args.includes("fetch")) return commandResult();
+          if (args.includes("fetch")) {
+            return commandResult();
+          }
           return await runCommandBuffered(args, {
             ...options,
             env: {

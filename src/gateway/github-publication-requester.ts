@@ -192,13 +192,17 @@ export async function captureGitHubPublicationRequester(
   let released = false;
   const releaseReference = () => {
     references -= 1;
-    if (references !== 0) return;
+    if (references !== 0) {
+      return;
+    }
     sessionFacts?.release();
     identity?.release();
     source?.release();
   };
   const release = () => {
-    if (released) return;
+    if (released) {
+      return;
+    }
     released = true;
     releaseReference();
   };
@@ -254,7 +258,9 @@ export async function captureGitHubPublicationRequester(
     );
     const assertInvocationCurrent = () => {
       try {
-        if (released) throw new GitHubPublicationRequesterUnavailableError();
+        if (released) {
+          throw new GitHubPublicationRequesterUnavailableError();
+        }
         options.signal?.throwIfAborted();
         if (options.hasCurrentClientAuthority?.() === false) {
           throw new GitHubPublicationRequesterUnavailableError();
@@ -276,20 +282,30 @@ export async function captureGitHubPublicationRequester(
       },
       retainForReview: () => {
         requester.assertCurrent();
-        if (!source) throw new GitHubPublicationRequesterUnavailableError();
+        if (!source) {
+          throw new GitHubPublicationRequesterUnavailableError();
+        }
         const lifetime = new AbortController();
         const signals = [source.authority.signal, getGatewayRestartDrainSignal()].filter(
           (signal): signal is AbortSignal => signal !== undefined,
         );
         references += 1;
-        const release = () => {
-          if (lifetime.signal.aborted) return;
+        const releaseReviewHold = () => {
+          if (lifetime.signal.aborted) {
+            return;
+          }
           lifetime.abort(new GitHubPublicationRequesterUnavailableError());
-          for (const signal of signals) signal.removeEventListener("abort", release);
+          for (const signal of signals) {
+            signal.removeEventListener("abort", releaseReviewHold);
+          }
           releaseReference();
         };
-        for (const signal of signals) signal.addEventListener("abort", release, { once: true });
-        if (signals.some((signal) => signal.aborted)) release();
+        for (const signal of signals) {
+          signal.addEventListener("abort", releaseReviewHold, { once: true });
+        }
+        if (signals.some((signal) => signal.aborted)) {
+          releaseReviewHold();
+        }
         const assertSource = () => {
           lifetime.signal.throwIfAborted();
           source.authority.assertCurrent();
@@ -309,9 +325,9 @@ export async function captureGitHubPublicationRequester(
         });
         try {
           held.assertCurrent();
-          return { requester: held, signal: lifetime.signal, release };
+          return { requester: held, signal: lifetime.signal, release: releaseReviewHold };
         } catch (error) {
-          release();
+          releaseReviewHold();
           throw error;
         }
       },

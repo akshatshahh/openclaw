@@ -178,7 +178,9 @@ describe("accepted GitHub workflow publication", () => {
               async () => {
                 if (route === "tool") {
                   const tool = createGitHubPublishTool();
-                  if (!allowed) return (await tool.execute(operation, {})).details;
+                  if (!allowed) {
+                    return (await tool.execute(operation, {})).details;
+                  }
                   const prepared = (
                     await tool.execute(`${operation}-prepare`, { action: "prepare" })
                   ).details as { reviewId: string; digest: string };
@@ -196,7 +198,7 @@ describe("accepted GitHub workflow publication", () => {
                   } while (offset !== null);
                   return (await tool.execute(operation, { action: "confirm", review })).details;
                 }
-                const authority =
+                const authority: Parameters<typeof callGatewayTool>[3] =
                   route === "gateway"
                     ? undefined
                     : {

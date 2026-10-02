@@ -135,7 +135,9 @@ export async function reconcileRepositoryGitHubPublication(params: {
       );
     }
   }
-  if (!error) return undefined;
+  if (!error) {
+    return undefined;
+  }
   return projectGitHubPublicationResult(
     execution.complete({
       requestId: row.request_id,

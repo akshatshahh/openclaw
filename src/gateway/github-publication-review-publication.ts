@@ -22,9 +22,14 @@ const stores = resolveGlobalMap<string, Store>(
   "close-and-restart",
 );
 registerOpenClawStateDatabaseLifecycleListener((event) => {
-  if (event.kind === "opened") return;
-  for (const [key, store] of stores)
-    if (store.path === (event.identity?.canonicalPath ?? event.path)) stores.delete(key);
+  if (event.kind === "opened") {
+    return;
+  }
+  for (const [key, store] of stores) {
+    if (store.path === (event.identity?.canonicalPath ?? event.path)) {
+      stores.delete(key);
+    }
+  }
 });
 function owner(admission: OpenClawStateDatabaseReadAdmission) {
   admission.assertCurrent();
@@ -36,7 +41,11 @@ function owner(admission: OpenClawStateDatabaseReadAdmission) {
   return store;
 }
 function viewFor(store: Store, id: string): View {
-  for (const [key, reference] of store.views) if (!reference.deref()) store.views.delete(key);
+  for (const [key, reference] of store.views) {
+    if (!reference.deref()) {
+      store.views.delete(key);
+    }
+  }
   let view = store.views.get(id)?.deref();
   if (!view) {
     view = { id, revision: {}, value: undefined, pending: new Set(), uncertain: false };
@@ -54,24 +63,30 @@ export async function prepareGitHubPublicationReviewRead(
   const view = viewFor(store, reviewId);
   const assertSource = () => {
     admission.assertCurrent();
-    if (stores.get(admission.coordinationKey) !== store)
+    if (stores.get(admission.coordinationKey) !== store) {
       throw new Error("Publication review database owner changed");
+    }
   };
   for (;;) {
-    if (view.pending.size) await Promise.all(view.pending);
+    if (view.pending.size) {
+      await Promise.all(view.pending);
+    }
     assertSource();
     const revision = view.revision;
     const row = await read();
     assertSource();
-    if (revision !== view.revision || view.pending.size) continue;
+    if (revision !== view.revision || view.pending.size) {
+      continue;
+    }
     view.value = row && Object.freeze(reviewObservation(row));
     view.uncertain = false;
     return {
       row,
       current() {
         assertSource();
-        if (view.pending.size || view.uncertain)
+        if (view.pending.size || view.uncertain) {
           throw new Error("Publication review mutation has not settled; refresh this candidate");
+        }
         return view.value;
       },
     };
@@ -98,7 +113,9 @@ export function stageGitHubPublicationReviewChanges(
   let settled = false;
   return {
     settle(committed: boolean, known: boolean) {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       for (const view of affected) {
         if (stores.get(admission.coordinationKey) === store && view.revision === revision) {
