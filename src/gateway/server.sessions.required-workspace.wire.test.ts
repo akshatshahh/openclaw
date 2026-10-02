@@ -30,7 +30,10 @@ const { createSessionStoreDir, withSessionTestState } = setupSessionCreateHandle
 test("a contributor creates, reads, and runs a required workspace on a non-main agent over the Gateway", async () => {
   // Revocation must commit through the reload owner; minimal Gateways retain startup policy.
   process.env.OPENCLAW_TEST_MINIMAL_GATEWAY = "0";
-  await withSessionTestState({ layout: "state-only" }, async (state) => {
+  const config = await getGatewayConfigModule();
+  // Keep real writes on the Gateway fixture's config path while isolating session state.
+  const env = { OPENCLAW_CONFIG_PATH: config.CONFIG_PATH };
+  await withSessionTestState({ layout: "state-only", env }, async (state) => {
     const workspace = await initializeRepository(state.root, "project");
     const main = await requireGit(workspace, ["rev-parse", "main"]);
     await requireGit(workspace, ["checkout", "-b", "unrelated-source"]);
@@ -71,7 +74,6 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         },
       },
     };
-    const config = await getGatewayConfigModule();
     await config.writeConfigFile(cfg);
     const configIO = await vi.importActual<typeof import("../config/io.js")>("../config/io.js");
     await withGatewayServer(async ({ port, server }) => {
