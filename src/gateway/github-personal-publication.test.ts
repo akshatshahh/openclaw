@@ -20,6 +20,7 @@ import {
   readPersonalGitHubPublication,
   requirePersonalGitHubPublicationConfirmation,
 } from "./github-personal-publication-store.js";
+import * as personalPublicationStore from "./github-personal-publication-store.js";
 import {
   callPersonalPublicationRpc,
   createForeignPublicationSession,
@@ -91,6 +92,11 @@ describe("personal publication authority and recovery", () => {
 
   const rpc = (method: string, params?: Record<string, unknown>) =>
     callPersonalPublicationRpc({ client, context, coordinator }, method, params);
+  const publicationOptions = async () => {
+    const response = await rpc("sessions.github.options");
+    expect(response[0], JSON.stringify(response[2])).toBe(true);
+    return response[1];
+  };
 
   beforeEach(async () => {
     ({
@@ -283,10 +289,17 @@ describe("personal publication authority and recovery", () => {
     },
   );
 
-  it.each(["admin-draft", "admin-private", "writer", "demoted"] as const)(
+  it.each([
+    "admin-draft",
+    "admin-private",
+    "restricted-admin-draft",
+    "restricted-admin-private",
+    "writer",
+    "demoted",
+  ] as const)(
     "uses current session mutation rights for a personal %s publisher",
     async (caller) => {
-      await createForeignPublicationSession(otherOwner, caller === "admin-private");
+      await createForeignPublicationSession(otherOwner, caller.endsWith("private"));
       client.connect.scopes = caller === "writer" ? ["operator.write"] : ["operator.admin"];
       config.gateway = {
         roles: {
@@ -295,7 +308,7 @@ describe("personal publication authority and recovery", () => {
             admin: {
               scopes: ["operator.admin"],
               agents: [],
-              sandbox: "required",
+              ...(caller.startsWith("restricted") ? { sandbox: "required" as const } : {}),
               sessions: { others: "none" },
             },
             writer: { scopes: ["operator.write"], agents: "*", sessions: { others: "write" } },
@@ -312,6 +325,10 @@ describe("personal publication authority and recovery", () => {
       }
       const response = await rpc("sessions.github.publish", request());
       expect(response[0], JSON.stringify(response[2])).toBe(caller.startsWith("admin"));
+      if (caller.startsWith("restricted")) {
+        expect(response[2]?.message).toContain("reviewed publication candidate");
+        expect(mocks.refreshIdentity).not.toHaveBeenCalled();
+      }
       if (caller === "demoted") {
         expect(mocks.refreshIdentity).toHaveBeenCalledOnce();
       }
@@ -343,7 +360,7 @@ describe("personal publication authority and recovery", () => {
     expect(commands.some((argv) => argv.includes("push"))).toBe(false);
   });
 
-  it("exposes a stopped pre-claim admission for explicit confirmation and reports only a live execution as publishing", async () => {
+  it("rolls back an admission stopped before its transaction commits", async () => {
     const controller = new AbortController();
     const db = openOpenClawStateDatabase().db;
     ensurePersonalGitHubPublicationSchema(db);
@@ -361,7 +378,37 @@ describe("personal publication authority and recovery", () => {
       "current",
     );
     db.exec("DROP TRIGGER stop_personal_admission");
-    const discovered = (await rpc("sessions.github.options"))[1].pendingPersonal;
+    expect(db.prepare(`SELECT count(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+    const response = await rpc("sessions.github.options");
+    expect(response[0], JSON.stringify(response[2])).toBe(true);
+    expect(response[1].pendingPersonal).toBeNull();
+    expect(commands.some((argv) => argv.includes("push"))).toBe(false);
+  });
+
+  it("exposes a committed pre-claim stop for explicit confirmation and reports only a live execution as publishing", async () => {
+    const controller = new AbortController();
+    const insert = personalPublicationStore.insertPersonalGitHubPublication;
+    const insertion = vi
+      .spyOn(personalPublicationStore, "insertPersonalGitHubPublication")
+      .mockImplementationOnce((...args) => {
+        const row = insert(...args);
+        controller.abort();
+        return row;
+      });
+    const stopped = preparePersonalGitHubSessionAction(
+      { client, context, signal: controller.signal },
+      { sessionKey: SESSION_KEY },
+    );
+    try {
+      await expect(coordinator.requestPersonalForSession(request(), stopped)).rejects.toThrow(
+        "current",
+      );
+    } finally {
+      insertion.mockRestore();
+    }
+    const response = await rpc("sessions.github.options");
+    expect(response[0], JSON.stringify(response[2])).toBe(true);
+    const discovered = response[1].pendingPersonal;
     expect(discovered).toMatchObject({
       result: { status: "needs_confirmation" },
       confirmation: { generation, account },
@@ -385,7 +432,7 @@ describe("personal publication authority and recovery", () => {
     });
     await Promise.race([entered.promise, pending]);
     try {
-      expect((await rpc("sessions.github.options"))[1].pendingPersonal).toMatchObject({
+      expect((await publicationOptions()).pendingPersonal).toMatchObject({
         result: { requestId: discovered.result.requestId, status: "publishing" },
         confirmation: null,
       });
@@ -396,7 +443,7 @@ describe("personal publication authority and recovery", () => {
       status: "published",
       requestId: discovered.result.requestId,
     });
-    expect((await rpc("sessions.github.options"))[1].pendingPersonal).toBeNull();
+    expect((await publicationOptions()).pendingPersonal).toBeNull();
   });
 
   it("creates its private table only on admission, publishes the exact account and snapshot, and replays only for its owner", async () => {
@@ -703,7 +750,7 @@ describe("personal publication authority and recovery", () => {
     const ownProfile = client.authenticatedUserProfile!;
     client.authenticatedUserProfile = { ...ownProfile, profileId: otherOwner };
     client.connect.scopes = ["operator.admin"];
-    expect((await rpc("sessions.github.options"))[1].pendingPersonal).toBeNull();
+    expect((await publicationOptions()).pendingPersonal).toBeNull();
     expect(
       (
         await rpc("sessions.github.status", {
@@ -749,7 +796,7 @@ describe("personal publication authority and recovery", () => {
       ...originalSession(key),
       entry: replacementEntry,
     }));
-    expect((await rpc("sessions.github.options"))[1].pendingPersonal).toMatchObject({
+    expect((await publicationOptions()).pendingPersonal).toMatchObject({
       result: { status: "failed", code: "session_changed", requestId: result.requestId },
       confirmation: null,
     });
@@ -847,7 +894,7 @@ describe("personal publication authority and recovery", () => {
       });
       expect(workspace.effects).toEqual(effectsBefore);
       expect(status(interrupted.requestId)).toEqual({ result: confirmed[1], confirmation: null });
-      expect((await rpc("sessions.github.options"))[1].pendingPersonal).toBeNull();
+      expect((await publicationOptions()).pendingPersonal).toBeNull();
       expect((await rpc("sessions.github.confirm", confirm))[1]).toEqual(confirmed[1]);
       if (drift === "branch") {
         await workspace.git("checkout", BRANCH);
@@ -869,7 +916,7 @@ describe("personal publication authority and recovery", () => {
     async (interruption) => {
       const workspace = await createRealPublicationWorkspace(interruption);
       await rpc("sessions.github.publish", request());
-      const pending = (await rpc("sessions.github.options"))[1].pendingPersonal;
+      const pending = (await publicationOptions()).pendingPersonal;
       expect(pending.result.status).toBe("needs_confirmation");
       const markerHead = await workspace.git("rev-parse", "HEAD");
       const confirmed = await rpc("sessions.github.confirm", {
@@ -897,7 +944,7 @@ describe("personal publication authority and recovery", () => {
     async (observation) => {
       const workspace = await createRealPublicationWorkspace("push");
       await rpc("sessions.github.publish", request());
-      const pending = (await rpc("sessions.github.options"))[1].pendingPersonal;
+      const pending = (await publicationOptions()).pendingPersonal;
       const local = mocks.runCommand.getMockImplementation()!;
       mocks.runCommand.mockImplementation(
         async (argv: string[], options?: { env?: NodeJS.ProcessEnv }) => {
@@ -940,7 +987,7 @@ describe("personal publication authority and recovery", () => {
   it("keeps confirmation recoverable when authority changes during a real snapshot and refuses competing execution", async () => {
     const workspace = await createRealPublicationWorkspace("push");
     await rpc("sessions.github.publish", request());
-    const pending = (await rpc("sessions.github.options"))[1].pendingPersonal;
+    const pending = (await publicationOptions()).pendingPersonal;
     const confirm = {
       sessionKey: SESSION_KEY,
       requestId: pending.result.requestId,

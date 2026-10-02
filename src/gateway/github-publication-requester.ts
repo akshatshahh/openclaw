@@ -147,10 +147,12 @@ function prepareRequesterPolicy(
         );
       }
       if (
-        authorizePreparedSessionMutation({ cfg: config, client, ...session }, facts, {
-          policy: role,
-          aliases: current.aliases,
-        })
+        authorizePreparedSessionMutation(
+          { cfg: config, client, ...session },
+          facts,
+          { policy: role, aliases: current.aliases },
+          { intent: "mutation" },
+        )
       ) {
         throw new GitHubPublicationRequesterUnavailableError();
       }

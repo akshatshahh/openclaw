@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { vi } from "vitest";
-import { insertRegistryWorktree } from "../agents/worktrees/registry.js";
+import { deleteRegistryWorktree, insertRegistryWorktree } from "../agents/worktrees/registry.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type {
   commandResult as publicationCommandResult,
@@ -91,13 +91,15 @@ export async function createRealPublicationWorkspace({
   mocks.findWorktreeById.mockReturnValue(worktree);
   const loaded = mocks.loadSession(sessionKey);
   const entry = { ...loaded.entry, worktree: { ...loaded.entry.worktree, repoRoot: cwd } };
+  // Discovery reads the canonical registry even when execution uses the mocked loader.
+  deleteRegistryWorktree(process.env, worktree.id);
+  insertRegistryWorktree(process.env, {
+    ...worktree,
+    name: "publication",
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+  });
   if (realWorktree) {
-    insertRegistryWorktree(process.env, {
-      ...worktree,
-      name: "publication",
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-    });
     await upsertSessionEntryCore(
       { agentId: "main", sessionKey },
       { ...entry, updatedAt: Date.now() },
