@@ -66,6 +66,30 @@ afterEach(() => {
 });
 
 describe("chat pane embedded panels", () => {
+  it("offers Review only for an allowed diff or an existing detail preview", () => {
+    const { state } = createReviewFixture();
+    state.hello = gatewayHelloForMethods(["sessions.diff"], ["operator.sessions.write"]);
+    state.sessionWorkspaceSession = { sharingRole: "viewer" };
+    const slots = () =>
+      availableSidebarSlots(
+        sidebarPanelDefinitions({ state, renderDetail: () => nothing } as Parameters<
+          typeof sidebarPanelDefinitions
+        >[0]),
+      );
+    expect(slots()).not.toContain("detail");
+    expect(slots()).toContain("workspace");
+    state.sessionWorkspaceSession = { sharingRole: "owner" };
+    expect(slots()).toContain("detail");
+    state.sidebarContent = state.sessionWorkspaceState!.diffContent!;
+    state.sessionWorkspaceSession = { sharingRole: "viewer" };
+    expect(slots()).not.toContain("detail");
+    state.sidebarContent = { kind: "markdown", content: "Visible transcript details" };
+    expect(slots()).toContain("detail");
+    state.sidebarContent = null;
+    state.hello = gatewayHelloForMethods(["sessions.diff"], ["operator.read"]);
+    expect(slots()).toContain("detail");
+  });
+
   it("navigates an existing file tab to an explicit line without resetting its editor or draft", async () => {
     const descriptors = ["getClientRects", "getBoundingClientRect"].map(
       (key) => [key, Object.getOwnPropertyDescriptor(Range.prototype, key)] as const,
@@ -623,7 +647,7 @@ describe("chat pane embedded panels", () => {
       client: { request },
       connected: true,
       connectionEpoch: 1,
-      hello: { features: { methods: ["sessions.diff"] } },
+      hello: gatewayHelloForMethods(["sessions.diff"]),
       sessionKey: "agent:main:review",
       sidebarContent: null,
       sidebarLayout: { columns: [] },

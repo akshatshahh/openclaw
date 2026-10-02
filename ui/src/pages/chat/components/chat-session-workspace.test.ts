@@ -112,7 +112,7 @@ describe("session workspace state", () => {
       connected: true,
       connectionEpoch: 1,
       handleOpenSidebar: vi.fn(),
-      hello: null,
+      hello: gatewayHelloForMethods(["artifacts.list"]),
       agentsList: { agents: [] },
       requestUpdate: vi.fn(),
       sessionKey: "agent:main:cloud",
@@ -156,6 +156,60 @@ describe("session workspace state", () => {
     expect(mount.querySelector("openclaw-panel-loading-skeleton")).toBeNull();
     expect(mount.querySelector('button[aria-label="src/slow.ts"]')).not.toBeNull();
   });
+
+  it.each(["scoped", "broad", "unadvertised", "artifact-error"] as const)(
+    "keeps Files and previews usable with %s artifact access",
+    async (access) => {
+      const sessionKey = "agent:main:shared-files";
+      const file = { kind: "read", name: "notes.md", path: "notes.md", missing: false };
+      const listFiles = vi.fn().mockResolvedValue({ sessionKey, files: [file] });
+      const getFile = vi.fn().mockResolvedValue({
+        sessionKey,
+        file: { ...file, content: "Visible project notes" },
+      });
+      const request =
+        access === "artifact-error"
+          ? vi.fn().mockRejectedValue(new Error("Artifact catalog unavailable"))
+          : vi.fn().mockResolvedValue({ artifacts: [] });
+      const state = {
+        client: { request },
+        connected: true,
+        connectionEpoch: 1,
+        handleOpenSidebar: createSidebarContentRecorder(),
+        hello: gatewayHelloForMethods(access === "unadvertised" ? [] : ["artifacts.list"], [
+          access === "scoped" ? "operator.sessions.read" : "operator.read",
+        ]),
+        agentsList: { agents: [] },
+        sessionKey,
+        sidebarContent: null,
+        sessions: { listFiles, getFile },
+      } as unknown as SessionWorkspaceHost;
+      createSessionWorkspaceProps(state, { expanded: true, session: { sharingRole: "viewer" } });
+      await vi.waitFor(() => expect(createSessionWorkspaceProps(state).loading).toBe(false));
+      expect(listFiles).toHaveBeenCalledExactlyOnceWith(sessionKey, {
+        agentId: "main",
+        path: "",
+        search: "",
+      });
+      expect(request).toHaveBeenCalledTimes(
+        access === "scoped" || access === "unadvertised" ? 0 : 1,
+      );
+      if (access === "artifact-error") {
+        expect(createSessionWorkspaceProps(state).error).toBe("Artifact catalog unavailable");
+        expect(createSessionWorkspaceProps(state).list).toBeNull();
+        return;
+      }
+      expect(createSessionWorkspaceProps(state).error).toBeNull();
+      expect(createSessionWorkspaceProps(state).list?.files).toEqual([file]);
+      createSessionWorkspaceProps(state).onOpenFile("notes.md", "session");
+      expect(await loadedSidebarContent(state)).toMatchObject({
+        kind: "file",
+        path: "notes.md",
+        content: "Visible project notes",
+      });
+      expect(getFile).toHaveBeenCalledExactlyOnceWith(sessionKey, "notes.md", { agentId: "main" });
+    },
+  );
 
   it("rotates Files and Review ownership across a same-client reconnect", async () => {
     let resolveReplacementList!: (value: {
@@ -215,7 +269,7 @@ describe("session workspace state", () => {
       connected: true,
       connectionEpoch: 1,
       handleOpenSidebar: vi.fn(),
-      hello: gatewayHelloForMethods(["sessions.diff"]),
+      hello: gatewayHelloForMethods(["sessions.diff", "artifacts.list"]),
       agentsList: { agents: [] },
       requestUpdate: vi.fn(),
       sessionKey: "agent:main:current",

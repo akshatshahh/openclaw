@@ -186,6 +186,8 @@ suite.define(() => {
           scope: "all",
         });
       } else {
+        await page.keyboard.press("ControlOrMeta+Alt+Shift+E");
+        expect(await page.locator('[data-panel-slot="detail"]').count()).toBe(0);
         await page.locator(".chat-side-panel-toggle").click();
         const choices = page.locator(".side-panel-empty__types");
         await choices.waitFor();

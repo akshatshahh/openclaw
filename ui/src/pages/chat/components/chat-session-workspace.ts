@@ -28,7 +28,11 @@ import type {
   SessionWorkspaceProps,
   SessionWorkspaceState,
 } from "./chat-session-workspace-types.ts";
-import { hasUniformLineEndings, type SidebarContent } from "./chat-sidebar.ts";
+import {
+  hasUniformLineEndings,
+  type SidebarContent,
+  type SidebarSelection,
+} from "./chat-sidebar.ts";
 
 export {
   clearSessionWorkspaceTimers,
@@ -524,6 +528,16 @@ export function createSessionWorkspaceProps(
     onOpenArtifact: (artifactId) => openArtifact(state, workspace, artifactId),
     onOpenDiff: diffContent ? () => openSessionCheckoutSidebar(state, diffContent) : undefined,
   };
+}
+
+/** Review can reopen an authorized detail preview without granting checkout access. */
+export function resolveSessionReviewSidebarContent(
+  state: SessionWorkspaceHost,
+): SidebarSelection | null {
+  const diffContent = resolveSessionDiffSidebarContent(state);
+  return state.sidebarContent && state.sidebarContent.kind !== "session-diff"
+    ? state.sidebarContent
+    : diffContent;
 }
 
 export function resolveSessionDiffSidebarContent(
