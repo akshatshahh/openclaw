@@ -5,6 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { extractErrorCode } from "../../infra/errors.js";
 import { FILE_LOCK_TIMEOUT_ERROR_CODE, withFileLock } from "../../infra/file-lock.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import { createSqliteWorkerWriteAdmission } from "../../infra/sqlite-worker-store.js";
@@ -249,10 +250,7 @@ export async function withSandboxRegistryEntryLock<T>(
       operation,
     );
   } catch (error) {
-    if (
-      entry.foreground &&
-      (error as NodeJS.ErrnoException).code === FILE_LOCK_TIMEOUT_ERROR_CODE
-    ) {
+    if (entry.foreground && extractErrorCode(error) === FILE_LOCK_TIMEOUT_ERROR_CODE) {
       throw new Error(
         "A previous foreground request still owns this workspace. Stop it or wait for cleanup, then send a new message.",
         { cause: error },

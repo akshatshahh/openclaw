@@ -26,6 +26,7 @@ export function bindForegroundUserRequest(owner: object, assertCurrent: () => vo
 export function getForegroundUserRequest(
   owner: object | undefined,
 ): ForegroundUserRequest | undefined {
+  // SAFETY: The private symbol retrieves a candidate; WeakMap identity grants admission.
   const request = (owner as RequestOwner | undefined)?.[requestKey];
   return request && sources.has(request) ? request : undefined;
 }
