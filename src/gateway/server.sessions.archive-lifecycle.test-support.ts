@@ -77,9 +77,10 @@ export function activeRunContext(params: {
       chatRunState,
       logGateway: createDirectChatContext().logGateway,
       nodeSendToSession: vi.fn(),
-      removeChatRun: vi.fn(() => ({
+      removeChatRun: vi.fn<GatewayRequestContext["removeChatRun"]>(() => ({
         sessionKey: params.sessionKey,
         clientRunId: params.runId,
+        registeredSequence: 1,
       })),
     },
     controller: registration.controller,
