@@ -50,7 +50,7 @@ describe("composer microphone picker", () => {
       } as unknown as GatewayBrowserClient;
       const container = document.createElement("div");
       document.body.append(container);
-      let reason: string | undefined;
+      let reason: string | undefined = undefined;
       const composerProps = props({ gatewayClient: client, onToggleRealtimeTalk: vi.fn() });
       const draft = new NewSessionDictationControl({
         textarea: { captureSelection: vi.fn() } as never,
