@@ -102,9 +102,11 @@ export async function readChatPendingInputs(
         id: item.id,
         acceptedAt: item.acceptedAt,
         state: item.state,
-        ...(item.replayBlockedReason ? { replayBlockedReason: item.replayBlockedReason } : {}),
         message: messages[index],
       };
+      if (item.replayBlockedReason) {
+        display.replayBlockedReason = item.replayBlockedReason;
+      }
       if (item.runId.length <= PENDING_INPUT_CORRELATION_MAX_CHARS) {
         display.runId = item.runId;
         if (

@@ -215,8 +215,12 @@ describe("startAgentRunExecution Gateway ownership", () => {
       );
       execution.params.client = captureAgentTurnPrincipal(client);
       execution.params.isOneShotModelRun = false;
-      if (state === "invalidated-before") client.invalidated = true;
-      if (state === "aborted-before") connection.abort();
+      if (state === "invalidated-before") {
+        client.invalidated = true;
+      }
+      if (state === "aborted-before") {
+        connection.abort();
+      }
       dispatchAgentRunFromGateway.mockImplementationOnce(async (dispatch) => {
         const request = getForegroundUserRequest(resolveAgentRunContext(dispatch.ingressOpts));
         if (state.endsWith("-before")) {
@@ -230,9 +234,15 @@ describe("startAgentRunExecution Gateway ownership", () => {
         });
         expect(claim).toBeDefined();
         expect(claim).not.toThrow();
-        if (state === "invalidated-after") client.invalidated = true;
-        if (state === "aborted-after") connection.abort();
-        if (state !== "connected") expect(claim).toThrow("connection is no longer active");
+        if (state === "invalidated-after") {
+          client.invalidated = true;
+        }
+        if (state === "aborted-after") {
+          connection.abort();
+        }
+        if (state !== "connected") {
+          expect(claim).toThrow("connection is no longer active");
+        }
       });
       await startAgentRunExecution(execution.params);
       expect(dispatchAgentRunFromGateway).toHaveBeenCalledOnce();

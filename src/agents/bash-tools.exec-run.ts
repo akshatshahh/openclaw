@@ -91,17 +91,17 @@ const BACKGROUND_EXEC_FOLLOW_UP =
 
 /** Creates an exec tool instance with runtime defaults and approval policy wiring. */
 export function createExecTool(
-  defaults?: ExecToolDefaults,
+  inputDefaults?: ExecToolDefaults,
 ): AgentToolWithMeta<typeof execSchema, ExecToolDetails> {
-  const foreground = readForegroundSandboxCustody(defaults?.sandbox?.backend);
-  if (foreground) {
-    defaults = {
-      ...defaults,
-      sandboxRequired: true,
-      scopeKey: foreground.runtimeKey,
-      notifyOnExit: false,
-    };
-  }
+  const foreground = readForegroundSandboxCustody(inputDefaults?.sandbox?.backend);
+  const defaults = foreground
+    ? {
+        ...inputDefaults,
+        sandboxRequired: true,
+        scopeKey: foreground.runtimeKey,
+        notifyOnExit: false,
+      }
+    : inputDefaults;
   const secretEgressEnabled = isSecretEgressProxyActive();
   const cleanupMs = defaults?.cleanupMs;
   const preparedRunEnvironment = resolveExecPreparedRunEnvironment(defaults);
@@ -208,7 +208,7 @@ export function createExecTool(
     getExecutionTimeoutMs: createExecToolExecutionTimeoutResolver(defaults),
     prepareBeforeToolCallParams: requestPreparation.prepareBeforeToolCallParams,
     finalizeBeforeToolCallParams: requestPreparation.finalizeBeforeToolCallParams,
-    execute: async (toolCallId, args, signal, onUpdate) => {
+    execute: async (toolCallId, args, inputSignal, onUpdate) => {
       const restricted = isAdmittedRunForegroundOnly(
         getGatewayToolCallerIdentity()?.admittedRunContext,
       );
@@ -219,8 +219,12 @@ export function createExecTool(
       }
       if (foreground) {
         foreground.assertCurrent();
-        signal = signal ? AbortSignal.any([signal, foreground.signal]) : foreground.signal;
       }
+      const signal = foreground
+        ? inputSignal
+          ? AbortSignal.any([inputSignal, foreground.signal])
+          : foreground.signal
+        : inputSignal;
       signal?.throwIfAborted();
       const assertSourceActive = captureAgentToolSourceExecutionGuard(signal);
       assertSupportedExecParams(args);

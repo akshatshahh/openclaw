@@ -47,9 +47,9 @@ function withProjectState(run: (state: OpenClawTestState) => Promise<void>) {
   return withOpenClawTestState({ layout: "state-only", prefix: "projects-rpc-" }, run);
 }
 
-test.each([["operator.sessions.read"], ["operator.write"]])(
+test.each([{ scopes: ["operator.sessions.read"] }, { scopes: ["operator.write"] }])(
   "projects.list exposes execution-only creation policy with scopes %j",
-  async (scopes) => {
+  async ({ scopes }) => {
     await withProjectState(async () => {
       const profile = ensureProfileForEmail("foreground-picker@example.test");
       const cfg: OpenClawConfig = {

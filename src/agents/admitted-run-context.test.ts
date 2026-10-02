@@ -49,8 +49,8 @@ afterEach(() => {
 
 describe("prepared run admission", () => {
   it("closes admission before joining owned resources and retains the source until settlement", async () => {
-    const resource = createDeferred<void>();
-    const started = createDeferred<void>();
+    const resource = createDeferred();
+    const started = createDeferred();
     const release = vi.fn();
     const prepared = prepareAgentRunAdmission({
       cfg: {},
@@ -80,8 +80,8 @@ describe("prepared run admission", () => {
   });
 
   it("joins every cleanup and preserves a failed settlement on repeated close", async () => {
-    const resource = createDeferred<void>();
-    const started = createDeferred<void>();
+    const resource = createDeferred();
+    const started = createDeferred();
     const failure = new Error("container exit unconfirmed");
     const prepared = prepareAgentRunAdmission({
       cfg: {},

@@ -391,7 +391,7 @@ async function createSandboxContainer(params: {
       await execNativeSandboxCreate(
         engine,
         args,
-        (containerId) => recordNativeSandboxReceipt(native, { containerId }),
+        (allocatedId) => recordNativeSandboxReceipt(native, { containerId: allocatedId }),
         () => recordNativeSandboxReceipt(native, { createAttempted: true }),
         () => recordNativeSandboxReceipt(native, { createNotDispatched: true }),
       );

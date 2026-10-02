@@ -168,7 +168,9 @@ export async function openTerminalSession(
   request: TerminalSessionOpenRequest,
 ): Promise<void> {
   const { respond, context } = opts;
-  if (!terminalExecutionAllowed(opts)) return;
+  if (!terminalExecutionAllowed(opts)) {
+    return;
+  }
   const connId = requireConnId(opts);
   if (!connId) {
     return;
@@ -551,7 +553,9 @@ export const terminalHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateTerminalInputParams, "terminal.input", respond)) {
       return;
     }
-    if (!terminalExecutionAllowed(opts)) return;
+    if (!terminalExecutionAllowed(opts)) {
+      return;
+    }
     const connId = requireConnId(opts);
     if (!connId) {
       return;
@@ -573,7 +577,9 @@ export const terminalHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateTerminalResizeParams, "terminal.resize", respond)) {
       return;
     }
-    if (!terminalExecutionAllowed(opts)) return;
+    if (!terminalExecutionAllowed(opts)) {
+      return;
+    }
     const connId = requireConnId(opts);
     if (!connId) {
       return;

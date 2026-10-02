@@ -47,7 +47,9 @@ describe("accepted foreground input", () => {
   it("leaves ordinary queued admissions unclaimed until a session requires foreground execution", async () => {
     let current = true;
     const request = acceptedInput(() => {
-      if (!current) throw new Error("source retired");
+      if (!current) {
+        throw new Error("source retired");
+      }
     });
     const prepare = (runId: string) =>
       prepareChannelRunAdmission({

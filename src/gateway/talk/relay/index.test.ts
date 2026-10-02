@@ -3938,7 +3938,9 @@ describe("talk realtime gateway relay", () => {
         connId: "conn-1",
         audioBase64: "AQI=",
         assertCurrent: () => {
-          if (!sourceCurrent) throw new Error("foreground policy changed");
+          if (!sourceCurrent) {
+            throw new Error("foreground policy changed");
+          }
         },
       });
       bridgeRequest?.onResponseDone?.({ status: "completed", responseId: "response-other" });
@@ -4331,7 +4333,9 @@ describe("talk realtime gateway relay", () => {
       ...target,
       result: { answer: "done" },
       assertCurrent: () => {
-        if (!current) throw new Error("foreground policy changed");
+        if (!current) {
+          throw new Error("foreground policy changed");
+        }
       },
     });
     current = false;

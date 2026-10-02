@@ -71,7 +71,12 @@ describe("prepareChatSendUserTurn", () => {
       const connection = new AbortController();
       const client = {
         connectionSignal: connection.signal,
-        authenticatedUserProfile: { profileId: "source", hasAvatar: false, updatedAt: 1 },
+        authenticatedUserProfile: {
+          profileId: "source",
+          displayName: null,
+          hasAvatar: false,
+          updatedAt: 1,
+        },
         internal: kind === "synthetic" ? { syntheticClient: true as const } : undefined,
         connect: {
           minProtocol: 1,
@@ -113,7 +118,9 @@ describe("prepareChatSendUserTurn", () => {
         logGateway: { warn: vi.fn() } as never,
         userTurn: controller,
       });
-      if (kind === "disconnected") connection.abort();
+      if (kind === "disconnected") {
+        connection.abort();
+      }
       const admission = prepareChannelRunAdmission({
         cfg: {},
         runId: `foreground-${kind}`,

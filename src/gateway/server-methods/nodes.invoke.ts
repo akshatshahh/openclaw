@@ -70,7 +70,9 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
       "Remote node execution",
     );
     const rejectUnownedExecution = () => {
-      if (isNodeForegroundObservation(command)) return false;
+      if (isNodeForegroundObservation(command)) {
+        return false;
+      }
       try {
         assertExecutionAllowed();
         return false;
@@ -85,7 +87,9 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
         return true;
       }
     };
-    if (rejectUnownedExecution()) return;
+    if (rejectUnownedExecution()) {
+      return;
+    }
     const assertUploadAllowed = captureGatewayClientUploadCommitGuard({
       method: "node.invoke",
       requestParams: p,
@@ -223,7 +227,9 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
       let releaseApprovalHandoff: (() => void) | undefined;
       try {
         const continuePairingWork = async (): Promise<boolean> => {
-          if (rejectUnownedExecution()) return false;
+          if (rejectUnownedExecution()) {
+            return false;
+          }
           const pairingCurrent = await awaitWithinDeadline(
             () => isNodePairingWorkCurrent({ nodeId, generation, lifecycle: wakeLifecycle }),
             invokeDeadlineAtMs,

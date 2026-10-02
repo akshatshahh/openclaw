@@ -41,6 +41,20 @@ describe.runIf(
         const context = await prepared.admit("embedded");
         const signal = new AbortController();
         const custody = acquireForegroundSandboxCustody(context, signal.signal);
+        const settleOwner = async () => {
+          // Only the exact admitted owner may retire this fixture's native allocation.
+          try {
+            await prepared.close();
+          } catch (cause) {
+            throw Object.assign(
+              new Error(
+                "Native fixture cleanup is unconfirmed; retain its workspace and registry for recovery",
+                { cause },
+              ),
+              { processTreeState: "indeterminate" },
+            );
+          }
+        };
         try {
           const selected = captureNativeSandboxEngine(
             engineId === "podman" ? PODMAN_SANDBOX_ENGINE : DOCKER_SANDBOX_ENGINE,
@@ -48,8 +62,9 @@ describe.runIf(
           );
           const podman =
             engineId === "podman" ? await resolvePodmanSandboxRuntimeInfo() : undefined;
-          if (podman && podman.target.key !== "local")
+          if (podman && podman.target.key !== "local") {
             throw new Error("This fixture requires local Linux Podman");
+          }
           const engine = bindNativeSandboxEngineTarget(
             selected,
             podman?.target ?? (await resolveNativeDockerTarget(selected)),
@@ -103,7 +118,9 @@ describe.runIf(
             foreground: { containerId: allocated.containerId },
             runtimeState: "ready",
           });
-          if (ending === "stop") signal.abort();
+          if (ending === "stop") {
+            signal.abort();
+          }
           await prepared.close();
           expect(await readRegistryEntry(allocated.containerName)).toBeNull();
           expect(await fs.readFile(draftPath, "utf8")).toBe("retained draft");
@@ -113,18 +130,7 @@ describe.runIf(
             expect(inspection.stderr.toString("utf8")).toMatch(/no such|does not exist/i);
           });
         } finally {
-          // Only the exact admitted owner may retire this fixture's native allocation.
-          try {
-            await prepared.close();
-          } catch (cause) {
-            throw Object.assign(
-              new Error(
-                "Native fixture cleanup is unconfirmed; retain its workspace and registry for recovery",
-                { cause },
-              ),
-              { processTreeState: "indeterminate" },
-            );
-          }
+          await settleOwner();
         }
       });
     },
@@ -207,6 +213,22 @@ describe.runIf(
           );
         }
       };
+      const settleCrash = async () => {
+        if (!childJoined) {
+          throw Object.assign(
+            new Error(
+              "Crash fixture child cleanup is unconfirmed; retain its workspace and registry",
+              {
+                cause: childFailure,
+              },
+            ),
+            { processTreeState: "indeterminate" },
+          );
+        }
+        if (!reconciliationStarted) {
+          await reconcile();
+        }
+      };
       try {
         let stdout = "";
         let stderr = "";
@@ -262,7 +284,9 @@ describe.runIf(
             startAttempted: true,
           },
         });
-        if (!receipt?.backendTarget) throw new Error("Crashed allocation lost its engine target");
+        if (!receipt?.backendTarget) {
+          throw new Error("Crashed allocation lost its engine target");
+        }
         const engine = bindNativeSandboxEngineTarget(
           captureNativeSandboxCleanupEngine(
             engineId === "podman" ? PODMAN_SANDBOX_ENGINE : DOCKER_SANDBOX_ENGINE,
@@ -288,18 +312,7 @@ describe.runIf(
           expect(inspection.stderr.toString("utf8")).toMatch(/no such|does not exist/i);
         });
       } finally {
-        if (!childJoined) {
-          throw Object.assign(
-            new Error(
-              "Crash fixture child cleanup is unconfirmed; retain its workspace and registry",
-              {
-                cause: childFailure,
-              },
-            ),
-            { processTreeState: "indeterminate" },
-          );
-        }
-        if (!reconciliationStarted) await reconcile();
+        await settleCrash();
       }
     });
   }, 120_000);

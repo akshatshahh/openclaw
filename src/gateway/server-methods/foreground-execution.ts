@@ -13,6 +13,8 @@ export function captureForegroundContinuationGuard(
     client?.internal?.agentRuntimeIdentity?.execution === "foreground-only" ||
     client?.internal?.operatorRunAuthority?.rolePolicy?.execution === "foreground-only" ||
     isGatewayToolForegroundOnly() ||
-    resolveOperatorRolePolicy(client, context.getRuntimeConfig())?.execution === "foreground-only";
+    (client !== null &&
+      resolveOperatorRolePolicy(client, context.getRuntimeConfig())?.execution ===
+        "foreground-only");
   return () => assertExecutionMayContinue(restricted, activity);
 }

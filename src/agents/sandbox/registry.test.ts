@@ -151,12 +151,12 @@ describe("registry race safety", () => {
     const stopped = {
       ...entry,
       foreground: { ...entry.foreground!, createAttempted: true, createNotDispatched: true },
-    };
+    } satisfies SandboxRegistryEntry;
     await recordForegroundSandboxReceipt(entry, stopped);
     await expect(
       recordForegroundSandboxReceipt(stopped, {
         ...stopped,
-        foreground: { ...stopped.foreground, createNotDispatched: false },
+        foreground: { ...stopped.foreground, createNotDispatched: undefined },
       }),
     ).rejects.toThrow();
     await expect(

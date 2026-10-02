@@ -326,7 +326,7 @@ describe("accepted input custody", () => {
       message("collected"),
     )!;
     receipts.push(aggregate);
-    expect(aggregate.message.__openclaw).toMatchObject({
+    expect(aggregate.message["__openclaw"]).toMatchObject({
       foregroundOnlyRunId: "foreground-collected",
       foregroundOnlyLifecycleGeneration: getAgentEventLifecycleGeneration(),
       transport: { clients: [{ id: "cli", mode: "cli" }] },

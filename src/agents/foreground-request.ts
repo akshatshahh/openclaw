@@ -46,7 +46,9 @@ export function prepareForegroundUserRequestClaim(
   owner: object,
 ): (() => void) | undefined {
   const batch = request && sources.get(request);
-  if (!batch) return undefined;
+  if (!batch) {
+    return undefined;
+  }
   return () => {
     for (const source of batch) {
       if (source.owner && source.owner !== owner) {
@@ -56,6 +58,8 @@ export function prepareForegroundUserRequestClaim(
     }
     // Validate every collected source before atomically claiming the batch.
     // A retry may keep its incarnation; another restricted run cannot reuse it.
-    for (const source of batch) source.owner = owner;
+    for (const source of batch) {
+      source.owner = owner;
+    }
   };
 }

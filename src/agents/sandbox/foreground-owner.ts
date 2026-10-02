@@ -54,7 +54,6 @@ export function acquireForegroundSandboxCustody(
   );
   const executionSignal = AbortSignal.any([controller.signal, ...sourceSignals]);
   const runtimeKey = `foreground:${context.operationalRunInstance.runId}:${randomUUID()}`;
-  let cleanupScope: (() => Promise<void>) | undefined;
   const producers = new Set<Promise<unknown>>();
   const cleanups: Array<(reason: string) => Promise<void>> = [];
   const failures: unknown[] = [];
@@ -79,7 +78,7 @@ export function acquireForegroundSandboxCustody(
       // Retire local producers before forgetting the native allocation. Namespace
       // termination cannot erase uncertainty about an escaped local transport.
       for (const result of await Promise.allSettled([
-        cleanupScope?.(),
+        cleanupScope(),
         waitForExecScope(runtimeKey),
       ])) {
         if (result.status === "rejected") {
@@ -139,7 +138,7 @@ export function acquireForegroundSandboxCustody(
     },
   };
   registerAdmittedRunCleanup(context, close);
-  cleanupScope = getProcessSupervisor().acquireScopeCleanup(runtimeKey, {
+  const cleanupScope = getProcessSupervisor().acquireScopeCleanup(runtimeKey, {
     processTree: "required-all",
   });
   owners.set(context, custody);

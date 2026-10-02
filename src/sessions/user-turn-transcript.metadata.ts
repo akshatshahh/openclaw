@@ -29,7 +29,7 @@ export function normalizePersistedSteerTargetRunId(value: unknown): string | und
 export function readUserTurnForegroundOnlyRunId(message: unknown): string | undefined {
   const record = asOptionalRecord(message);
   return record?.role === "user"
-    ? normalizeOptionalString(asOptionalRecord(record.__openclaw)?.foregroundOnlyRunId)
+    ? normalizeOptionalString(asOptionalRecord(record["__openclaw"])?.foregroundOnlyRunId)
     : undefined;
 }
 
@@ -38,7 +38,8 @@ export function readUserTurnForegroundOnlyLifecycleGeneration(
 ): string | undefined {
   return readUserTurnForegroundOnlyRunId(message)
     ? normalizeOptionalString(
-        asOptionalRecord(asOptionalRecord(message)?.__openclaw)?.foregroundOnlyLifecycleGeneration,
+        asOptionalRecord(asOptionalRecord(message)?.["__openclaw"])
+          ?.foregroundOnlyLifecycleGeneration,
       )
     : undefined;
 }

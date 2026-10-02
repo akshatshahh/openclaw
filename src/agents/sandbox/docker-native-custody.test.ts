@@ -124,7 +124,7 @@ function fixture(kind: "docker" | "podman") {
   };
   mocks.command.mockImplementation(async (args: string[]) => {
     let output: unknown = "";
-    if (args[0] === "info")
+    if (args[0] === "info") {
       output =
         kind === "docker"
           ? { OSType: "linux", ID: "daemon-1" }
@@ -140,8 +140,11 @@ function fixture(kind: "docker" | "podman") {
                 graphDriverName: "overlay",
               },
             };
-    if (args[0] === "inspect") output = inspection;
-    if (args[0] === "kill")
+    }
+    if (args[0] === "inspect") {
+      output = inspection;
+    }
+    if (args[0] === "kill") {
       Object.assign(inspection.State, {
         Status: "exited",
         Running: false,
@@ -149,7 +152,10 @@ function fixture(kind: "docker" | "podman") {
         ExitCode: 137,
         FinishedAt: "2026-01-01T00:00:01Z",
       });
-    if (args[0] === "wait") output = String(inspection.State.ExitCode);
+    }
+    if (args[0] === "wait") {
+      output = String(inspection.State.ExitCode);
+    }
     return {
       code: 0,
       stdout: Buffer.from(typeof output === "string" ? output : JSON.stringify(output)),
@@ -209,8 +215,10 @@ describe("exact native foreground retirement", () => {
     "retains an uncertain receipt and never removes on %s",
     async (failure) => {
       const { native, inspection } = fixture("podman");
-      if (failure === "host-pid") inspection.HostConfig.PidMode = "host";
-      if (failure === "unknown-exit")
+      if (failure === "host-pid") {
+        inspection.HostConfig.PidMode = "host";
+      }
+      if (failure === "unknown-exit") {
         Object.assign(inspection.State, {
           Status: "stopped",
           Running: false,
@@ -218,12 +226,16 @@ describe("exact native foreground retirement", () => {
           ExitCode: -1,
           Error: "conmon missing",
         });
-      if (failure === "missing-id") delete native.reservation.foreground!.containerId;
+      }
+      if (failure === "missing-id") {
+        delete native.reservation.foreground!.containerId;
+      }
       if (
         failure === "changed-engine" &&
         native.reservation.foreground!.engineIdentity.kind === "podman"
-      )
+      ) {
         native.reservation.foreground!.engineIdentity.runRoot = "/another/run";
+      }
       await expect(retireAllocation(native)).rejects.toThrow();
       expect(mocks.command.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
       expect(mocks.retire).not.toHaveBeenCalled();
@@ -240,7 +252,9 @@ describe("exact native foreground retirement", () => {
     const { native } = fixture("docker");
     const execute = mocks.command.getMockImplementation()!;
     mocks.command.mockImplementation(async (args: string[]) => {
-      if (args[0] === "rm") throw new Error("container disappeared before our removal");
+      if (args[0] === "rm") {
+        throw new Error("container disappeared before our removal");
+      }
       return execute(args);
     });
     await expect(retireAllocation(native)).rejects.toThrow();

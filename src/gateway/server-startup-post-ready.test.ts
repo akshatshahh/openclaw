@@ -203,7 +203,9 @@ it("holds request dispatch until prior foreground native receipts settle", async
     expect(runtime?.startupState.dispatchReady).toBe(true);
   } finally {
     settle.resolve();
-    if (pending && !server) server = await pending;
+    if (pending && !server) {
+      server = await pending;
+    }
     try {
       await server?.close();
     } finally {

@@ -50,11 +50,14 @@ it.each(["user", "heartbeat", "system", "retired", "retired-role"] as const)(
         useDefaultPairingStore: false,
       });
       const context = await createHostChannelInboundEventContextBuilder(
-        async (params: BuildChannelInboundEventContextParams) => {
-          const built = await buildChannelInboundEventContext(params);
-          if (kind === "heartbeat") built.InternalTurnSource = "heartbeat";
-          if (kind === "system")
+        (params: BuildChannelInboundEventContextParams) => {
+          const built = buildChannelInboundEventContext(params);
+          if (kind === "heartbeat") {
+            built.InternalTurnSource = "heartbeat";
+          }
+          if (kind === "system") {
             built.InputProvenance = { kind: "internal_system", sourceTool: "fixture" };
+          }
           return built;
         },
         owner,

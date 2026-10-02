@@ -231,10 +231,10 @@ export function getGatewayToolCallerIdentity(): GatewayToolCallerIdentity | unde
 }
 
 export function isGatewayToolForegroundOnly(caller = getGatewayToolCallerIdentity()): boolean {
-  return Boolean(
+  return (
     caller?.execution === "foreground-only" ||
     caller?.operatorAuthority?.rolePolicy?.execution === "foreground-only" ||
-    isAdmittedRunForegroundOnly(caller?.admittedRunContext),
+    isAdmittedRunForegroundOnly(caller?.admittedRunContext)
   );
 }
 

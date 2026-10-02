@@ -62,14 +62,16 @@ function nativeTransport() {
     const args = argv.slice(3);
     dispatched.push(args[0]!);
     let output: unknown = "";
-    if (args[0] === "info") output = { OSType: "linux", ID: "daemon-1" };
-    else if (args[0] === "create") {
+    if (args[0] === "info") {
+      output = { OSType: "linux", ID: "daemon-1" };
+    } else if (args[0] === "create") {
       const labels: Record<string, string> = {};
-      for (let i = 0; i < args.length; i++)
+      for (let i = 0; i < args.length; i++) {
         if (args[i] === "--label") {
           const label = args[++i]!;
           labels[label.slice(0, label.indexOf("="))] = label.slice(label.indexOf("=") + 1);
         }
+      }
       state = {
         Status: "created",
         Running: false,
@@ -90,15 +92,16 @@ function nativeTransport() {
         State: state,
       };
       output = id;
-    } else if (args[0] === "inspect") output = inspection;
-    else if (args[0] === "start")
+    } else if (args[0] === "inspect") {
+      output = inspection;
+    } else if (args[0] === "start") {
       Object.assign(state, {
         Status: "running",
         Running: true,
         Pid: 123,
         StartedAt: "2026-01-01T00:00:00Z",
       });
-    else if (args[0] === "kill")
+    } else if (args[0] === "kill") {
       Object.assign(state, {
         Status: "exited",
         Running: false,
@@ -106,9 +109,13 @@ function nativeTransport() {
         ExitCode: 137,
         FinishedAt: "2026-01-01T00:00:01Z",
       });
-    else if (args[0] === "wait") output = "137";
-    else if (args[0] === "rm") inspection = undefined;
-    else if (args[0] !== "image") throw new Error(`Unexpected native command ${args[0]}`);
+    } else if (args[0] === "wait") {
+      output = "137";
+    } else if (args[0] === "rm") {
+      inspection = undefined;
+    } else if (args[0] !== "image") {
+      throw new Error(`Unexpected native command ${args[0]}`);
+    }
     return {
       failed: false,
       exitCode: 0,
@@ -145,9 +152,9 @@ describe("foreground allocation with the native registry owner", () => {
         const retainedFile = path.join(fixture.workspaceDir, "draft.txt");
         await fs.writeFile(retainedFile, "retained draft");
         const { prepared, native } = await owner(`foreground-${boundary}`);
-        const reached = createDeferred<void>();
-        const resume = createDeferred<void>();
-        if (boundary === "create-response")
+        const reached = createDeferred();
+        const resume = createDeferred();
+        if (boundary === "create-response") {
           mocks.command.mockImplementation(async (argv: string[]) => {
             const result = await transport.execute(argv);
             if (argv[3] === "create") {
@@ -156,7 +163,8 @@ describe("foreground allocation with the native registry owner", () => {
             }
             return result;
           });
-        if (boundary === "create-intent" || boundary === "start-intent")
+        }
+        if (boundary === "create-intent" || boundary === "start-intent") {
           mocks.afterRecord.mockImplementation(async (entry) => {
             if (
               boundary === "create-intent"
@@ -169,6 +177,7 @@ describe("foreground allocation with the native registry owner", () => {
               await resume.promise;
             }
           });
+        }
         const cfg = { ...resolveSandboxConfigForAgent(), workspaceAccess: "rw" as const };
         const allocation = native.custody.runProducer(
           () =>
@@ -208,7 +217,9 @@ describe("foreground allocation with the native registry owner", () => {
           } else {
             expect(transport.dispatched.at(-1)).toBe("rm");
             expect(native.reservation!.foreground?.containerId).toBe(transport.id);
-            if (boundary !== "normal") expect(transport.dispatched).not.toContain("start");
+            if (boundary !== "normal") {
+              expect(transport.dispatched).not.toContain("start");
+            }
           }
         } finally {
           resume.resolve();

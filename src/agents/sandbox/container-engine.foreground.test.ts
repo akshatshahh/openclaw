@@ -43,8 +43,8 @@ describe("foreground native dispatch", () => {
     "does not dispatch %s after Stop during its intent write",
     async (operation) => {
       const { controller, engine } = fixture();
-      const writing = createDeferred<void>();
-      const written = createDeferred<void>();
+      const writing = createDeferred();
+      const written = createDeferred();
       const created = vi.fn();
       const notDispatched = vi.fn();
       const intent = async () => {
@@ -74,8 +74,8 @@ describe("foreground native dispatch", () => {
 
   it("records a late successful full create ID before returning Stop", async () => {
     const { controller, engine } = fixture();
-    const dispatched = createDeferred<void>();
-    const returned = createDeferred<void>();
+    const dispatched = createDeferred();
+    const returned = createDeferred();
     command.mockImplementation(async () => {
       dispatched.resolve();
       await returned.promise;

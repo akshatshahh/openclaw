@@ -968,7 +968,8 @@ export const cronHandlers: GatewayRequestHandlers = {
 // The existing one-use grant is request-scoped; the original runtime identity
 // stays intact so deferred cron commits still fence the exact admitted run.
 for (const [method, handler] of Object.entries(cronHandlers)) {
-  cronHandlers[method] = async (args) => {
+  cronHandlers[method] = async (requestArgs) => {
+    let args = requestArgs;
     const rawPatch =
       isRecord(args.params) && isRecord(args.params.patch) ? args.params.patch : undefined;
     const disableOnly =

@@ -74,17 +74,22 @@ export async function withForegroundPromotedCaller(
   participants.accept({ operatorAuthority: broader });
   try {
     const admittedRunContext = await admission.admit("embedded");
-    if (restriction === "session") requireAdmittedRunForeground(admittedRunContext);
+    if (restriction === "session") {
+      requireAdmittedRunForeground(admittedRunContext);
+    }
     const caller = createAdmittedGatewayToolCallerIdentity({
       admittedRunContext,
       agentId: "main",
       sessionKey: "agent:main:main",
     });
-    if (!caller) throw new Error("test caller missing");
+    if (!caller) {
+      throw new Error("test caller missing");
+    }
     await withGatewayToolCallerIdentity({ ...caller, personalToolParticipants: participants }, () =>
       withGatewayPersonalToolUser(broader.profileId, async () => {
-        if (resolveGatewayToolOperatorSelection().operatorAuthority !== broader)
+        if (resolveGatewayToolOperatorSelection().operatorAuthority !== broader) {
           throw new Error("test participant was not selected");
+        }
         await run(broader.profileId);
       }),
     );

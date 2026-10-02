@@ -25,10 +25,10 @@ describe("foreground allocation owner", () => {
       const context = await prepared.admit("embedded");
       const signal = new AbortController();
       const custody = acquireForegroundSandboxCustody(context, signal.signal);
-      const started = createDeferred<void>();
-      const allocated = createDeferred<void>();
-      const retiring = createDeferred<void>();
-      const retired = createDeferred<void>();
+      const started = createDeferred();
+      const allocated = createDeferred();
+      const retiring = createDeferred();
+      const retired = createDeferred();
       let allocationPresent = false;
       custody.registerCleanup(async () => {
         expect(allocationPresent).toBe(true);
@@ -45,7 +45,9 @@ describe("foreground allocation owner", () => {
         { settleAfterAbort: true },
       );
       await started.promise;
-      if (stop) signal.abort();
+      if (stop) {
+        signal.abort();
+      }
       const closing = prepared.close();
       let completed = false;
       void closing.then(() => {
@@ -80,8 +82,8 @@ describe("foreground allocation owner", () => {
     const prepared = prepare("uncertain-foreground");
     const context = await prepared.admit("embedded");
     const custody = acquireForegroundSandboxCustody(context);
-    const pending = createDeferred<void>();
-    const started = createDeferred<void>();
+    const pending = createDeferred();
+    const started = createDeferred();
     custody.registerCleanup(async () => {
       throw new Error("namespace exit unconfirmed");
     });

@@ -71,7 +71,7 @@ describe("persistUserTurnTranscript", () => {
         updateMode: "none",
       });
       const prepared = recorder.message!;
-      expect(prepared.__openclaw?.foregroundOnlyRunId).toBe(foregroundOnlyRunId);
+      expect(prepared["__openclaw"]?.foregroundOnlyRunId).toBe(foregroundOnlyRunId);
       const runtime = restorePreparedUserTurnOperationalMetaForRuntime({
         preparedMessage: prepared,
         runtimeMessage: castAgentMessage({

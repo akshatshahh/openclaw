@@ -31,10 +31,11 @@ describe("placement session authorization", () => {
   it.each(["role", "session", "stored"] as const)(
     "refuses remote dispatch and move under %s foreground authority before allocation",
     async (restriction) => {
-      if (restriction === "stored")
+      if (restriction === "stored") {
         mocks.resolveTarget.mockReturnValue(
           makeSessionTarget({ sessionId, execution: "foreground-only" }),
         );
+      }
       const dispatch = vi.fn();
       const move = vi.fn();
       const context = makeDispatchTestContext({
@@ -56,8 +57,11 @@ describe("placement session authorization", () => {
         expect(move).not.toHaveBeenCalled();
         expect(mocks.findLiveByOwner).not.toHaveBeenCalled();
       };
-      if (restriction === "stored") await check();
-      else await withForegroundPromotedCaller(restriction, check);
+      if (restriction === "stored") {
+        await check();
+      } else {
+        await withForegroundPromotedCaller(restriction, check);
+      }
     },
   );
   beforeEach(() => {

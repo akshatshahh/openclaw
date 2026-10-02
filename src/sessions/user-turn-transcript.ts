@@ -222,7 +222,15 @@ export function createUserTurnTranscriptRecorder(
     }
     // The admitted producer owns this fact. Message overrides cannot grant or
     // remove a restriction that must survive loss of the in-memory authority.
-    const metadata = { ...candidate.__openclaw };
+    const metadata = { ...candidate["__openclaw"] };
+    // Unrestricted turns retain their prepared persistence-boundary object.
+    if (
+      !foregroundOnlyRunId &&
+      !Object.hasOwn(metadata, "foregroundOnlyRunId") &&
+      !Object.hasOwn(metadata, "foregroundOnlyLifecycleGeneration")
+    ) {
+      return candidate;
+    }
     delete metadata.foregroundOnlyRunId;
     delete metadata.foregroundOnlyLifecycleGeneration;
     if (foregroundOnlyRunId) {
@@ -230,9 +238,9 @@ export function createUserTurnTranscriptRecorder(
       metadata.foregroundOnlyLifecycleGeneration = foregroundOnlyLifecycleGeneration;
     }
     const next = { ...candidate };
-    delete next.__openclaw;
+    delete next["__openclaw"];
     if (Object.keys(metadata).length > 0) {
-      next.__openclaw = metadata;
+      next["__openclaw"] = metadata;
     }
     return next;
   };

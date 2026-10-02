@@ -47,7 +47,7 @@ export async function readMainSessionRecoveryCheckpoint(
       const provenance = normalizeInputProvenance(asOptionalRecord(message)?.provenance);
       if (!isMainSessionRestartRecoveryInputProvenance(provenance)) {
         const record = asOptionalRecord(message);
-        const metadata = asOptionalRecord(record?.__openclaw);
+        const metadata = asOptionalRecord(record?.["__openclaw"]);
         const foregroundOnlyRunId = readUserTurnForegroundOnlyRunId(message);
         const inputId = normalizeOptionalString(record?.idempotencyKey);
         if (

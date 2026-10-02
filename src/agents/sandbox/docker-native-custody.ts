@@ -50,12 +50,11 @@ export async function holdNativeSandboxAllocation(native: NativeSandboxContainer
   }
   const ready = createDeferredCore();
   const closing = createDeferredCore();
-  let settled: Promise<void>;
   native.custody.registerCleanup(async () => {
     closing.resolve();
     await settled;
   });
-  settled = withSandboxRegistryEntryLock(reservation, async () => {
+  const settled = withSandboxRegistryEntryLock(reservation, async () => {
     ready.resolve();
     await closing.promise;
     if (native.reserved) {
@@ -340,7 +339,9 @@ export async function reconcileForegroundSandboxesAtStartup(): Promise<unknown[]
     try {
       await withSandboxRegistryEntryLock(entry, async () => {
         const current = await readRegistryEntry(entry.containerName);
-        if (!current) return;
+        if (!current) {
+          return;
+        }
         assertForegroundSandboxReservationCurrent(current, entry);
         if (current.foreground?.cleanupUncertain) {
           throw new Error(

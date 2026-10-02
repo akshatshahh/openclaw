@@ -148,7 +148,9 @@ export function readNativeSandboxExecution(engine: SandboxContainerEngine) {
     return undefined;
   }
   const { executable, cwd, env, custody } = engine[nativeBinding];
-  if (!custody) throw new Error("Cleanup-only sandbox transport cannot execute work.");
+  if (!custody) {
+    throw new Error("Cleanup-only sandbox transport cannot execute work.");
+  }
   custody.assertCurrent();
   return { executable, cwd, env: { ...env } };
 }
