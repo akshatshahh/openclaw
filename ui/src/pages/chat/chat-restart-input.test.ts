@@ -55,7 +55,7 @@ describe("accepted input restart handoff", () => {
         sessionKey,
         currentSessionId: sessionId,
         requestHandlers: {
-          "chat.history": (params) => ({
+          "chat.history": (params: { pendingBefore?: number }) => ({
             sessionId,
             messages: [],
             pendingInputs:
@@ -78,11 +78,10 @@ describe("accepted input restart handoff", () => {
         expect(getChatPendingInputs(host)?.page.items).toEqual(stopped.items);
       } else {
         await resumeStoredChatOutboxes(host);
-        expect(
-          host.request.mock.calls.some(
-            ([method, params]) => method === "chat.history" && params?.pendingBefore === 21,
-          ),
-        ).toBe(true);
+        expect(host.request).toHaveBeenCalledWith(
+          "chat.history",
+          expect.objectContaining({ pendingBefore: 21 }),
+        );
       }
       expect(listStoredChatOutboxes(host)).toEqual([]);
       expect(host.chatQueue).toEqual([]);

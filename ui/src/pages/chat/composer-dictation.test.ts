@@ -186,7 +186,7 @@ afterEach(() => {
 describe("ComposerDictationController", () => {
   it("retains the admitted chat target while microphone permission is pending", async () => {
     const media = createDeferred<MediaStream>();
-    const stream = await getUserMedia();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     getUserMedia.mockReturnValueOnce(media.promise);
     const { controller, options } = createHarness({ sessionKey: "agent:main:original" });
     try {
