@@ -25,6 +25,7 @@ import {
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import { handleGatewayRequest } from "./server-methods.js";
+import type { GatewayClient } from "./server-methods/types.js";
 import { createContext } from "./server-plugin-in-process-dispatch.test-support.js";
 import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 
@@ -142,6 +143,8 @@ describe("accepted GitHub workflow publication", () => {
       const context = {
         ...createContext(),
         ...source.context,
+        getClientConnIds: (filter?: (candidate: GatewayClient) => boolean) =>
+          new Set(client.connId && (!filter || filter(client)) ? [client.connId] : []),
         githubPublicationService: f.coordinator,
       };
       let result: unknown;
@@ -232,7 +235,13 @@ describe("accepted GitHub workflow publication", () => {
             ),
         );
         if (!allowed) {
-          await expect(pending).rejects.toThrow("missing scope: operator.write");
+          // An unbound trusted System route has method-minimum scopes, but still
+          // needs a reviewed candidate for this restricted session.
+          await expect(pending).rejects.toThrow(
+            actor === "unscoped-system"
+              ? "reviewed publication candidate"
+              : "missing scope: operator.write",
+          );
           expect(accepted).not.toHaveBeenCalled();
           expect(workspace.effects).toEqual([]);
           expect(await workspace.git("rev-parse", "HEAD")).toBe(head);
