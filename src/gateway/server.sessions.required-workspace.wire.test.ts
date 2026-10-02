@@ -68,21 +68,23 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
     const config = await getGatewayConfigModule();
     await config.writeConfigFile(cfg);
     await withGatewayServer(async ({ port }) => {
-      const ws = await openWs(port, {
+      const headers = {
         origin,
         "x-forwarded-for": "203.0.113.50",
         "x-forwarded-proto": "https",
         "x-forwarded-user": "workspace-contributor@example.test",
-      });
+      };
+      const connectOptions = {
+        skipDefaultAuth: true,
+        prePairDevice: true,
+        client: CONTROL_UI_CLIENT,
+        browserOrigin: origin,
+        scopes: [...scopes],
+        deviceIdentityPath: path.join(state.root, "contributor-device.sqlite"),
+      };
+      const ws = await openWs(port, headers);
       try {
-        const connected = await connectReq(ws, {
-          skipDefaultAuth: true,
-          prePairDevice: true,
-          client: CONTROL_UI_CLIENT,
-          browserOrigin: origin,
-          scopes: [...scopes],
-          deviceIdentityPath: path.join(state.root, "contributor-device.sqlite"),
-        });
+        const connected = await connectReq(ws, connectOptions);
         expect(connected.ok, JSON.stringify(connected.error)).toBe(true);
         const created = await rpcReq<{
           key: string;
@@ -154,15 +156,38 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         });
         expect(continued).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
         expect(gatewayReplyMock).toHaveBeenCalledOnce();
+        const invalidated = new Promise<{ code: number; reason: string }>((resolve) => {
+          ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
+        });
         cfg.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
         await config.writeConfigFile(cfg);
-        const revoked = await rpcReq(ws, "chat.send", {
-          sessionKey: payload.key,
-          message: "project access revoked",
-          idempotencyKey: "revoked-project-turn",
+        // A changed role fences the old transport before method authorization runs.
+        await expect(
+          rpcReq(ws, "chat.send", {
+            sessionKey: payload.key,
+            message: "old policy connection",
+            idempotencyKey: "stale-policy-workspace-turn",
+          }),
+        ).rejects.toThrow("closed 4001: client invalidated: gateway-policy-changed");
+        expect(await invalidated).toEqual({
+          code: 4001,
+          reason: "client invalidated: gateway-policy-changed",
         });
-        expect(revoked).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
         expect(gatewayReplyMock).toHaveBeenCalledOnce();
+        const reconnected = await openWs(port, headers);
+        try {
+          const reconnect = await connectReq(reconnected, connectOptions);
+          expect(reconnect.ok, JSON.stringify(reconnect.error)).toBe(true);
+          const revoked = await rpcReq(reconnected, "chat.send", {
+            sessionKey: payload.key,
+            message: "project access revoked",
+            idempotencyKey: "revoked-project-turn",
+          });
+          expect(revoked).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+          expect(gatewayReplyMock).toHaveBeenCalledOnce();
+        } finally {
+          reconnected.close();
+        }
       } finally {
         ws.close();
       }
