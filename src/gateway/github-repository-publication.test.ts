@@ -504,8 +504,15 @@ describe("repository checkpoint GitHub publication", () => {
             sessionKey: SESSION_KEY,
             idempotencyKey: "reset-during-push",
           });
+      // Early admission failures must surface before the held transport, and still join cleanup.
+      const settled = Promise.allSettled([pending]);
       try {
-        await entered.promise;
+        await Promise.race([
+          entered.promise,
+          pending.then(() => {
+            throw new Error("Publication settled before entering the held push");
+          }),
+        ]);
         await expect(
           f.placements.withWorkspaceExclusion(SESSION_ID, async () => {}),
         ).rejects.toThrow();
@@ -535,6 +542,7 @@ describe("repository checkpoint GitHub publication", () => {
         });
       } finally {
         release.resolve();
+        await settled;
       }
       expect(await pending).toMatchObject({ status: "failed", code: "session_changed" });
       expect(listRepositoryGitHubPublications()[0]).toMatchObject({
