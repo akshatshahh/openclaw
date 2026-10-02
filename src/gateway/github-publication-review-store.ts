@@ -30,11 +30,13 @@ async function read(
   input: GitHubPublicationReviewRead,
   context = captureOpenClawStateWorkerContext(),
 ) {
+  // Match shared receipt reads: retain the original owner without a whole-database
+  // backup that can collide with another snapshot's retained launch context.
   const result = await withArtifactPreservingStateReads(() =>
     executeExistingOpenClawStateRead(
       { path: context.admission.databasePath, env: context.environment },
       { type: "publicationReview.read", input },
-      { context, current: true },
+      { context, current: true, preferIndependentWarmRead: true },
     ),
   );
   context.admission.assertCurrent();
