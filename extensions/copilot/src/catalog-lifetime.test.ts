@@ -158,10 +158,14 @@ it("cancels a resumed Code Mode cell during real SDK session.error cleanup befor
         observed.push(event);
       },
     } satisfies AgentHarnessAttemptParamsV2 & { auth: { useLoggedInUser: true } };
-    attempt = harness.runAttempt(params).finally(() => {
-      host.closeHost();
-      host.closeAdmission();
-    });
+    attempt = (async () => {
+      try {
+        return await harness.runAttempt(params);
+      } finally {
+        host.closeHost();
+        await host.closeAdmission();
+      }
+    })();
     await peer.sent;
     const execReply = peer.requestTool("exec", {
       code: 'await yield_control(); await fixture_gate({}); text("STALE AFTER CLOSE"); return "stale";',
@@ -275,7 +279,7 @@ it("cancels a resumed Code Mode cell during real SDK session.error cleanup befor
     peer.releaseDetach();
     await attempt;
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
     constructBridge.mockRestore();
     await harness.dispose?.();
     await pool.dispose();

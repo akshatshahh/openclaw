@@ -362,14 +362,22 @@ async function closeBoundGateway(
   for (const close of [
     () => runtime.close(),
     ...(releaseQueuedAuthority ? [releaseQueuedAuthority] : []),
-    () => bound.admission.close(),
-    () => bound.parent.cleanup(),
   ]) {
     try {
-      await close();
+      close();
     } catch (error) {
       failures.push(error);
     }
+  }
+  try {
+    await bound.admission.close();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    bound.parent.cleanup();
+  } catch (error) {
+    failures.push(error);
   }
   return failures;
 }

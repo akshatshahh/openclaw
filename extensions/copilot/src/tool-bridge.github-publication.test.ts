@@ -48,7 +48,7 @@ describe("Copilot GitHub publication tools", () => {
           expect(tools.filter((name) => name.startsWith("github_"))).toEqual(expected);
         } finally {
           bridge?.cleanup?.();
-          host.close();
+          await host.close();
         }
       });
     },

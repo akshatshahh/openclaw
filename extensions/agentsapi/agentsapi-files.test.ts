@@ -273,9 +273,9 @@ describe("Agents API output attachment publication", () => {
       config: {},
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
   });
 
   function collect(

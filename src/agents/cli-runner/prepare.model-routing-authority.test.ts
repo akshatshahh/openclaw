@@ -72,7 +72,10 @@ function createInterleavedAdmission(params: { kind: AuthorityLoss; runId: string
   return {
     admission,
     close: async () => {
-      const settlements = [closing ?? admission.close(), replacement?.close()];
+      const settlements = [closing ?? admission.close()];
+      if (replacement) {
+        settlements.push(replacement.close());
+      }
       await Promise.all(settlements);
     },
   };

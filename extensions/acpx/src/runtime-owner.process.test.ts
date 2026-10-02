@@ -97,7 +97,7 @@ it.each(["global", "shared-project"])(
           });
         } finally {
           admission.closeHost();
-          admission.closeAdmission();
+          await admission.closeAdmission();
         }
         return JSON.parse(chunks.join(""));
       };
@@ -242,7 +242,7 @@ it("closes a completed oneshot without mixing its replacement record identity", 
         });
       } finally {
         admission.closeHost();
-        admission.closeAdmission();
+        await admission.closeAdmission();
       }
       expect(JSON.parse(chunks.join(""))).toMatchObject({ history: ["oneshot-owned-history"] });
       expect(readAcpSessionEntry(target)?.acp?.identity).toMatchObject({
