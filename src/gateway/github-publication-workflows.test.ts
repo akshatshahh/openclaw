@@ -65,6 +65,7 @@ describe("accepted GitHub workflow publication", () => {
     { operation: "modify", allowed: true, actor: "system", route: "tool" },
     { operation: "modify", allowed: false, actor: "system", route: "tool" },
     { operation: "modify", allowed: false, actor: "system-empty-scopes", route: "tool" },
+    { operation: "modify", allowed: false, actor: "unscoped-system", route: "tool" },
     { operation: "modify", allowed: true, actor: "admin", route: "gateway" },
     { operation: "modify", allowed: false, actor: "admin", route: "gateway-session" },
     { operation: "modify", allowed: false, actor: "admin", route: "gateway-empty" },
@@ -112,7 +113,10 @@ describe("accepted GitHub workflow publication", () => {
       const before = await workspace.git("diff", "HEAD");
 
       const system =
-        actor === "system" || actor === "system-empty-scopes" || actor === "system-missing-scopes";
+        actor === "system" ||
+        actor === "system-empty-scopes" ||
+        actor === "unscoped-system" ||
+        actor === "system-missing-scopes";
       const nativeFullSource =
         route !== "rpc" && !system && (allowed || actor === "admin" || actor === "narrowed");
       if (nativeFullSource) {
@@ -161,9 +165,11 @@ describe("accepted GitHub workflow publication", () => {
           {
             context,
             client:
-              actor === "narrowed"
-                ? { ...client, connect: { ...client.connect, scopes: guestScopes } }
-                : client,
+              actor === "unscoped-system"
+                ? undefined
+                : actor === "narrowed"
+                  ? { ...client, connect: { ...client.connect, scopes: guestScopes } }
+                  : client,
             isWebchatConnect: () => false,
           },
           () =>
