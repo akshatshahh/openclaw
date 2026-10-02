@@ -41,9 +41,10 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
     await requireGit(workspace, ["checkout", "-b", "unrelated-source"]);
     await requireGit(workspace, ["commit", "--allow-empty", "-m", "source ahead of main"]);
     testState.agentConfig = { workspace };
+    // The canonical writer pins main when expanding the roster; keep the runtime override identical.
     testState.agentsConfig = {
       ownership: "explicit",
-      entries: { main: {}, "contributor-agent": {} },
+      entries: { main: { workspace }, "contributor-agent": {} },
     };
     const { dir, storePath } = await createSessionStoreDir();
     // Sync the store before startup so the first RPC does not rewrite the source config.
@@ -176,6 +177,8 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         });
         const prepared = await configIO.readConfigFileSnapshotForWrite();
         expect(prepared.snapshot.valid, JSON.stringify(prepared.snapshot.issues)).toBe(true);
+        expect(prepared.snapshot.sourceConfig.agents?.entries?.main?.workspace).toBe(workspace);
+        expect(config.getRuntimeConfig().agents?.entries?.main?.workspace).toBe(workspace);
         // Edit the source policy only; runtime defaults require unrelated service reloads.
         const revokedConfig = structuredClone(prepared.snapshot.sourceConfig);
         expectDefined(
