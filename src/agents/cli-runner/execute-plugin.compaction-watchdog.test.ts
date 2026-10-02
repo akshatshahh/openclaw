@@ -19,8 +19,8 @@ import {
 // not the live number, is the silence the ceiling has to clear.
 const REPORTED_COMPACTION_SILENCE_MS = 180_444;
 
-afterEach(() => {
-  closePluginTestAdmissions();
+afterEach(async () => {
+  await closePluginTestAdmissions();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });

@@ -269,7 +269,7 @@ describe("Codex trajectory recorder", () => {
       });
       await trajectoryRecorder.flush();
     } finally {
-      host.close();
+      await host.close();
     }
 
     const events = await loadSqliteTrajectoryRuntimeEvents({

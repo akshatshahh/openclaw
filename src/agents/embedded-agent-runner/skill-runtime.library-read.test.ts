@@ -49,7 +49,7 @@ const temps = useAutoCleanupTempDirTracker((cleanup) =>
   afterEach(async () => {
     for (const host of hosts.splice(0)) {
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
     await closeOpenClawAgentDatabasesAsync();
     closeOpenClawAgentDatabasesForTest();

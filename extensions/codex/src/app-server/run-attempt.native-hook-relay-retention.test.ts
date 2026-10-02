@@ -450,7 +450,7 @@ describe("runCodexAppServerAttempt native hook relay retention", () => {
       await reserved.unregister();
       client.close();
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
     expect(a.release).toHaveBeenCalledOnce();
     expect(b.release).toHaveBeenCalledOnce();
@@ -550,7 +550,7 @@ describe("runCodexAppServerAttempt native hook relay retention", () => {
       await relay.drain();
       await nativeHookRelayUnregisterQueue.flush();
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 
@@ -705,7 +705,7 @@ describe("runCodexAppServerAttempt native hook relay retention", () => {
           nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(relayId),
         ).toBeDefined();
         fixture.closeHost();
-        fixture.closeAdmission();
+        await fixture.closeAdmission();
         await expect(
           invokeRelay(relayId, childTool(childThreadId, "allow-child")),
         ).resolves.toMatchObject({ exitCode: 0 });
@@ -742,7 +742,7 @@ describe("runCodexAppServerAttempt native hook relay retention", () => {
       } finally {
         deferredTurnStart.resolve(undefined);
         fixture.closeHost();
-        fixture.closeAdmission();
+        await fixture.closeAdmission();
       }
     },
   );
@@ -805,7 +805,7 @@ describe("runCodexAppServerAttempt native hook relay retention", () => {
       await expect(invokeRelay(relayId, childPayload)).rejects.toThrow(/not found|inactive/);
     } finally {
       fixture.closeHost();
-      fixture.closeAdmission();
+      await fixture.closeAdmission();
     }
   });
 });

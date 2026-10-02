@@ -322,11 +322,12 @@ async function fixture(
       });
     },
     async close() {
-      admission.close();
+      const closing = admission.close();
       controller.abort();
       registry.unregister("connection-1");
       endpoint?.close();
       await Promise.all(tasks);
+      await closing;
     },
   };
 }
@@ -526,9 +527,7 @@ async function call(method,params,id){const r=await fetch(config.mcpServers.open
             throw new Error("Node turn ended before the publication boundary");
           }),
         ]);
-        if (failure === "run-close") {
-          f.admission.close();
-        }
+        const closing = failure === "run-close" ? f.admission.close() : undefined;
         if (failure === "claim-loss") {
           await f.placements.releaseTurn(f.claim);
         }
@@ -545,6 +544,7 @@ async function call(method,params,id){const r=await fetch(config.mcpServers.open
           );
         }
         resume.resolve();
+        await closing;
         await running.catch(() => undefined);
         expect(listSkillLibrary(f.authority).entries).toEqual([]);
       } finally {

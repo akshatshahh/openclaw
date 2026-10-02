@@ -193,7 +193,7 @@ it("does not replay covered history on the same thread after local message-tool 
     expect(originalBinding).toMatchObject({ threadId });
     const originalCutoff = Date.parse(originalBinding!.historyCoveredThrough!);
     expect(Number.isFinite(originalCutoff)).toBe(true);
-    closeHostCapabilities();
+    await closeHostCapabilities();
 
     vi.setSystemTime(Date.now() + 1_000);
     await expect(
@@ -248,7 +248,7 @@ it("does not replay covered history on the same thread after local message-tool 
     const binding = await readCodexAppServerBinding(sessionFile);
     const coveredThrough = Date.parse(binding?.historyCoveredThrough ?? "");
     expect(binding).toMatchObject({ threadId });
-    closeHostCapabilities();
+    await closeHostCapabilities();
 
     vi.setSystemTime(Date.now() + 1_000);
     await expect(
@@ -280,7 +280,7 @@ it("does not replay covered history on the same thread after local message-tool 
     expect(Number.isFinite(coveredThrough)).toBe(true);
     expect(coveredThrough).toBeGreaterThan(originalCutoff);
   } finally {
-    closeHostCapabilities();
+    await closeHostCapabilities();
     harness.close();
     vi.useRealTimers();
   }

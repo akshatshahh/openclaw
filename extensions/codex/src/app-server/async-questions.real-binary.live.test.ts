@@ -57,7 +57,7 @@ describeLive("Codex async questions real-binary bridge", () => {
       authProfileId: null,
       timeoutMs: 120_000,
     });
-    let closeHost: (() => void) | undefined;
+    let closeHost: (() => Promise<void>) | undefined;
     try {
       const completedKinds: string[] = [];
       const questionItemIds: string[] = [];
@@ -212,7 +212,7 @@ describeLive("Codex async questions real-binary bridge", () => {
       const firstThreadId = firstBinding?.threadId;
       expect(firstThreadId).toEqual(expect.any(String));
 
-      closeHost();
+      await closeHost();
       closeHost = undefined;
       const followUp = {
         ...params,
@@ -246,7 +246,7 @@ describeLive("Codex async questions real-binary bridge", () => {
       );
       expect(serverRequestMethods).not.toContain("item/tool/requestUserInput");
     } finally {
-      closeHost?.();
+      await closeHost?.();
       await client.closeAndWait();
     }
   }, 480_000);

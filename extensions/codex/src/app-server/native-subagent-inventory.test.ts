@@ -129,7 +129,7 @@ describe("native pending assignment inventory through registered monitor admissi
       first.bindTurn("parent-turn");
       await f.spawn(firstClient, observeTurn);
       await first.unregister();
-      first.closeCaller();
+      await first.closeCaller();
       expect(f.store.readNativeSubagentAssignments?.(f.identity, f.historyOwner())).toEqual([
         expect.objectContaining({
           runId: "codex-thread:child-thread",
@@ -322,7 +322,7 @@ describe("native pending assignment inventory through registered monitor admissi
       await submitFollowup(client);
       // No follow-up turn notification arrives before the monitor is lost.
       await parent.unregister();
-      parent.closeCaller();
+      await parent.closeCaller();
       const receipt = {
         parentTurnId: "parent-turn",
         callId: "followup",
@@ -365,7 +365,7 @@ describe("native pending assignment inventory through registered monitor admissi
       await resumed.ready;
       expect(f.deliver).not.toHaveBeenCalled();
       await resumed.unregister();
-      resumed.closeCaller();
+      await resumed.closeCaller();
       expect(f.deliver).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           childSessionKey: "codex-thread:child-thread:turn:followup-turn",
@@ -593,7 +593,7 @@ describe("native pending assignment inventory through registered monitor admissi
       expect(f.store.readNativeSubagentSubmissions(f.identity, f.historyOwner())).toHaveLength(
         assignment === "followup" ? 1 : 0,
       );
-      parent.closeCaller();
+      await parent.closeCaller();
       client.close();
       f.deliver.mockClear();
       f.deliver.mockImplementation(async ({ completionCustody }) => {

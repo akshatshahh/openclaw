@@ -323,7 +323,7 @@ describe("initial worker setup admission", () => {
         runLocal,
       );
       void run.catch(() => undefined);
-      let closing: ReturnType<typeof admission.close> = undefined;
+      let closing: ReturnType<typeof admission.close> | undefined;
       try {
         await setImmediate();
         if (admitted) {

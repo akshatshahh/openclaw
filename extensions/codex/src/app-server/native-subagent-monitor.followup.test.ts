@@ -76,7 +76,7 @@ describe("CodexNativeSubagentMonitor", () => {
       relay.unregister();
       await relay.drain();
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     });
     await relay.ready;
     const claimDirectChild = vi.fn(relay.claimDirectChild);

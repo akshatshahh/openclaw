@@ -75,7 +75,7 @@ async function fixture(withHeader = true) {
       });
       return await runWithCliHistoryWriter(writer, () => action(Boolean(writer), params));
     } finally {
-      admission.close();
+      await admission.close();
     }
   };
   const seed = async () =>

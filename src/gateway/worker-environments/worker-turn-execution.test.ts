@@ -107,7 +107,7 @@ describe("worker turn execution", () => {
         );
       } finally {
         authorize.mockRestore();
-        input.preparedRunAdmission.close();
+        await input.preparedRunAdmission.close();
       }
     },
   );
@@ -184,7 +184,7 @@ describe("worker turn execution", () => {
         release.resolve();
         await operation;
         hydration.mockRestore();
-        input.preparedRunAdmission.close();
+        await input.preparedRunAdmission.close();
       }
     },
   );
@@ -297,7 +297,7 @@ describe("worker turn execution", () => {
         release.resolve();
         await operation;
         hydration.mockRestore();
-        input.preparedRunAdmission.close();
+        await input.preparedRunAdmission.close();
       }
     },
   );
@@ -407,7 +407,7 @@ describe("worker turn execution", () => {
       release.resolve();
       await settled;
       hydration.mockRestore();
-      input.preparedRunAdmission.close();
+      await input.preparedRunAdmission.close();
     }
   });
 
@@ -496,7 +496,7 @@ describe("worker turn execution", () => {
         release.resolve();
         await operation;
         setActiveNodeContexts([]);
-        input.preparedRunAdmission.close();
+        await input.preparedRunAdmission.close();
       }
     },
   );

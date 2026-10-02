@@ -660,7 +660,7 @@ describe("recursive spawn production boundary", () => {
           parentState === "operator-completed" ||
           parentState === "operator-revoked"
         ) {
-          bound.admission.close();
+          await bound.admission.close();
           bound.parent.cleanup();
           source?.closeRequest();
           expect(bound.parent.controller.signal.aborted).toBe(false);

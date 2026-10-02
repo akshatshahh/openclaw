@@ -301,8 +301,8 @@ describe("pending spawn invocation authority", () => {
         } finally {
           restoreDrain();
           releaseSwarmRun("late-spawn-blocker");
-          freshAdmission.close();
-          admission.close();
+          await freshAdmission.close();
+          await admission.close();
           parent.cleanup();
           ids.forEach((id) => clearAgentRunContext(id));
         }
@@ -443,7 +443,7 @@ describe("pending spawn invocation authority", () => {
           expect(sourceResult).toMatchObject({ details: { status: "accepted", runId } });
           expect(subagentRuns.get(runId)?.execution.status).toBe("queued");
           expect(resolveSubagentSessionStatus(subagentRuns.get(runId))).toBe("queued");
-          admission.close();
+          await admission.close();
           parent.cleanup();
           expect(parent.controller.signal.aborted).toBe(false);
         }
@@ -471,7 +471,7 @@ describe("pending spawn invocation authority", () => {
         await cancellation;
         await forwarded;
         await pending;
-        admission.close();
+        await admission.close();
         parent.cleanup();
       }
     },
@@ -552,7 +552,7 @@ describe("pending spawn invocation authority", () => {
       response.resolve();
       lease?.release();
       await cancellation;
-      admission.close();
+      await admission.close();
       parent.cleanup();
     }
   });

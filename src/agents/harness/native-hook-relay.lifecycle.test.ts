@@ -577,7 +577,7 @@ it.each(["cancellation", "replacement", "foreground retirement"] as const)(
           ...(successor ? [successor.drain()] : []),
         ]);
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
         resetGlobalHookRunner();
       }
     });

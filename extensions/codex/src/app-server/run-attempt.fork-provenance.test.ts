@@ -118,7 +118,7 @@ describe("Codex submitted prompt provenance", () => {
     } finally {
       await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
       await run;
-      closeHost();
+      await closeHost();
     }
   });
 });

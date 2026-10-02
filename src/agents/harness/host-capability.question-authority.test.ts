@@ -97,7 +97,7 @@ describe("native question creator capabilities", () => {
       } finally {
         nativeCallback.emitDestroy();
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
       }
     },
   );

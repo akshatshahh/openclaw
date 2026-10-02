@@ -138,7 +138,7 @@ describe("Codex attempt TTS media lifetime", () => {
       release.resolve();
       await Promise.allSettled(handle?.mock.results.map((entry) => entry.value) ?? []);
       vi.useRealTimers();
-      host.close();
+      await host.close();
     }
   });
 });

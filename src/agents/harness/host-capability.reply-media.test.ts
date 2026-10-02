@@ -67,7 +67,7 @@ describe("agent harness reply media", () => {
       expect(readWorkspaceFile).toHaveBeenCalledOnce();
     } finally {
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 
@@ -107,7 +107,7 @@ describe("agent harness reply media", () => {
         expect(readWorkspaceFile).toHaveBeenCalledOnce();
       } finally {
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
       }
     });
   });

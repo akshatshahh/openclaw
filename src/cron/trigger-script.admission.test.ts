@@ -156,7 +156,7 @@ describe("cron script admission", () => {
           },
         },
       });
-      let closing: ReturnType<PreparedAgentRunAdmission["close"]> = undefined;
+      let closing: ReturnType<PreparedAgentRunAdmission["close"]> | undefined;
       try {
         await entered.promise;
         expect(admitted).toBeDefined();

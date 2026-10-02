@@ -367,7 +367,7 @@ describe("Codex native Task assignment upgrade", () => {
         } finally {
           client.close();
           host.closeHost();
-          host.closeAdmission();
+          await host.closeAdmission();
           host.closeGateway();
         }
         await migration.migrateLegacyState(fixture.params);

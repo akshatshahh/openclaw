@@ -127,7 +127,7 @@ it("settles delayed close writes without consuming a replacement monitor's resum
   await lease;
   await vi.advanceTimersByTimeAsync(1_000);
   await unregister;
-  first.closeCaller();
+  await first.closeCaller();
 
   expect
     .soft(earlyUnregister, "Unregister must join writes accepted by close settlement")
@@ -151,7 +151,7 @@ it("settles delayed close writes without consuming a replacement monitor's resum
     }),
   );
   await next.unregister();
-  next.closeCaller();
+  await next.closeCaller();
   expect(f.deliver).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({
       childSessionKey: "codex-thread:child-thread",

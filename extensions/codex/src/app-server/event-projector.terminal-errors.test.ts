@@ -673,7 +673,7 @@ describe("CodexAppServerEventProjector usage projection", () => {
       unsubscribe();
       for (const host of hosts) {
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
       }
     }
   });

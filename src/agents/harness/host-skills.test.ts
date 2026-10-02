@@ -102,7 +102,7 @@ it("binds skill reads to a late sandbox and refuses reads after host closure", a
     expect(readFile).toHaveBeenCalledTimes(2);
   } finally {
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
   }
 });
 
@@ -242,7 +242,7 @@ it("keeps the host-owned skill root when plugin options widen placement or repla
     );
   } finally {
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
     await fs.rm(parent, { recursive: true, force: true });
   }
 });

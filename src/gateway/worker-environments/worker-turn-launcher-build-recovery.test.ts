@@ -400,7 +400,7 @@ describe("worker turn launcher build recovery", () => {
       cleanup() {
         inFlight = false;
         settled.resolve();
-        input.preparedRunAdmission.close();
+        return input.preparedRunAdmission.close();
       },
       execute: (signal: AbortSignal) =>
         provider.executeTurn(
@@ -447,7 +447,7 @@ describe("worker turn launcher build recovery", () => {
       } finally {
         controller.abort();
         await result;
-        harness.cleanup();
+        await harness.cleanup();
       }
     },
   );
@@ -482,7 +482,7 @@ describe("worker turn launcher build recovery", () => {
       } finally {
         controller.abort();
         await result;
-        harness.cleanup();
+        await harness.cleanup();
       }
     },
   );

@@ -522,7 +522,7 @@ describe("managed Codex plugin refresh", () => {
         abort.abort("fixture cleanup");
         finishInterrupt?.();
         await settled;
-        closeHost();
+        await closeHost();
         start.mockRestore();
         await harness.client.closeAndWait();
       }

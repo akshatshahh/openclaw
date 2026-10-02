@@ -182,7 +182,7 @@ describe("runCodexAppServerAttempt question refresh", () => {
     });
     expect(pendingRefresh).toBe(true);
     const result = await run;
-    closeHost();
+    await closeHost();
     expect(result.terminal.kind).toBe("ok");
     expect(sourceRecorder.hasPersisted()).toBe(!isSecret || stagedSource);
     const carried = result.pluginRuntimeRefreshMessages ?? [];

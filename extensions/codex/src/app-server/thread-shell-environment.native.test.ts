@@ -210,9 +210,9 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
           sessionKey: "agent:main:native-path",
           config: configured ? { tools: { exec: { pathPrepend: [bin] } } } : {},
         });
-        context.onTestFinished(() => {
+        context.onTestFinished(async () => {
           host.closeHost();
-          host.closeAdmission();
+          await host.closeAdmission();
         });
         const client = await createIsolatedCodexAppServerClient({
           startOptions: appServer.start,
@@ -312,7 +312,7 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
           }
         } finally {
           host.closeHost();
-          host.closeAdmission();
+          await host.closeAdmission();
           expect(await client.closeAndWait()).toMatchObject({ exited: true });
         }
       }

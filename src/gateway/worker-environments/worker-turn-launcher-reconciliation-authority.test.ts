@@ -93,10 +93,10 @@ describe("reconciliation continuation authority", () => {
         },
       });
       const admitted = authority === "admitted" ? await admission.admit("embedded") : undefined;
-      let closing: ReturnType<typeof admission.close> = undefined;
+      const closing: { promise?: ReturnType<typeof admission.close> } = {};
       const revoke = () => {
         if (admitted) {
-          closing = admission.close();
+          closing.promise = admission.close();
         } else {
           sourceLive = false;
         }
@@ -224,7 +224,7 @@ describe("reconciliation continuation authority", () => {
           expect(runLocal).not.toHaveBeenCalled();
           expect(await readdir(remote)).toEqual([]);
         }
-        await closing;
+        await closing.promise;
         expect(placements.get(SESSION_ID)).toMatchObject({ state: "active", turnClaim: null });
       } finally {
         abort.abort();

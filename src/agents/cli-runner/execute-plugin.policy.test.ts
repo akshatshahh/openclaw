@@ -44,9 +44,9 @@ function installBeforeToolCallHook(
   );
 }
 
-afterEach(() => {
+afterEach(async () => {
   resetGlobalHookRunner();
-  closePluginTestAdmissions();
+  await closePluginTestAdmissions();
   mockCallGatewayTool.mockReset();
   vi.restoreAllMocks();
 });

@@ -219,7 +219,7 @@ it.each(["delayed-success", "opaque-steer", "wait-before-admission", "yield-rece
       expect(readAttemptTerminal(await run)).toMatchObject({ aborted: false, promptError: null });
       await nativeHookRelayUnregisterQueue.flush();
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
       if (scenario !== "wait-before-admission" && scenario !== "yield-receipt") {
         await turn(childThreadId, turnB);
       }
@@ -284,7 +284,7 @@ it.each(["delayed-success", "opaque-steer", "wait-before-admission", "yield-rece
         try {
           host.closeHost();
         } finally {
-          host.closeAdmission();
+          await host.closeAdmission();
         }
       }
     }

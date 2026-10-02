@@ -307,7 +307,7 @@ describe("Codex native configuration", () => {
         await run.catch(() => undefined);
         allowedControl?.release();
         sourceControl?.release();
-        closeHost();
+        await closeHost();
         await harness.dispose?.();
         await transport.client.closeAndWait();
       }
@@ -771,7 +771,7 @@ it.each(["restore", "fresh", "fresh after yield"] as const)(
       await client.notify(turnStartedNotification("unqualified-turn"));
       if (yielded) {
         await parent.unregister();
-        host.close();
+        await host.close();
       }
       policy = {
         models: [{ provider: "test-provider", model: "allowed" }],
@@ -788,7 +788,7 @@ it.each(["restore", "fresh", "fresh after yield"] as const)(
           monitor.captureModelSource({ threadId: "parent-thread", turnId: "parent-a" }),
         ).rejects.toThrow("execution was cancelled");
         await parent.unregister();
-        host.close();
+        await host.close();
       } else {
         expect(cancelForeground).not.toHaveBeenCalled();
       }
@@ -826,7 +826,7 @@ it.each(["restore", "fresh", "fresh after yield"] as const)(
       sibling.release();
       await monitor.dispose();
       await parent.unregister();
-      host.close();
+      await host.close();
     }
     expect(listeners.size).toBe(0);
   },

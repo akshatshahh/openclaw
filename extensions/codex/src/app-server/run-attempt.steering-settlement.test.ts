@@ -199,7 +199,7 @@ it("seals native steering when terminal receipt arrives behind its queued prefix
       ...(writer ? [writer] : []),
       ...(terminal ? [terminal] : []),
     ]);
-    fixture.closeHost();
+    await fixture.closeHost();
   }
 });
 
@@ -344,6 +344,6 @@ it("keeps one steering prefix and source through degraded tainted native complet
     fixture.abort.abort("test cleanup");
     vi.useRealTimers();
     await Promise.allSettled([fixture.run, ...notifications, ...(writer ? [writer] : [])]);
-    fixture.closeHost();
+    await fixture.closeHost();
   }
 });

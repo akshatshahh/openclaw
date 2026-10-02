@@ -46,6 +46,17 @@ export function prepareCronRunAdmission(params: {
   const operationalRunInstance = createOperationalRunInstanceRef(runId);
   const resolveGatewayContext =
     params.resolveGatewayContext ?? getPluginRuntimeGatewayRequestScope()?.resolveGatewayContext;
+  const scheduledMessageAuthority =
+    scheduledToolPolicy && isRuntimeToolAllowed("message", params.toolsAllow)
+      ? captureCronJobMessageActionAuthority({ jobId: params.jobId, operationalRunInstance })
+      : undefined;
+  const scheduledMessageSourceAuthority = scheduledMessageAuthority
+    ? captureCronJobMessageSourceAuthority({ jobId: params.jobId, operationalRunInstance })
+    : undefined;
+  const deliveryAttemptFence = params.deliveryAttemptFence;
+  if (scheduledMessageAuthority && !deliveryAttemptFence) {
+    throw new Error("scheduled message authority requires its occurrence delivery fence");
+  }
   let assertAdmitted: (() => void) | undefined;
   const basePreparedRunAdmission = prepareAgentRunAdmission({
     operationalRunInstance,
@@ -72,19 +83,6 @@ export function prepareCronRunAdmission(params: {
         params.executionIdentity.onPostAdmission,
       )
     : basePreparedRunAdmission;
-  const scheduledMessageAuthority =
-    scheduledToolPolicy && isRuntimeToolAllowed("message", params.toolsAllow)
-      ? captureCronJobMessageActionAuthority({ jobId: params.jobId, operationalRunInstance })
-      : undefined;
-  const scheduledMessageSourceAuthority = scheduledMessageAuthority
-    ? captureCronJobMessageSourceAuthority({ jobId: params.jobId, operationalRunInstance })
-    : undefined;
-  const deliveryAttemptFence = params.deliveryAttemptFence;
-  if (scheduledMessageAuthority && !deliveryAttemptFence) {
-    // No admission or resource acquisition has occurred on this refusal path.
-    void preparedRunAdmission.close();
-    throw new Error("scheduled message authority requires its occurrence delivery fence");
-  }
   // This opaque token remains unusable until this exact operational instance
   // is admitted by the live occurrence. Scheduled runners redeem the same host grant.
   const messageActionTurnCapability = deliveryAttemptFence

@@ -48,7 +48,7 @@ function heartbeatCall(notify: boolean) {
   } as const;
 }
 
-const closeHosts: Array<() => void> = [];
+const closeHosts: Array<() => Promise<void>> = [];
 
 function createInactiveHeartbeatFallbackForTest(
   descriptor: Parameters<typeof selectInactiveCodexHeartbeatResponseTool>[0]["descriptor"],
@@ -60,10 +60,10 @@ function createInactiveHeartbeatFallbackForTest(
   return fallback;
 }
 
-afterEach(() => {
+afterEach(async () => {
   resetGlobalHookRunner();
   for (const close of closeHosts.splice(0)) {
-    close();
+    await close();
   }
 });
 
@@ -252,7 +252,7 @@ describe("inactive Codex heartbeat endpoint", () => {
       if (authorityState === "cancelled") {
         runAbortController.abort(new Error("test cancellation"));
       } else {
-        bound.close();
+        await bound.close();
       }
 
       const result = await bridge.handleToolCall(heartbeatCall(false));

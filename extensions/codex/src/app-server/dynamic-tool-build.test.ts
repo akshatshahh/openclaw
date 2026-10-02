@@ -69,7 +69,7 @@ const {
 } = await import("./dynamic-tool-build.test-support.js");
 
 let tempDir: string;
-const hostCapabilityClosers: Array<() => void> = [];
+const hostCapabilityClosers: Array<() => Promise<void>> = [];
 
 function shellTestToolNames(tools: readonly { name: string }[]): string[] {
   return tools
@@ -743,7 +743,7 @@ describe("Codex app-server dynamic tool build", () => {
           expectedTools,
         );
       } finally {
-        host.close();
+        await host.close();
       }
     },
   );

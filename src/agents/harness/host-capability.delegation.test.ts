@@ -173,7 +173,7 @@ describe("harness tool delegation through the catalog", () => {
         }
       } finally {
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
         resetAgentRunRegistryForTest();
         closeOpenClawAgentDatabases();
       }
@@ -189,9 +189,10 @@ it("rejects a catalog result when its admitted owner ends during hook finalizati
     runId: "delegation-result-run",
   };
   const host = await createAdmittedHostCapabilityTestFixture(identity);
+  const closing: { promise?: Promise<void> } = {};
   const outcome = vi.fn<ToolOutcomeObserver>((observation) => {
     if (!observation.presentationOnly) {
-      host.closeAdmission();
+      closing.promise = host.closeAdmission();
     }
   });
   const execute = vi.fn(async () => jsonResult({ marker: "finished-source" }));
@@ -212,7 +213,7 @@ it("rejects a catalog result when its admitted owner ends during hook finalizati
     ).toHaveLength(1);
   } finally {
     host.closeHost();
-    host.closeAdmission();
+    await (closing.promise ?? host.closeAdmission());
     resetAgentRunRegistryForTest();
   }
 });
@@ -226,6 +227,7 @@ it("stops source execution after preparation revokes its owner through a plugin 
   };
   const host = await createAdmittedHostCapabilityTestFixture(identity);
   const instance = new PluginInstance("delegation-view");
+  const closing: { promise?: Promise<void> } = {};
   const execute = vi.fn(async () => jsonResult({ effect: "must-not-run" }));
   const tool: AnyAgentTool = {
     name: "delegation_preparation",
@@ -233,7 +235,7 @@ it("stops source execution after preparation revokes its owner through a plugin 
     description: "Retain source authority through preparation",
     parameters: { type: "object", properties: {} },
     prepareBeforeToolCallParams: (args) => {
-      host.closeAdmission();
+      closing.promise = host.closeAdmission();
       return args;
     },
     execute,
@@ -245,7 +247,7 @@ it("stops source execution after preparation revokes its owner through a plugin 
     expect(execute).not.toHaveBeenCalled();
   } finally {
     host.closeHost();
-    host.closeAdmission();
+    await (closing.promise ?? host.closeAdmission());
     await instance.dispose();
     resetAgentRunRegistryForTest();
   }

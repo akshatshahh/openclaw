@@ -145,7 +145,7 @@ describe("native hook relay WebSocket request lifetime", () => {
       childAdmissionCurrent = false;
       relay?.unregister();
       host?.closeHost();
-      host?.closeAdmission();
+      await host?.closeAdmission();
       await relay?.drain();
       await gateway?.server.close();
       observation.mockRestore();
@@ -349,7 +349,7 @@ describe("native hook relay WebSocket request lifetime", () => {
         releaseResponses();
         relay?.unregister();
         host?.closeHost();
-        host?.closeAdmission();
+        await host?.closeAdmission();
         // Public requests intentionally survive disconnection; explicitly settle
         // only this fixture's still-pending approvals before closing the server.
         if (reviewer?.readyState === 1) {

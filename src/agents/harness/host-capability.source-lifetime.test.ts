@@ -11,7 +11,7 @@ import {
 import { prepareOperatorModelPolicy } from "../operator-model-policy.js";
 import { createAdmittedHostCapabilityTestFixture } from "./host-capability.test-support.js";
 
-const cleanup: Array<() => void> = [];
+const cleanup: Array<() => void | Promise<void>> = [];
 
 async function createSourceHost(
   operatorAuthority?: AdmittedRunOperatorAuthority,
@@ -44,9 +44,9 @@ function bindModel(retained: ReturnType<typeof retain>) {
   return binding;
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const release of cleanup.splice(0).toReversed()) {
-    release();
+    await release();
   }
   resetAgentRunRegistryForTest();
 });
@@ -77,7 +77,7 @@ it.each(["source assertion", "lifecycle rotation"] as const)(
     const retained = retain(host);
     expect(retained.signal?.aborted).toBe(false);
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
     foreground.abort();
     expect(() => retained.assertCurrent()).not.toThrow();
     const modelBinding = bindModel(retained);
@@ -107,7 +107,7 @@ it("signals retained work on gateway lifecycle rotation after its foreground clo
   const host = await createSourceHost(source, undefined, "exact");
   const retained = retain(host);
   host.closeHost();
-  host.closeAdmission();
+  await host.closeAdmission();
   const modelBinding = bindModel(retained);
   rotateAgentEventLifecycleGeneration();
   expect(retained.signal?.aborted).toBe(true);
@@ -134,7 +134,7 @@ it("releases model authority when its retained work closes during acquisition", 
   const host = await createSourceHost(source, undefined, "exact");
   const retained = retain(host);
   host.closeHost();
-  host.closeAdmission();
+  await host.closeAdmission();
   expect(sourceHolds).toBe(1);
   acquisition.close = retained.release;
   expect(() => retained.bindModelExecution?.({ provider: "fixture", model: "a" })).toThrow(
@@ -169,7 +169,7 @@ it.each(["signal", "lifecycle"] as const)(
     );
     const retained = retain(host);
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
     revoke = true;
     expect(() => retained.assertCurrent()).toThrow();
     if (revocation === "signal") {
@@ -206,7 +206,7 @@ it("guards retained unknown-model work through policy introduction and releases 
   expect(host.hostCapabilities.bindModelExecution).toBeUndefined();
   const retained = retain(host);
   host.closeHost();
-  host.closeAdmission();
+  await host.closeAdmission();
   expect(holds).toBe(1);
   expect(() => retained.assertCurrent()).not.toThrow();
   expect(retained.signal?.aborted).toBe(false);

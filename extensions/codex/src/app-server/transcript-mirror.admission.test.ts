@@ -201,7 +201,7 @@ it.each([
       }
     } finally {
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   },
 );

@@ -17,10 +17,10 @@ import {
 vi.mock("../tools/gateway.js", () => ({ callGatewayTool: vi.fn() }));
 const mockCallGatewayTool = vi.mocked(callGatewayTool);
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
-  closePluginTestAdmissions();
+  await closePluginTestAdmissions();
   mockCallGatewayTool.mockReset();
 });
 

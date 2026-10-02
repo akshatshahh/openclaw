@@ -50,7 +50,7 @@ describeLive("Codex app-server approval requester real-binary bridge", () => {
         authProfileId: null,
         timeoutMs: 120_000,
       });
-      let closeHost: (() => void) | undefined;
+      let closeHost: (() => Promise<void>) | undefined;
       try {
         const listed = await client.request<CodexModelListResponse>(
           "model/list",
@@ -157,7 +157,7 @@ describeLive("Codex app-server approval requester real-binary bridge", () => {
         );
         expect(agentEvents.filter((event) => event.stream === "approval")).toEqual([]);
       } finally {
-        closeHost?.();
+        await closeHost?.();
         await client.closeAndWait();
       }
     });

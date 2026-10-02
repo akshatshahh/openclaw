@@ -17,10 +17,10 @@ async function createHost(runId: string) {
   return fixture;
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const fixture of fixtures.splice(0)) {
     fixture.closeHost();
-    fixture.closeAdmission();
+    await fixture.closeAdmission();
   }
   resetAgentRunRegistryForTest();
 });

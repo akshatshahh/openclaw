@@ -257,7 +257,7 @@ describe("gateway harness questions", () => {
           sourceRecorder.finishPendingInput?.("interrupted");
         } finally {
           host.closeHost();
-          host.closeAdmission();
+          await host.closeAdmission();
         }
       }
     }

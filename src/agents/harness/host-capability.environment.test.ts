@@ -68,7 +68,7 @@ describe("prepared harness tool environment", () => {
       expect(() => host.hostCapabilities.activeComputerContext?.()).toThrow("no longer active");
     } finally {
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 
@@ -134,7 +134,7 @@ describe("prepared harness tool environment", () => {
         expect(() => host.hostCapabilities.preparedEnvironment?.()).toThrow("no longer active");
       } finally {
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
         merge.mockRestore();
       }
     },

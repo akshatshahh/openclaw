@@ -235,7 +235,7 @@ it.each([
       releaseAppend.resolve();
       await outcome;
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 });

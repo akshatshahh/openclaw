@@ -201,9 +201,11 @@ export function prepareAgentCommandExecutionIdentity(params: {
       try {
         await turnRegistration;
       } finally {
-        await drainAgentRunTerminalWrites(admission.operationalRunInstance).finally(
-          admission.close,
-        );
+        try {
+          await drainAgentRunTerminalWrites(admission.operationalRunInstance);
+        } finally {
+          await admission.close();
+        }
       }
     },
     onRuntimeTurnStarted: (): Promise<void> | undefined => {

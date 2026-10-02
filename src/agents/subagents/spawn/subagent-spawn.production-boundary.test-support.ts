@@ -390,12 +390,13 @@ export function registerYieldedRequesterBatchCase(options: {
         rearmGeneration: 1,
         batchRunIds: [childRunId],
       });
-      bound.admission.close();
+      const closing = bound.admission.close();
       bound.parent.cleanup();
       childResult.resolve({
         payloads: [{ text: "Nested child result." }],
         meta: { durationMs: 1, finalAssistantVisibleText: "Nested child result." },
       });
+      await closing;
       await options.waitForEmbeddedRun(bound, bound.parentRunId, parentStarted.promise, 2);
       await settleSubagentRegistryPersistenceWork();
       expect(admissionFailures).toEqual([]);

@@ -91,7 +91,7 @@ async function withAdmission(
       await run(fixture);
     } finally {
       fixture.closeHost();
-      fixture.closeAdmission();
+      await fixture.closeAdmission();
     }
   });
 }
@@ -557,12 +557,13 @@ describe("host-owned current admission annotation", () => {
       const unsubscribe = onInternalSessionTranscriptUpdate(updates);
       const pending = f.annotate();
       const refused = expect(pending).rejects.toThrow();
+      let closing: Promise<void> | undefined;
       try {
         if (reason === "host-close") {
           f.closeHost();
         }
         if (reason === "admission-close") {
-          f.closeAdmission();
+          closing = f.closeAdmission();
         }
         if (reason === "abort") {
           f.controller.abort();
@@ -582,10 +583,11 @@ describe("host-owned current admission annotation", () => {
         if (reason === "replacement") {
           const replacement = await createAdmittedHostCapabilityTestFixture(f.attempt);
           replacement.closeHost();
-          replacement.closeAdmission();
+          await replacement.closeAdmission();
         }
       } finally {
         await release();
+        await closing;
       }
       try {
         await refused;

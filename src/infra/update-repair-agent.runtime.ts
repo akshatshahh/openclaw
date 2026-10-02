@@ -462,17 +462,17 @@ async function runScopedUpdateRepairTurn(params: UpdateRepairTurnParams) {
   } finally {
     clearTimeout(timeout);
     controller.abort(new Error("Update repair turn completed"));
-    const settled = await Promise.allSettled([
-      preparedRunAdmission.close(),
-      cleanupProcessScope?.(),
-    ]);
-    const failures = settled.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : [],
-    );
-    if (failures.length > 0) {
-      recordAgentCleanupFailure();
-      throw new AggregateError(failures, "Update repair resource cleanup failed");
+  }
+  const settled = await Promise.allSettled([preparedRunAdmission.close(), cleanupProcessScope?.()]);
+  const failures = settled.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length > 0) {
+    recordAgentCleanupFailure();
+    if (failures.length === 1) {
+      throw failures[0];
     }
+    throw new AggregateError(failures, "Update repair resource cleanup failed");
   }
   return {
     status: "completed" as const,

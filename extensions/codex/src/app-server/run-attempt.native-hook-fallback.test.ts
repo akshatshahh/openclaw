@@ -445,7 +445,7 @@ describe("Codex native hook Gateway fallback", () => {
       abort.abort("test cleanup");
       await run.catch(() => undefined);
       permitted.release();
-      closeHost();
+      await closeHost();
       harness.close();
     }
     expect(listeners.size).toBe(0);
@@ -530,7 +530,7 @@ describe("Codex native hook Gateway fallback", () => {
     } finally {
       abort.abort("test cleanup");
       await Promise.allSettled([run]);
-      closeHost();
+      await closeHost();
     }
   });
 });

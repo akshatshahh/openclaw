@@ -60,7 +60,7 @@ describe("plugin embedded-agent runtime admission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authorityActive = true;
-    mocks.close.mockImplementation(() => {
+    mocks.close.mockImplementation(async () => {
       mocks.authorityActive = false;
     });
     mocks.prepareAgentRunAdmission.mockReturnValue({
@@ -125,8 +125,8 @@ describe("plugin embedded-agent runtime admission", () => {
     "joins resource cleanup after %s and surfaces its failure",
     async (end) => {
       const core = createDeferred<{ payloads: never[] }>();
-      const cleanup = createDeferred<void>();
-      const started = createDeferred<void>();
+      const cleanup = createDeferred();
+      const started = createDeferred();
       const controller = new AbortController();
       mocks.close.mockImplementation(() => {
         mocks.authorityActive = false;

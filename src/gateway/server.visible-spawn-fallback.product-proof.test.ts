@@ -697,7 +697,7 @@ async function withCliSpawnGrant(
     if (grantToken) {
       revokeMcpLoopbackClientGrant(grantToken);
     }
-    admission.close();
+    await admission.close();
   }
 }
 

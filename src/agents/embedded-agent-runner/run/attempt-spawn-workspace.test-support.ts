@@ -1354,7 +1354,7 @@ export async function createContextEngineAttemptRunner(params: {
         await loadRunEmbeddedAttempt()
       )({ ...attempt, admittedRunContext: await admission.admit("embedded") });
     } finally {
-      admission.close();
+      await admission.close();
     }
   } finally {
     if (previousTrajectoryEnv === undefined) {

@@ -24,12 +24,12 @@ vi.mock("../tools/gateway.js", () => ({ callGatewayTool: vi.fn() }));
 
 const activeSessions = new Set<CliBackendLiveSessionHandle>();
 
-afterEach(() => {
+afterEach(async () => {
   for (const session of activeSessions) {
     session.close("restart");
   }
   activeSessions.clear();
-  closePluginTestAdmissions();
+  await closePluginTestAdmissions();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });

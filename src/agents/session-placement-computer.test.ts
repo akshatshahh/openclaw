@@ -145,7 +145,7 @@ describe.each([false, true])(
           );
         } finally {
           host.closeHost();
-          host.closeAdmission();
+          await host.closeAdmission();
         }
       },
     );

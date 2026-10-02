@@ -271,7 +271,7 @@ describe("native hook relay approval wait handling", () => {
       await Promise.allSettled([first, second, ...(duplicate ? [duplicate] : [])]);
       await Promise.all([firstRelay.drain(), secondRelay.drain()]);
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 
@@ -398,7 +398,7 @@ describe("native hook relay approval wait handling", () => {
         await Promise.allSettled([pending]);
         await relay.drain();
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
       }
     },
   );
@@ -505,7 +505,7 @@ describe("native hook relay approval wait handling", () => {
         await Promise.allSettled([first, second, successor]);
         await relay.drain();
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
       }
     },
   );

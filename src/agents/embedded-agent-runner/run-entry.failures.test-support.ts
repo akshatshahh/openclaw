@@ -96,7 +96,7 @@ export function registerRunEntryFailureTests(state: {
                 .spyOn(options.assistantErrorTranscript, "settle")
                 .mockImplementation(async (...args) => {
                   await settle(...args);
-                  admission.close();
+                  await admission.close();
                 });
               restoreCleanup = () => spy.mockRestore();
             }
@@ -201,7 +201,7 @@ export function registerRunEntryFailureTests(state: {
       } finally {
         restoreCleanup?.();
         subagentRuns.delete(child.runId);
-        admission.close();
+        await admission.close();
         await fixture.cleanup();
       }
     },
@@ -295,7 +295,7 @@ export function registerRunEntryFailureTests(state: {
         });
       } finally {
         subagentRuns.delete(child.runId);
-        admission.close();
+        await admission.close();
         await fixture.cleanup();
       }
     },

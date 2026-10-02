@@ -124,7 +124,7 @@ const activeAppServerAttemptsForTest = new Set<{
   sessionId: string;
   sessionKey?: string;
 }>();
-const activeHarnessHostClosuresForTest = new Set<() => void>();
+const activeHarnessHostClosuresForTest = new Set<() => Promise<void>>();
 
 type RunCodexAppServerAttemptOptions = Omit<
   NonNullable<Parameters<typeof runCodexAppServerAttemptImpl>[1]>,
@@ -367,7 +367,7 @@ export async function bindProductionHarnessHostCapabilitiesForTest(
   operatorSource?: Parameters<
     typeof createAgentHarnessHostCapabilitiesForTest
   >[0]["operatorSource"],
-): Promise<() => void> {
+): Promise<() => Promise<void>> {
   const factory = getCodexTestToolFactory(params);
   if (factory) {
     await setHostToolFactoryForTest(params, factory);
@@ -380,14 +380,13 @@ export async function bindProductionHarnessHostCapabilitiesForTest(
     operatorSource,
   });
   params.hostCapabilities = host.capabilities;
-  let active = true;
+  let closing: Promise<void> | undefined;
   const close = () => {
-    if (!active) {
-      return;
+    if (!closing) {
+      closing = host.close();
+      activeHarnessHostClosuresForTest.delete(close);
     }
-    active = false;
-    activeHarnessHostClosuresForTest.delete(close);
-    host.close();
+    return closing;
   };
   activeHarnessHostClosuresForTest.add(close);
   return close;
@@ -698,7 +697,7 @@ export function setupRunAttemptTestHooks(options: { sessionOwner?: null } = {}):
     }
     const drained = await drainActiveAppServerAttemptsForTest();
     for (const close of activeHarnessHostClosuresForTest) {
-      close();
+      await close();
     }
     await sandboxExecServerRegistry.closeAll();
     await nativeHookRelayUnregisterQueue.clear();

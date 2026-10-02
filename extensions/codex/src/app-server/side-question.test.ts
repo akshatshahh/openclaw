@@ -1464,26 +1464,30 @@ describe("runCodexAppServerSideQuestion", () => {
     getSharedCodexAppServerClientMock.mockResolvedValue(client);
 
     await expect(
-      runCodexAppServerSideQuestion(
-        sideLoopRelayParams({
-          hostCapabilities: host.hostCapabilities,
-          sessionKey: "agent:main:session-1",
-          sessionEntry: {
-            sessionId: "session-1",
-            updatedAt: 1,
-            permissionMode: "guarded",
-            sessionRoot: "/tmp/workspace",
-          },
-          messageChannel: "discord",
-          messageProvider: "discord-voice",
-          currentChannelId: "discord:voice-room",
-          opts: { runId: "run-side-1" },
-        }),
-        { nativeHookRelay: { enabled: true, hookTimeoutSec: 9 } },
-      ).finally(() => {
-        host.closeHost();
-        host.closeAdmission();
-      }),
+      (async () => {
+        try {
+          return await runCodexAppServerSideQuestion(
+            sideLoopRelayParams({
+              hostCapabilities: host.hostCapabilities,
+              sessionKey: "agent:main:session-1",
+              sessionEntry: {
+                sessionId: "session-1",
+                updatedAt: 1,
+                permissionMode: "guarded",
+                sessionRoot: "/tmp/workspace",
+              },
+              messageChannel: "discord",
+              messageProvider: "discord-voice",
+              currentChannelId: "discord:voice-room",
+              opts: { runId: "run-side-1" },
+            }),
+            { nativeHookRelay: { enabled: true, hookTimeoutSec: 9 } },
+          );
+        } finally {
+          host.closeHost();
+          await host.closeAdmission();
+        }
+      })(),
     ).resolves.toEqual({ text: "Side answer." });
 
     expect(relayIdDuringFork).toBeDefined();
@@ -2364,7 +2368,7 @@ describe("runCodexAppServerSideQuestion", () => {
       client.emit(turnCompleted("side-thread", "turn-1", "Gateway shell inspected."));
       await run.catch(() => {});
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 

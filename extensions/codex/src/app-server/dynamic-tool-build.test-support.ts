@@ -140,7 +140,7 @@ export async function buildDynamicToolsForTest(
 
 export async function bindProductionCodexHostCapabilities(
   params: EmbeddedRunAttemptParams,
-  hostCapabilityClosers: Array<() => void>,
+  hostCapabilityClosers: Array<() => Promise<void>>,
 ): Promise<void> {
   const { createAgentHarnessHostCapabilitiesForTest } =
     await import("openclaw/plugin-sdk/plugin-test-runtime");
@@ -173,10 +173,10 @@ export function createRuntimeDynamicTool(name: string): RuntimeDynamicToolForTes
 
 export async function cleanupDynamicToolBuildFixture(
   tempDir: string,
-  hostCapabilityClosers: Array<() => void>,
+  hostCapabilityClosers: Array<() => Promise<void>>,
 ): Promise<void> {
   for (const close of hostCapabilityClosers.splice(0)) {
-    close();
+    await close();
   }
   vi.restoreAllMocks();
   await closeOpenClawAgentDatabasesAsync();

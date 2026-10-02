@@ -99,7 +99,7 @@ describe("Codex native configuration lifecycle", () => {
           expect(qualification?.hasProvider("restored")).toBe(true);
         }
       } finally {
-        closeHost();
+        await closeHost();
         fixture.client.close();
       }
     },
@@ -232,7 +232,7 @@ describe("Codex native configuration lifecycle", () => {
           ),
         ).toBe(false);
       } finally {
-        closeHost?.();
+        await closeHost?.();
       }
     },
   );

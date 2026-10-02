@@ -90,7 +90,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       vi.useRealTimers();
       command.finish();
       await response;
-      closeHost();
+      await closeHost();
       command.close();
     }
   });
@@ -158,7 +158,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
         expect(readAttemptTerminal(await run)).toMatchObject({ aborted: false, timedOut: false });
       } finally {
         vi.useRealTimers();
-        closeHostCapabilities();
+        await closeHostCapabilities();
         process.close();
       }
     }
@@ -223,7 +223,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     } finally {
       finish?.();
       vi.useRealTimers();
-      closeHostCapabilities();
+      await closeHostCapabilities();
     }
   });
 
@@ -249,7 +249,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     tool.execute = execute;
 
     const harness = createStartedThreadHarness();
-    let closeHostCapabilities: (() => void) | undefined;
+    let closeHostCapabilities: (() => Promise<void>) | undefined;
     const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) => {
       if ("toolCallId" in event && event.toolCallId === "call-echo-audit") {
         diagnosticEvents.push(event);
@@ -276,7 +276,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       await run;
       await waitForDiagnosticEventsDrained();
     } finally {
-      closeHostCapabilities?.();
+      await closeHostCapabilities?.();
       unsubscribeDiagnostics();
     }
 
@@ -409,7 +409,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
       expect(readAttemptTerminal(await run).promptError).toBeNull();
     } finally {
-      closeHostCapabilities();
+      await closeHostCapabilities();
     }
 
     await vi.waitFor(() => {

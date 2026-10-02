@@ -336,10 +336,13 @@ export async function createHostTtsRuntimeContract(
           sourceReplyDeliveryMode: "message_tool_only",
         }) ?? []
       ).filter((payload) => getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression),
-    close: () => {
+    close: async () => {
       host.closeHost();
-      host.closeAdmission();
-      synthesis.mockRestore();
+      try {
+        await host.closeAdmission();
+      } finally {
+        synthesis.mockRestore();
+      }
     },
   };
 }

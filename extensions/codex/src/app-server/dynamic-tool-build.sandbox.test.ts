@@ -28,7 +28,7 @@ const {
 
 describe("Codex app-server sandbox shell tools", () => {
   const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-  const hostCapabilityClosers: Array<() => void> = [];
+  const hostCapabilityClosers: Array<() => Promise<void>> = [];
   let tempDir: string;
 
   beforeEach(() => {
@@ -41,9 +41,9 @@ describe("Codex app-server sandbox shell tools", () => {
     tempDir = tempDirs.make("openclaw-codex-sandbox-tools-");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const close of hostCapabilityClosers.splice(0)) {
-      close();
+      await close();
     }
     resetGlobalHookRunner();
     vi.restoreAllMocks();

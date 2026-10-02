@@ -811,7 +811,7 @@ describe.skipIf(process.platform === "win32")(
               });
             }
             expect(() => params.hostCapabilities.assertActive()).not.toThrow();
-            closeHost();
+            await closeHost();
             expect(() => params.hostCapabilities.assertActive()).toThrow();
             const sourceKey = scenario.homeScope === "user" ? NATIVE_KEY : HOST_KEY;
             expect(fixture.requests.length).toBeGreaterThan(0);

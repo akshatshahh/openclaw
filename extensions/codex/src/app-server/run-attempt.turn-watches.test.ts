@@ -794,7 +794,7 @@ describe("runCodexAppServerAttempt native lifecycle", () => {
       const run = runCodexAppServerAttempt(params);
 
       await run.waitForTurnAccepted();
-      closeHost();
+      await closeHost();
       harness.close();
 
       await expect(run).resolves.toMatchObject({

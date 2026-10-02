@@ -134,9 +134,9 @@ export function requestNativeTool(
   });
 }
 
-export function closePluginTestAdmissions(): void {
+export async function closePluginTestAdmissions(): Promise<void> {
   for (const admission of activeAdmissions.splice(0)) {
-    admission.close();
+    await admission.close();
   }
   resetAdjustedParamsByToolCallIdForTests();
 }

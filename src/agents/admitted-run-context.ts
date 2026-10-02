@@ -227,7 +227,7 @@ export type PreparedAgentRunAdmission = Readonly<{
   /** Host-only source restriction available before the runtime prepares its tools. */
   readOperatorAuthority?: () => AdmittedRunOperatorAuthority | undefined;
   /** Closes admission immediately; await in-flight preparation before releasing the source. */
-  close: () => void | Promise<void>;
+  close: () => Promise<void>;
 }>;
 
 type DelegatedAuthorityLease = {

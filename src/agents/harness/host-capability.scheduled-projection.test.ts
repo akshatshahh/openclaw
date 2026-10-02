@@ -24,10 +24,10 @@ async function createHost(runId: string) {
   hosts.push(host);
   return host;
 }
-afterEach(() => {
+afterEach(async () => {
   for (const host of hosts.splice(0)) {
     host.closeHost();
-    host.closeAdmission();
+    await host.closeAdmission();
   }
   resetAgentRunRegistryForTest();
 });

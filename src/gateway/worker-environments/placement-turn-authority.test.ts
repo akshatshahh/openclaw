@@ -557,7 +557,7 @@ it("does not adopt a same-claim successor while execution identity preparation r
     if (store.validateTurnClaim(claim)) {
       await store.releaseTurn(claim);
     }
-    admission.close();
+    await admission.close();
   }
 });
 
@@ -606,7 +606,7 @@ it("does not read the worker source when its claim closes during run admission",
     ).rejects.toThrow("turn claim authority changed");
     expect(assertSourceCurrent).not.toHaveBeenCalled();
   } finally {
-    admission.close();
+    await admission.close();
   }
 });
 

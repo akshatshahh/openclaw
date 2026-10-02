@@ -166,10 +166,11 @@ export function registerSessionsSendRequesterRetirementTests({
       context.getRuntimeConfig = () => config;
       context.resolveGatewayContext = () => context;
       let requesterRetired = false;
+      let closing: Promise<void> | undefined;
       const retireRequester = () => {
         expect(mergeAcceptedSessionSpawnsForRun(admission.operationalRunInstance)).toEqual([]);
         requesterRetired = true;
-        admission.close();
+        closing = admission.close();
       };
       const publish = registryPersistence.publishSubagentRunPostimages;
       const retireBeforePublication = vi
@@ -276,9 +277,10 @@ export function registerSessionsSendRequesterRetirementTests({
       } finally {
         retire.mockRestore();
         retireBeforePublication.mockRestore();
-        admission.close();
+        closing ??= admission.close();
         clearActiveEmbeddedRun(childSessionId, handle, childSessionKey);
         childPending.resolve();
+        await closing;
         stopObserving();
         resetSubagentRegistryForTests();
         await settleSessionWork();
@@ -440,7 +442,7 @@ export function registerSessionsSendRequesterRetirementTests({
           finish === "retired" &&
           getSubagentRunByRunId("second-watched-run")?.requesterTurnRunId === requesterTurnRunId
         ) {
-          admission.close();
+          await admission.close();
         }
         return result;
       });
@@ -521,8 +523,9 @@ export function registerSessionsSendRequesterRetirementTests({
           resultsDelivered.resolve();
         }
       });
-      admission.close();
+      const closing = admission.close();
       childrenPending[firstIndex]!.resolve();
+      await closing;
       await firstSettled.promise;
       expect(
         getSubagentRunByRunId(children[firstIndex]!.runId),
@@ -560,8 +563,9 @@ export function registerSessionsSendRequesterRetirementTests({
       ).toHaveLength(1);
     } finally {
       retireTool.mockRestore();
-      admission.close();
+      const closing = admission.close();
       childrenPending.forEach((pending) => pending.resolve());
+      await closing;
       stopObserving();
       resetSubagentRegistryForTests();
       await settleSessionWork();

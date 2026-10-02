@@ -237,7 +237,7 @@ describe("post-compaction loop guard wired into runEmbeddedAgent", () => {
         attemptSignalReason = abortSignal?.reason;
         attemptReturned = true;
         if (revoked) {
-          admission.close();
+          await admission.close();
         }
         return session.makeAttemptResult({
           toolMetas: [{ toolName: "gateway" }, { toolName: "gateway" }, { toolName: "gateway" }],
@@ -267,7 +267,7 @@ describe("post-compaction loop guard wired into runEmbeddedAgent", () => {
         expect(child.requesterSettleWake).toBeUndefined();
       } finally {
         subagentRuns.delete(child.runId);
-        admission.close();
+        await admission.close();
       }
 
       expect(mockedCompactDirect).toHaveBeenCalledTimes(1);

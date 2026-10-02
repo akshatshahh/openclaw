@@ -89,9 +89,9 @@ export async function fixture() {
     });
     params.agentId = identity.agentId;
     const host = await createAdmittedHostCapabilityTestFixture(params, { gatewayContext: true });
-    onTestFinished(() => {
+    onTestFinished(async () => {
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
       host.closeGateway();
     });
     assert(host.agentHarnessCompletionScope);
@@ -151,9 +151,9 @@ export async function fixture() {
     return {
       ...(await registered.promise),
       closeGateway: host.closeGateway,
-      closeCaller: () => {
+      closeCaller: async () => {
         host.closeHost();
-        host.closeAdmission();
+        await host.closeAdmission();
       },
     };
   };

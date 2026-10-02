@@ -37,8 +37,8 @@ async function startBlockedRun(options: {
   return { run };
 }
 
-afterEach(() => {
-  closePluginTestAdmissions();
+afterEach(async () => {
+  await closePluginTestAdmissions();
   vi.useRealTimers();
 });
 
