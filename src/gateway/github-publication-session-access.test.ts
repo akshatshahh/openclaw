@@ -184,8 +184,11 @@ describe("registered session GitHub publication access", () => {
     const respond = vi.fn();
     mocks.prepareIdentity.mockClear();
     mocks.runCommand.mockClear();
+    const client = f.guestSource.client;
     const context = {
       ...f.guestSource.context,
+      getClientConnIds: (filter?: (candidate: GatewayClient) => boolean) =>
+        new Set(client.connId && (!filter || filter(client)) ? [client.connId] : []),
       githubPublicationService: f.coordinator,
     } as GatewayRequestContext;
     await handleGatewayRequest({
