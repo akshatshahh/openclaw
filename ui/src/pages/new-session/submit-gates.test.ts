@@ -52,14 +52,15 @@ describe("DraftSubmissionFlow submit gates", () => {
       request: async () => ({ projects: [], creationPolicy: { execution: "foreground-only" } }),
     });
     await place.browser.refreshProjects();
-    flow.pendingPlacement.stageCreate({
+    const retained = flow.pendingPlacement.stageCreate({
       agentId: "main",
       target: { kind: "device", deviceId: "runner" },
       message: "Keep original input",
       gatewayUrl: "ws://gateway.example",
       recoveryScope: "principal-a",
-      createParams: { agentId: "main", message: "" },
+      createParams: { agentId: "main", message: "", worktree: true },
     });
+    expect(retained).not.toBeNull();
     expect(flow.submitBlock()).toEqual({
       gate: "execution-policy",
       reason: "Use this Gateway; remote execution cannot confirm foreground cleanup.",

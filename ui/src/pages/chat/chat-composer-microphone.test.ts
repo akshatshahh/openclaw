@@ -74,7 +74,13 @@ describe("composer microphone picker", () => {
       };
       composerProps.onRequestUpdate = draw;
       draw();
+      const dropdown = container.querySelector<HTMLElement & { updateComplete: Promise<unknown> }>(
+        "wa-dropdown.chat-talk-input-picker",
+      );
+      expect(dropdown).not.toBeNull();
+      await dropdown!.updateComplete;
       button(container, t("chat.composer.microphoneInput")).click();
+      await dropdown!.updateComplete;
       await vi.waitFor(() => expect(discovery).toHaveBeenCalledOnce());
 
       reason = t("chat.composer.foregroundVoiceUnavailable");
