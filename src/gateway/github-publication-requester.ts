@@ -276,7 +276,9 @@ export async function captureGitHubPublicationRequester(
         requester.assertCurrent();
         if (!source) throw new GitHubPublicationRequesterUnavailableError();
         const lifetime = new AbortController();
-        const signals = [source.authority.signal, getGatewayRestartDrainSignal()];
+        const signals = [source.authority.signal, getGatewayRestartDrainSignal()].filter(
+          (signal): signal is AbortSignal => signal !== undefined,
+        );
         references += 1;
         const release = () => {
           if (lifetime.signal.aborted) return;

@@ -25,21 +25,25 @@ describe("reviewed GitHub destination", () => {
   it.each([
     { refs: [] },
     { refs: [{ ref: "refs/heads/topic-other", object: { sha: "b".repeat(40) } }] },
-  ])("treats only an exact branch match as present: %j", async ({ refs }) => {
-    const transport = mocks.runCommand.getMockImplementation()!;
-    mocks.runCommand.mockImplementation(async (args, opts) =>
-      args.some((arg: string) => arg.includes("/git/matching-refs/"))
-        ? commandResult(JSON.stringify(refs))
-        : await transport(args, opts),
-    );
-    expect(
-      await readGitHubPublicationReviewTarget({
-        target,
-        identity: await prepareCurrentGitHubPublicationIdentity("main"),
-        assertCurrent: () => {},
-      }),
-    ).toEqual(reviewed);
-  });
+  ])(
+    "projects canonical fields and treats only an exact branch match as present: %j",
+    async ({ refs }) => {
+      const transport = mocks.runCommand.getMockImplementation()!;
+      mocks.runCommand.mockImplementation(async (args, opts) =>
+        args.some((arg: string) => arg.includes("/git/matching-refs/"))
+          ? commandResult(JSON.stringify(refs))
+          : await transport(args, opts),
+      );
+      const localTarget = { ...target, pushOwner: "openclaw" };
+      expect(
+        await readGitHubPublicationReviewTarget({
+          target: localTarget,
+          identity: await prepareCurrentGitHubPublicationIdentity("main"),
+          assertCurrent: () => {},
+        }),
+      ).toEqual(reviewed);
+    },
+  );
   it.each([0, -1, 1.2, "1001", null])("rejects invalid immutable repository ID %j", async (id) => {
     const transport = mocks.runCommand.getMockImplementation()!;
     mocks.runCommand.mockImplementation(async (args, opts) =>

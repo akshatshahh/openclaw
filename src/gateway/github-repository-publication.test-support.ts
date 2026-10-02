@@ -292,7 +292,9 @@ export async function createRepositoryPublicationFixture(
         return commandResult(
           JSON.stringify({
             ref: "refs/heads/" + decodeURIComponent(endpoint.split("/git/ref/heads/")[1]!),
-            object: { sha: runtime.baseHead },
+            ...(args[args.indexOf("--jq") + 1] === "{ref: .ref, sha: .object.sha}"
+              ? { sha: runtime.baseHead }
+              : { object: { sha: runtime.baseHead } }),
           }),
         );
       }

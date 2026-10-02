@@ -17,6 +17,7 @@ import {
 import fs from "node:fs/promises";
 import nodePath from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { createAdmittedRunOperatorAuthority } from "../agents/admitted-run-context.js";
 import { setRuntimeConfigSnapshot } from "../config/config.js";
 import { getPluginRegistryState } from "../plugins/runtime-state.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
@@ -60,6 +61,36 @@ describe("shared GitHub publication requester authority", () => {
   installGitHubPublicationTestHarness({
     creatorEmail: "publication-guest@example.test",
     realWorktree: true,
+  });
+
+  it("retains and releases a reviewed requester whose inherited authority has no signal", async () => {
+    const f = await createRequesterPolicyFixture();
+    const { client, context, session } = f.publisherSource;
+    const source = (await captureGatewayOperatorRunAuthority({ client, context }))!;
+    onTestFinished(source.release);
+    const authority = createAdmittedRunOperatorAuthority({
+      ...source.authority,
+      signal: undefined,
+    });
+    const captured = await captureGitHubPublicationRequester(
+      {
+        client: { ...client, internal: { ...client.internal, operatorRunAuthority: authority } },
+        context,
+      },
+      session,
+    );
+    onTestFinished(captured.release);
+    const retained = captured.requester.retainForReview!();
+    try {
+      captured.release();
+      expect(retained.requester.assertCurrent).not.toThrow();
+      expect(retained.signal.aborted).toBe(false);
+      retained.release();
+      expect(retained.signal.aborted).toBe(true);
+      expect(retained.requester.assertCurrent).toThrow();
+    } finally {
+      retained.release();
+    }
   });
 
   it("does not inherit maintainer publication authority through a narrow invocation", async () => {

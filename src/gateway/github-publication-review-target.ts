@@ -65,7 +65,10 @@ export async function readGitHubPublicationReviewTarget(input: {
     throw new Error("The publication branch could not be verified.");
   }
   return {
-    ...target,
+    pushRepository: target.pushRepository,
+    repository: target.repository,
+    branch: target.branch,
+    baseBranch: target.baseBranch,
     pushRepositoryId: pushId,
     repositoryId: pullRequestRepositoryId,
     baseCommit: parseGitHubPublicationBaseRef(baseRaw, target.baseBranch),

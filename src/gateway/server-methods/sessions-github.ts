@@ -424,6 +424,7 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
         )
         .map((row) => projectGitHubPublicationReview(row, coordinator.reviewResult(row)));
       read.currentSession();
+      const role = resolveOperatorRolePolicy(options.client, options.context.getRuntimeConfig());
       options.respond(true, {
         personal,
         shared,
@@ -433,8 +434,8 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
         reviewAvailable,
         reviewRequired:
           loaded.entry?.sandbox === "required" ||
-          resolveOperatorRolePolicy(options.client, options.context.getRuntimeConfig())
-            ?.sandboxRequired === true,
+          role?.sandbox === "required" ||
+          role?.execution === "foreground-only",
       });
     },
   ),
