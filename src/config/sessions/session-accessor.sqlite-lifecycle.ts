@@ -530,7 +530,7 @@ async function deleteSqliteSessionEntryLifecycleLocked(
           result.archivedTranscripts.push(...historicalArchivedTranscripts);
           return result;
         },
-        { additionalIdentities: prepared.historicalGenerationIds },
+        { additionalIdentities: prepared.historicalGenerationIds, callerSettlesReceipts: true },
       );
     });
   } finally {
