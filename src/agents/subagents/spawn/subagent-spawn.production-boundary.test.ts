@@ -366,7 +366,7 @@ async function closeBoundGateway(
     () => bound.parent.cleanup(),
   ]) {
     try {
-      close();
+      await close();
     } catch (error) {
       failures.push(error);
     }
