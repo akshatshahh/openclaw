@@ -32,8 +32,8 @@ vi.mock("./worker-environments/session-repository-checkpoints.js", () => ({
 async function fixture(backend: "local" | "repository") {
   const repository =
     backend === "repository" ? await createRepositoryPublicationFixture(checkpoint) : undefined;
-  const local = backend === "local" ? await createRealPublicationWorkspace() : undefined;
   await persistPublicationTestSession();
+  const local = backend === "local" ? await createRealPublicationWorkspace() : undefined;
   const person = await createPersonalPublicationFixture();
   if (repository) repository.runtime.accountId = personalPublicationAccount.accountId;
   const selection = {

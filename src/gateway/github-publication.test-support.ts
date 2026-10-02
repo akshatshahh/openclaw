@@ -504,7 +504,9 @@ export function installGitHubPublicationTestHarness(
         commands.push(argv);
         commandCalls.push({ argv, input: options?.input });
         const command = argv.join(" ");
-        if (command === "gh api --hostname github.com repos/openclaw/openclaw --jq {id}") {
+        if (
+          command === "gh api --hostname github.com --method GET repos/openclaw/openclaw --jq {id}"
+        ) {
           return commandResult('{"id":1001}');
         }
         if (command.includes("repos/openclaw/openclaw/git/matching-refs/heads/")) {

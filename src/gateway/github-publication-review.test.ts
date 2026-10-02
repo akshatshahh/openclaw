@@ -463,8 +463,8 @@ describe("unrestricted Incognito publication", () => {
   installGitHubPublicationTestHarness({ realWorktree: true });
   it("preserves explicit broad System publication without durable review", async () => {
     const sessionKey = "agent:main:dashboard:incognito-publication";
-    const workspace = await createRealPublicationWorkspace(undefined, sessionKey);
     await persistPublicationTestSession(sessionKey);
+    const workspace = await createRealPublicationWorkspace(undefined, sessionKey);
     const placements = createWorkerSessionPlacementStore({ database: openOpenClawStateDatabase() });
     const coordinator = createTestGitHubPublicationCoordinator({ placements });
     expect(
