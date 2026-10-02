@@ -44,7 +44,7 @@ import {
 } from "./github-repository-publication-store.js";
 import { createRepositoryPublicationFixture } from "./github-repository-publication.test-support.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
-import { SESSION_READ_SCOPE, SESSION_WRITE_SCOPE } from "./operator-scopes.js";
+import { SESSION_READ_SCOPE, SESSION_WRITE_SCOPE, WRITE_SCOPE } from "./operator-scopes.js";
 import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import { prepareGatewayConnectOperatorAccess } from "./server/ws-connection/connect-operator-access.js";
 import {
@@ -60,7 +60,7 @@ type Backend = "local" | "repository";
 type Coordinator = ReturnType<typeof createTestGitHubPublicationCoordinator>;
 type Requester = NonNullable<Parameters<Coordinator["requestForSession"]>[0]["requester"]>;
 export const guestScopes = [SESSION_READ_SCOPE, SESSION_WRITE_SCOPE];
-export const publisherScopes = ["operator.write"];
+export const publisherScopes = [WRITE_SCOPE];
 
 async function createRequesterPolicySources(
   session: { sessionId: string; sessionKey: string },
@@ -360,7 +360,9 @@ export async function preparePublisherAccessPolicyFixture(f: { config: OpenClawC
       register(api) {
         api.registerGatewayAccessPolicy({
           authorize({ profile, requiredByRole }) {
-            if (!requiredByRole) return undefined;
+            if (!requiredByRole) {
+              return undefined;
+            }
             if (
               !grant ||
               !profile.emails.includes(email) ||
@@ -376,8 +378,9 @@ export async function preparePublisherAccessPolicyFixture(f: { config: OpenClawC
               grant.grantId !== grantId ||
               !profile.emails.includes(email) ||
               (grant.expiresAt !== null && Date.now() >= grant.expiresAt)
-            )
+            ) {
               return undefined;
+            }
             return authority();
           },
         });

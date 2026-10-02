@@ -176,10 +176,18 @@ describe("explicit repository move to Gateway", () => {
     "publication unavailable",
     "requested topic",
   ] as const)("retains only committed materialization: %s", async (outcome) => {
-    await withOpenClawTestState({ label: "repository-materialize" }, async (state) => {
+    const options = {
+      label: "repository-materialize",
+      env: {
+        GH_TOKEN: undefined,
+        GITHUB_TOKEN: undefined,
+        GH_CONFIG_DIR: undefined,
+        XDG_CONFIG_HOME: undefined,
+      },
+    };
+    await withOpenClawTestState(options, async (state) => {
       const cfg = {
         agents: { entries: { main: { workspace: state.workspaceDir } } },
-        tools: { github: { profileId: "ghp_11111111111111111111111111111111" } },
       };
       await state.writeConfig(cfg);
       const source = state.path("source");

@@ -687,7 +687,9 @@ it.each([false, true])(
       expect(await fs.readFile(path.join(sourcePath!, "tracked.txt"), "utf8")).toBe(
         "pinned source\n",
       );
-      if (fail) throw new Error("worker failed");
+      if (fail) {
+        throw new Error("worker failed");
+      }
       return await sync(request);
     });
     if (fail) {

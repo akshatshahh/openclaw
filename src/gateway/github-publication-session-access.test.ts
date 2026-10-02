@@ -1,3 +1,11 @@
+// Install shared transport mocks before publication owners enter the module cache.
+// oxfmt-ignore
+import {
+  SESSION_ID,
+  SESSION_KEY,
+  githubPublicationTestMocks,
+  installGitHubPublicationTestHarness,
+} from "./github-publication.test-support.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -8,15 +16,9 @@ import {
   createRequesterPublicationFixture,
   guestScopes,
 } from "./github-publication-requester.test-support.js";
-import {
-  SESSION_ID,
-  SESSION_KEY,
-  githubPublicationTestMocks,
-  installGitHubPublicationTestHarness,
-} from "./github-publication.test-support.js";
 import type { OperatorScope } from "./operator-scopes.js";
 import { handleGatewayRequest } from "./server-methods.js";
-import type { GatewayRequestContext } from "./server-methods/types.js";
+import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import { prepareGatewayConnectOperatorAccess } from "./server/ws-connection/connect-operator-access.js";
@@ -112,19 +114,23 @@ describe("registered session GitHub publication access", () => {
         sessionKey: target === "missing" ? "agent:main:dashboard:missing" : SESSION_KEY,
         idempotencyKey: `${target}-${policy}-${actor}`,
       };
+      const client =
+        actor === "system"
+          ? createSyntheticPluginRuntimeClient({
+              operatorRoleActor: { kind: "system" },
+              scopes: ["operator.write"],
+            })
+          : person;
+      const context = {
+        ...f.guestSource.context,
+        getClientConnIds: (filter?: (candidate: GatewayClient) => boolean) =>
+          new Set(client.connId && (!filter || filter(client)) ? [client.connId] : []),
+        githubPublicationService: f.coordinator,
+      } as GatewayRequestContext;
       await handleGatewayRequest({
         req: { type: "req", id: params.idempotencyKey, method: "sessions.github.publish", params },
-        context: {
-          ...f.guestSource.context,
-          githubPublicationService: f.coordinator,
-        } as GatewayRequestContext,
-        client:
-          actor === "system"
-            ? createSyntheticPluginRuntimeClient({
-                operatorRoleActor: { kind: "system" },
-                scopes: ["operator.write"],
-              })
-            : person,
+        context,
+        client,
         isWebchatConnect: () => false,
         respond,
       });

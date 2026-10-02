@@ -154,7 +154,9 @@ describe("worker GitHub launch binding", () => {
       profileId: "worker-operator",
       scopes: ["operator.write"],
       assertCurrent: () => {
-        if (!current) throw new Error("Worker authority revoked");
+        if (!current) {
+          throw new Error("Worker authority revoked");
+        }
       },
     });
     mocks.verify.mockImplementation(async () => {

@@ -1,15 +1,17 @@
-import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { getSessionRepositoryWorkspaceStore } from "../state/session-repository-workspaces.js";
-import { setCanonicalUserProfileRole } from "../state/user-profile-writes.js";
-import { GitHubPublicationRequesterUnavailableError } from "./github-publication-failure.js";
-import { captureGitHubPublicationRequester } from "./github-publication-requester.js";
-import { createRequesterPublicationFixture } from "./github-publication-requester.test-support.js";
+// Install shared transport mocks before publication owners enter the module cache.
+// oxfmt-ignore
 import {
   SESSION_ID,
   SESSION_KEY,
   githubPublicationTestMocks,
   installGitHubPublicationTestHarness,
 } from "./github-publication.test-support.js";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { getSessionRepositoryWorkspaceStore } from "../state/session-repository-workspaces.js";
+import { setCanonicalUserProfileRole } from "../state/user-profile-writes.js";
+import { GitHubPublicationRequesterUnavailableError } from "./github-publication-failure.js";
+import { captureGitHubPublicationRequester } from "./github-publication-requester.js";
+import { createRequesterPublicationFixture } from "./github-publication-requester.test-support.js";
 import * as repositoryPublicationExecutor from "./github-repository-publication-executor.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 
@@ -48,11 +50,13 @@ describe("repository checkpoint workflow authority", () => {
       const f = await createFixture(
         operation === "modify" || operation === "delete" ? { [workflow]: definition } : {},
       );
-      const saved = await f.repository.capture("accepted code\n", operation, {
-        ...(operation === "ordinary"
+      const saved = await f.repository.capture(
+        "accepted code\n",
+        operation,
+        operation === "ordinary"
           ? {}
-          : { [workflow]: operation === "delete" ? null : definition + "# accepted change\n" }),
-      });
+          : { [workflow]: operation === "delete" ? null : definition + "# accepted change\n" },
+      );
       await expect(
         captureGitHubPublicationRequester(f.guestSource, f.guestSource.session),
       ).rejects.toThrow(GitHubPublicationRequesterUnavailableError);
@@ -71,11 +75,13 @@ describe("repository checkpoint workflow authority", () => {
       const f = await createFixture(
         operation === "modify" || operation === "delete" ? { [workflow]: definition } : {},
       );
-      await f.repository.capture("accepted code\n", operation, {
-        ...(operation === "ordinary"
+      await f.repository.capture(
+        "accepted code\n",
+        operation,
+        operation === "ordinary"
           ? {}
-          : { [workflow]: operation === "delete" ? null : definition + "# accepted change\n" }),
-      });
+          : { [workflow]: operation === "delete" ? null : definition + "# accepted change\n" },
+      );
       expect(
         await f.coordinator.requestForSession(f.request(operation, f.publisher)),
       ).toMatchObject({ status: "published" });

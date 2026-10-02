@@ -1,6 +1,4 @@
 import os from "node:os";
-import { prepareGitHubReadIdentity } from "../agents/github-tool-identity.js";
-import { getRuntimeConfig } from "../config/config.js";
 import { patchSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { gitNullConfigPath } from "../infra/git-exec.js";
@@ -9,9 +7,8 @@ import {
   ProjectCloneError,
 } from "../projects/project-clone-runtime.js";
 import { materializeProjectClone } from "../projects/project-clone.js";
-import { getActiveSecretsRuntimeConfigSnapshot } from "../secrets/runtime-state.js";
 import { getSessionRepositoryWorkspaceStore } from "../state/session-repository-workspaces.js";
-import { requestCurrentGitHubOAuthRefresh } from "./github-oauth-lifecycle.js";
+import { prepareCurrentGitHubReadIdentity } from "./github-publication-availability.js";
 import { parseGitHubPublicationBaseBranch } from "./github-publication-base.js";
 import {
   assertSafeGitPublicationWorkspace,
@@ -90,15 +87,7 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
   };
   assertWorkspaceCurrent();
   // Source reads stay on the Gateway; worker execution never receives this bearer.
-  const github = await prepareGitHubReadIdentity({
-    config: params.cfg,
-    sourceConfig: getActiveSecretsRuntimeConfigSnapshot()?.sourceConfig ?? params.cfg,
-    getCurrentConfig: getRuntimeConfig,
-    agentId: params.agentId,
-    assertActive: assertWorkspaceCurrent,
-    refresh: () => requestCurrentGitHubOAuthRefresh(params.agentId),
-    allowAnonymous: true,
-  });
+  const github = await prepareCurrentGitHubReadIdentity(params.agentId, assertWorkspaceCurrent);
   const assertCurrent = () => {
     assertWorkspaceCurrent();
     github.assertSelected();
