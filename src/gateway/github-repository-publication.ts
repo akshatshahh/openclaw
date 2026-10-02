@@ -22,6 +22,7 @@ import {
   type PersonalGitHubSessionAction,
   type PreparedRepositoryPublicationStatus,
 } from "./github-personal-publication.js";
+import { insertRepositoryGitHubPublication } from "./github-publication-admission.js";
 import {
   assertExpectedSharedGitHubPublisher,
   prepareCurrentGitHubPublicationIdentity,
@@ -64,7 +65,6 @@ import { readGitHubRepositoryPublicationMetadata } from "./github-repository-pub
 import {
   bindRepositoryGitHubPublicationCheckpoint,
   claimRepositoryGitHubPublication,
-  insertRepositoryGitHubPublication,
   listRepositoryGitHubPublications,
   readRepositoryGitHubPublicationBranch,
   markRepositoryGitHubPublicationReported,
@@ -120,7 +120,8 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
     }
     const { assertCustody, action, review } = context;
     assertCustody();
-    const reviewed = readGitHubPublicationReview({ publicationRequestId: row.request_id });
+    const reviewed = await readGitHubPublicationReview({ publicationRequestId: row.request_id });
+    assertCustody();
     const session = loadGatewaySessionEntryReadOnly(row.session_key, { agentId: row.agent_id });
     if (!review && (reviewed || session.entry?.sandbox === "required")) {
       // Personal recovery needs a fresh human selection. Shared observation must
@@ -496,7 +497,7 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
       requesterAuthorityJson,
       review: input.preparedReview,
     });
-    return insertRepositoryGitHubPublication(row, assertCurrent, input.preparedReview?.bindRequest);
+    return insertRepositoryGitHubPublication(row, assertCurrent, input.preparedReview);
   };
   return {
     async requestForClaim(input: GitHubPublicationClaimRequest) {
@@ -611,7 +612,7 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
             identity,
             assertCurrent,
           );
-          const row = insertRepositoryGitHubPublication(
+          const row = await insertRepositoryGitHubPublication(
             makeRow({
               session: action,
               workspace: initial.workspace,
@@ -624,7 +625,7 @@ export function createRepositoryGitHubPublicationCoordinator(params: {
               review,
             }),
             assertCurrent,
-            review?.bindRequest,
+            review,
           );
           return await execute(row, {
             assertCustody: assertReservation,

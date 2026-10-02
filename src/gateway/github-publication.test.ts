@@ -1003,7 +1003,7 @@ describe("Gateway GitHub publication", () => {
       expect.stringContaining("GitHub publication result reporting deferred"),
     ]);
     expect(runtime.coordinator.read(requested.requestId)).toMatchObject({ status: "published" });
-    expect(runtime.coordinator.listUnreportedResults()).toHaveLength(1);
+    expect(await runtime.coordinator.listUnreportedResults()).toHaveLength(1);
     let events = await loadTranscriptEvents({
       agentId: REQUEST.agentId,
       sessionId: REQUEST.sessionId,
@@ -1030,7 +1030,7 @@ describe("Gateway GitHub publication", () => {
       sessionKey: REQUEST.sessionKey,
     });
     expect(publicationTranscriptMessages(events, requested.requestId)).toHaveLength(1);
-    expect(restarted.coordinator.listUnreportedResults()).toEqual([]);
+    expect(await restarted.coordinator.listUnreportedResults()).toEqual([]);
     expect(warnings).toHaveLength(1);
   });
 });

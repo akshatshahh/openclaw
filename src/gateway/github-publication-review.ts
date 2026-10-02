@@ -20,9 +20,8 @@ import {
   type PreparedGitHubPublicationReview,
 } from "./github-publication-review-contract.js";
 import {
-  bindGitHubPublicationReviewRequest,
   markGitHubPublicationReviewStale,
-  readGitHubPublicationReview,
+  prepareGitHubPublicationReviewObservation,
   readGitHubPublicationReviewCandidate,
   type GitHubPublicationReviewRow,
 } from "./github-publication-review-store.js";
@@ -167,7 +166,9 @@ export async function prepareGitHubPublicationReviewConfirmation(
 ): Promise<PreparedGitHubPublicationReview> {
   assertDurableGitHubPublicationReview(session.sessionKey);
   requester.assertCurrent();
-  const row = readGitHubPublicationReview({ reviewId: reference.reviewId });
+  const observation = await prepareGitHubPublicationReviewObservation(reference.reviewId);
+  requester.assertCurrent();
+  const row = observation.row;
   if (!row || row.candidate_digest !== reference.digest || row.stale_reason) {
     throw new Error("This publication candidate is stale or unavailable. Prepare a new review.");
   }
@@ -181,7 +182,7 @@ export async function prepareGitHubPublicationReviewConfirmation(
   const candidate = readGitHubPublicationReviewCandidate(row);
   const currentWorkspace = await prepareGitHubPublicationWorkspaceOwner(session);
   requester.assertCurrent();
-  const assertWorkspace = (selecting: boolean, acceptedOwnTurn = false) => {
+  const assertWorkspace = (acceptedOwnTurn = false) => {
     const current = currentWorkspace();
     const selected = candidate.workspace;
     if (
@@ -199,30 +200,34 @@ export async function prepareGitHubPublicationReviewConfirmation(
             (current.workspace.revision !== selected.revision ||
               current.workspace.checkpointRef !== selected.checkpointRef))))
     ) {
-      if (selecting)
-        markGitHubPublicationReviewStale(
-          row,
-          "The reviewed workspace changed. Prepare a new candidate.",
-        );
       throw new GitHubPublicationWorkspaceChangedError(
         "The reviewed workspace changed. Prepare a new candidate.",
       );
     }
   };
-  assertWorkspace(true);
+  try {
+    assertWorkspace();
+  } catch (error) {
+    if (error instanceof GitHubPublicationWorkspaceChangedError)
+      await markGitHubPublicationReviewStale(
+        row,
+        "The reviewed workspace changed. Prepare a new candidate.",
+      );
+    throw error;
+  }
   const create = (
     authority: GitHubPublicationRequester,
     acceptedOwnTurn = false,
   ): PreparedGitHubPublicationReview => {
     const assertCurrent = () => {
       authority.assertCurrent();
-      const latest = readGitHubPublicationReview({ reviewId: row.review_id });
+      const latest = observation.current();
       if (!latest || latest.candidate_digest !== row.candidate_digest || latest.stale_reason) {
         throw new GitHubPublicationWorkspaceChangedError(
           "The reviewed candidate is no longer current.",
         );
       }
-      assertWorkspace(false, acceptedOwnTurn);
+      assertWorkspace(acceptedOwnTurn);
       authority.assertCurrent();
     };
     return Object.freeze<PreparedGitHubPublicationReview>({
@@ -231,8 +236,11 @@ export async function prepareGitHubPublicationReviewConfirmation(
       candidate,
       requester: authority.snapshot,
       assertCurrent,
-      bindRequest: (db, requestId) =>
-        bindGitHubPublicationReviewRequest(db, row, requestId, assertCurrent),
+      assertBoundRequest(requestId) {
+        assertCurrent();
+        if (observation.current()?.publication_request_id !== requestId)
+          throw new Error("Publication confirmation is not bound to this exact request.");
+      },
       retain: () => {
         assertCurrent();
         if (!authority.retainForReview)
@@ -293,14 +301,9 @@ export function createGitHubPublicationReviewHolds(placements: WorkerSessionPlac
     ) {
       review.assertCurrent();
       drain.throwIfAborted();
-      const row = readGitHubPublicationReview({ publicationRequestId: requestId });
-      if (
-        row?.review_id !== review.id ||
-        row.candidate_digest !== review.digest ||
-        !placements.validateTurnClaim(claim)
-      ) {
+      review.assertBoundRequest(requestId);
+      if (!placements.validateTurnClaim(claim))
         throw new Error("Publication confirmation could not transfer to its exact accepted turn.");
-      }
       const held = review.retain();
       release(requestId);
       active.set(requestId, {

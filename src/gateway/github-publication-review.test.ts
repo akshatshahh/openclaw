@@ -6,13 +6,15 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { withGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
 import { createGitHubPublishTool } from "../agents/tools/github-publish-tool.js";
-import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
+import {
+  loadSessionEntryReadOnly,
+  upsertSessionEntryCore,
+} from "../config/sessions/session-accessor.js";
+import * as operationAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import { preparePersonalGitHubSessionReceiptDeletion } from "../state/github-personal-publication-lifecycle.js";
-import {
-  openOpenClawStateDatabase,
-  runOpenClawStateWriteTransaction,
-} from "../state/openclaw-state-db.js";
+import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
+import * as stateWorker from "../state/openclaw-state-worker-store.js";
 import { GitHubPublicationRequesterUnavailableError } from "./github-publication-failure.js";
 import {
   createRequesterPolicyFixture,
@@ -35,6 +37,7 @@ import {
   projectGitHubPublicationReview,
   readGitHubPublicationReviewDiff,
 } from "./github-publication-review.js";
+import { readGitHubPublicationRequest } from "./github-publication-store.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import { createContext } from "./server-plugin-in-process-dispatch.test-support.js";
 import { createWorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
@@ -76,8 +79,8 @@ describe("reviewed publication from restricted conversations", () => {
       }),
     ).rejects.toThrow("Incognito");
     expect(prepareIdentity).not.toHaveBeenCalled();
-    expect(listGitHubPublicationReviews(session)).toEqual([]);
-    expect(f.coordinator.listUnreportedResults()).toEqual([]);
+    expect(await listGitHubPublicationReviews(session)).toEqual([]);
+    expect(await f.coordinator.listUnreportedResults()).toEqual([]);
   });
   it("denies an active Visitor's publication without changing its restricted role", async () => {
     const f = await createRequesterPolicyFixture();
@@ -108,7 +111,7 @@ describe("reviewed publication from restricted conversations", () => {
       await expect(
         f.coordinator.requestForSession(f.request("unreviewed", f.publisher)),
       ).rejects.toThrow("reviewed publication candidate");
-      const requested = insertGitHubPublicationReview({
+      const requested = await insertGitHubPublicationReview({
         session: f.currentReviewSession(),
         idempotencyKey: "guest-review",
         profileId: f.guestProfile,
@@ -122,7 +125,7 @@ describe("reviewed publication from restricted conversations", () => {
       });
       expect(f.externalWrites).toEqual([]);
       const input = await f.reviewedRequest("reviewed", f.publisher);
-      const candidate = readGitHubPublicationReview({ reviewId: input.preparedReview.id })!;
+      const candidate = (await readGitHubPublicationReview({ reviewId: input.preparedReview.id }))!;
       expect(candidate.review_id).not.toBe(requested.review_id);
       expect(readGitHubPublicationReviewCandidate(candidate).diff).toContain(
         backend === "local" ? "accepted" : "accepted first",
@@ -132,10 +135,13 @@ describe("reviewed publication from restricted conversations", () => {
       expect(f.publishedTitles).toEqual(["reviewed"]);
       expect(
         f.readRequester(
-          readGitHubPublicationReview({ reviewId: candidate.review_id })!.publication_request_id!,
+          (await readGitHubPublicationReview({ reviewId: candidate.review_id }))!
+            .publication_request_id!,
         ),
       ).toEqual(f.publisher.snapshot);
-      expect(readGitHubPublicationReview({ reviewId: requested.review_id })).toEqual(requested);
+      expect(await readGitHubPublicationReview({ reviewId: requested.review_id })).toEqual(
+        requested,
+      );
       expect(
         loadSessionEntryReadOnly({ agentId: "main", sessionKey: f.session.sessionKey }),
       ).toMatchObject({ sandbox: "required", createdActor: { id: f.guestProfile } });
@@ -331,7 +337,7 @@ describe("reviewed publication from restricted conversations", () => {
   it("returns the same immutable candidate on a lost prepare response and binds it only once", async () => {
     const f = await fixture("local");
     const input = await f.reviewedRequest("idempotent", f.publisher);
-    const row = readGitHubPublicationReview({ reviewId: input.preparedReview.id })!;
+    const row = (await readGitHubPublicationReview({ reviewId: input.preparedReview.id }))!;
     await fs.writeFile(path.join(f.local!.cwd, "artifact.txt"), "new unreviewed bytes\n");
     const replay = await f.reviewedRequest("idempotent", f.publisher);
     expect(replay.preparedReview.id).toBe(input.preparedReview.id);
@@ -339,22 +345,116 @@ describe("reviewed publication from restricted conversations", () => {
     await expect(f.reviewedRequest("idempotent", f.publisher, "different title")).rejects.toThrow(
       "idempotency key",
     );
-    runOpenClawStateWriteTransaction(({ db }) => input.preparedReview.bindRequest(db, "receipt-1"));
-    expect(() =>
-      runOpenClawStateWriteTransaction(({ db }) =>
-        input.preparedReview.bindRequest(db, "receipt-2"),
-      ),
-    ).toThrow("already consumed");
-    expect(readGitHubPublicationReview({ reviewId: row.review_id })?.publication_request_id).toBe(
-      "receipt-1",
-    );
+    const claim = f.placements.claimTurn({
+      ...f.session,
+      agentId: "main",
+      claimId: "binding",
+      runId: "binding",
+      owner: { kind: "local" },
+    });
+    const execute = stateWorker.runOpenClawStateWorkerOperation;
+    const delivery = vi
+      .spyOn(stateWorker, "runOpenClawStateWorkerOperation")
+      .mockImplementationOnce(async (...args) => {
+        await execute(...args);
+        throw new Error("ordinary acceptance reply lost after native settlement");
+      });
+    let accepted;
+    try {
+      accepted = await f.coordinator.requestForClaim({ ...input, claim });
+      expect(delivery).toHaveBeenCalledOnce();
+    } finally {
+      delivery.mockRestore();
+    }
+    expect(accepted.status).toBe("requested");
+    expect(() => input.preparedReview.assertBoundRequest(accepted.requestId)).not.toThrow();
+    await expect(
+      f.coordinator.requestForClaim({ ...input, claim, idempotencyKey: "competing-receipt" }),
+    ).rejects.toThrow("already consumed");
+    expect(
+      readGitHubPublicationRequest(f.database.db, {
+        sessionId: f.session.sessionId,
+        idempotencyKey: "competing-receipt",
+      }),
+    ).toBeUndefined();
+    expect(
+      (await readGitHubPublicationReview({ reviewId: row.review_id }))?.publication_request_id,
+    ).toBe(accepted.requestId);
+    expect(f.externalWrites).toEqual([]);
+  });
+
+  it.each(["transaction", "commit"] as const)(
+    "keeps candidate and receipt unchanged when the publisher loses authority at %s",
+    async (stage) => {
+      const f = await fixture("local");
+      const input = await f.reviewedRequest(`revoked-${stage}`, f.publisher);
+      const claim = f.placements.claimTurn({
+        ...f.session,
+        agentId: "main",
+        claimId: stage,
+        runId: stage,
+        owner: { kind: "local" },
+      });
+      const createAdmission = operationAdmission.createSqliteWorkerOperationAdmission;
+      let refused = false;
+      const admission = vi
+        .spyOn(operationAdmission, "createSqliteWorkerOperationAdmission")
+        .mockImplementation((admit, attachment) =>
+          createAdmission((nativeRequest, grant) => {
+            if (nativeRequest.stage === stage) {
+              f.publisherSource.client.connect.scopes = [];
+              refused = true;
+            }
+            admit(nativeRequest, grant);
+          }, attachment),
+        );
+      try {
+        await expect(f.coordinator.requestForClaim({ ...input, claim })).rejects.toThrow();
+      } finally {
+        admission.mockRestore();
+      }
+      expect(refused).toBe(true);
+      expect(
+        readGitHubPublicationRequest(f.database.db, {
+          sessionId: f.session.sessionId,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      ).toBeUndefined();
+      expect(
+        (await readGitHubPublicationReview({ reviewId: input.preparedReview.id }))
+          ?.publication_request_id,
+      ).toBeNull();
+      expect(f.externalWrites).toEqual([]);
+    },
+  );
+
+  it("rejects a same-generation session worktree replacement before receipt admission", async () => {
+    const f = await fixture("local");
+    const input = await f.reviewedRequest("worktree-replaced", f.publisher);
+    const owner = { agentId: "main", sessionKey: f.session.sessionKey };
+    const entry = loadSessionEntryReadOnly(owner)!;
+    await upsertSessionEntryCore(owner, {
+      ...entry,
+      worktree: { ...entry.worktree!, id: "replacement-worktree" },
+    });
+    expect(loadSessionEntryReadOnly(owner)).toMatchObject({
+      sessionId: entry.sessionId,
+      lifecycleRevision: entry.lifecycleRevision,
+    });
+    expect(input.preparedReview.assertCurrent).toThrow();
+    await expect(f.coordinator.requestForSession(input)).rejects.toThrow();
+    expect(
+      (await readGitHubPublicationReview({ reviewId: input.preparedReview.id }))
+        ?.publication_request_id,
+    ).toBeNull();
+    expect(f.externalWrites).toEqual([]);
   });
 
   it("keeps diff reads bounded, explicit and exactly bound to the candidate", async () => {
     const f = await fixture("local");
     await fs.writeFile(path.join(f.local!.cwd, "large.txt"), "review line\n".repeat(800));
     const input = await f.reviewedRequest("pages", f.publisher);
-    const row = readGitHubPublicationReview({ reviewId: input.preparedReview.id })!;
+    const row = (await readGitHubPublicationReview({ reviewId: input.preparedReview.id }))!;
     const ref = { reviewId: row.review_id, digest: row.candidate_digest! };
     const chunks: string[] = [];
     let offset = 0;
@@ -388,9 +488,9 @@ describe("reviewed publication from restricted conversations", () => {
         candidate_json: row.candidate_json!.replace("review line", "altered line"),
       }),
     ).toThrow("intact");
-    markGitHubPublicationReviewStale(row, "Changed reviewed source");
+    await markGitHubPublicationReviewStale(row, "Changed reviewed source");
     expect(input.preparedReview.assertCurrent).toThrow("no longer current");
-    expect(listGitHubPublicationReviews(f.currentReviewSession())).toHaveLength(1);
+    expect(await listGitHubPublicationReviews(f.currentReviewSession())).toHaveLength(1);
   });
   it("retires a full page of replaced-generation notifications without starving current review", async () => {
     const f = await fixture("local");
@@ -402,19 +502,23 @@ describe("reviewed publication from restricted conversations", () => {
     try {
       for (let index = 0; index < 100; index++)
         oldIds.push(
-          insertGitHubPublicationReview({
-            session: { ...session, lifecycleRevision: "previous-generation" },
-            profileId: f.guestProfile,
-            idempotencyKey: `old-${index}`,
-            assertCurrent: () => {},
-          }).review_id,
+          (
+            await insertGitHubPublicationReview({
+              session: { ...session, lifecycleRevision: "previous-generation" },
+              profileId: f.guestProfile,
+              idempotencyKey: `old-${index}`,
+              assertCurrent: () => {},
+            })
+          ).review_id,
         );
-      currentId = insertGitHubPublicationReview({
-        session,
-        profileId: f.guestProfile,
-        idempotencyKey: "current-review",
-        assertCurrent: () => {},
-      }).review_id;
+      currentId = (
+        await insertGitHubPublicationReview({
+          session,
+          profileId: f.guestProfile,
+          idempotencyKey: "current-review",
+          assertCurrent: () => {},
+        })
+      ).review_id;
     } finally {
       clock.mockRestore();
     }
@@ -427,15 +531,15 @@ describe("reviewed publication from restricted conversations", () => {
     await runtime.reconcilePublications();
     expect(warn).not.toHaveBeenCalled();
     for (const reviewId of oldIds)
-      expect(readGitHubPublicationReview({ reviewId })).toMatchObject({
+      expect(await readGitHubPublicationReview({ reviewId })).toMatchObject({
         reported_at_ms: expect.any(Number),
         stale_reason: expect.stringContaining("not delivered"),
       });
-    expect(listUnreportedGitHubPublicationReviews().map((row) => row.review_id)).toEqual([
+    expect((await listUnreportedGitHubPublicationReviews()).map((row) => row.review_id)).toEqual([
       currentId!,
     ]);
     await runtime.reconcilePublications();
-    expect(readGitHubPublicationReview({ reviewId: currentId! })).toMatchObject({
+    expect(await readGitHubPublicationReview({ reviewId: currentId! })).toMatchObject({
       reported_at_ms: expect.any(Number),
       stale_reason: null,
     });
@@ -454,22 +558,26 @@ describe("reviewed publication from restricted conversations", () => {
         },
       ],
     });
-    const late = insertGitHubPublicationReview({
+    const late = await insertGitHubPublicationReview({
       session: generation,
       profileId: f.guestProfile,
       idempotencyKey: "late",
       assertCurrent: () => {},
     });
-    const replacement = insertGitHubPublicationReview({
+    const replacement = await insertGitHubPublicationReview({
       session: { ...generation, lifecycleRevision: "replacement-generation" },
       profileId: f.guestProfile,
       idempotencyKey: "replacement",
       assertCurrent: () => {},
     });
     await remove();
-    expect(readGitHubPublicationReview({ reviewId: input.preparedReview.id })).toBeUndefined();
-    expect(readGitHubPublicationReview({ reviewId: late.review_id })).toBeUndefined();
-    expect(readGitHubPublicationReview({ reviewId: replacement.review_id })).toEqual(replacement);
+    expect(
+      await readGitHubPublicationReview({ reviewId: input.preparedReview.id }),
+    ).toBeUndefined();
+    expect(await readGitHubPublicationReview({ reviewId: late.review_id })).toBeUndefined();
+    expect(await readGitHubPublicationReview({ reviewId: replacement.review_id })).toEqual(
+      replacement,
+    );
     expect(input.preparedReview.assertCurrent).toThrow("no longer current");
   });
 });

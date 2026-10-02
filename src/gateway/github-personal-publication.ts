@@ -18,12 +18,12 @@ import { requestCurrentPersonalGitHubRefresh } from "./github-oauth-lifecycle.js
 import { personalGitHubStatus, type PersonalGitHubAction } from "./github-personal-oauth.js";
 import {
   claimPersonalGitHubPublication,
-  insertPersonalGitHubPublication,
   personalGitHubPublicationStatus,
   personalGitHubRequestDigest,
   readPersonalGitHubPublication,
   type PersonalGitHubPublicationRow,
 } from "./github-personal-publication-store.js";
+import { insertPersonalGitHubPublication } from "./github-publication-admission.js";
 import {
   resolveGitHubPublicationWorktreeOwner,
   type PublicationSessionIdentity as SessionIdentity,
@@ -339,7 +339,8 @@ export function createPersonalGitHubPublicationCoordinator(
     workspace: PersonalPublicationWorkspace,
     review?: PreparedGitHubPublicationReview,
   ): Promise<SessionGitHubPublicationResult> => {
-    const reviewed = readGitHubPublicationReview({ publicationRequestId: row.request_id });
+    const reviewed = await readGitHubPublicationReview({ publicationRequestId: row.request_id });
+    workspace.assertCurrent();
     const owner = resolveGitHubPublicationWorktreeOwner(action);
     if (!review && (reviewed || owner.loaded.entry?.sandbox === "required"))
       return publicationNeedsReviewConfirmation(projectGitHubPublicationResult(row));
@@ -518,11 +519,11 @@ export function createPersonalGitHubPublicationCoordinator(
         row.request_digest = personalGitHubRequestDigest(row);
         return await execute(
           action,
-          insertPersonalGitHubPublication(
+          await insertPersonalGitHubPublication(
             row,
             action.lifecycleRevision,
             assertCurrent,
-            review?.bindRequest,
+            review,
           ),
           workspace,
           review,

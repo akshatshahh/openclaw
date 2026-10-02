@@ -291,7 +291,7 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
             ? GATEWAY_OWNER_PROFILE_ID
             : undefined;
       if (!profileId) throw new Error("Request review from an authenticated profile.");
-      const row = insertGitHubPublicationReview({
+      const row = await insertGitHubPublicationReview({
         session: read.currentSession(),
         idempotencyKey: options.params.idempotencyKey,
         profileId,
@@ -312,7 +312,7 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
       if (!service) throw new Error("GitHub publication is unavailable.");
       const request = options.params;
       if (request.action === "diff") {
-        const row = readGitHubPublicationReview({ reviewId: request.reviewId });
+        const row = await readGitHubPublicationReview({ reviewId: request.reviewId });
         if (!row) throw new Error("The review candidate is unavailable.");
         assertGitHubPublicationReviewSession(row, read.currentSession());
         const result = readGitHubPublicationReviewDiff(row, request, request.offset);
@@ -412,10 +412,7 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
         (await hasSupportedGitHubPublicationTarget(session, read.currentSession));
       read.currentSession();
       if (shared && read.sessionScoped && !reviewAvailable) shared = null;
-      const loaded = loadGatewaySessionEntryReadOnly(session.sessionKey, {
-        agentId: session.agentId,
-      });
-      const rows = listGitHubPublicationReviews(session);
+      const rows = await listGitHubPublicationReviews(session);
       const reviews = rows
         .filter(
           (row) =>
@@ -424,6 +421,9 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
         )
         .map((row) => projectGitHubPublicationReview(row, coordinator.reviewResult(row)));
       read.currentSession();
+      const loaded = loadGatewaySessionEntryReadOnly(session.sessionKey, {
+        agentId: session.agentId,
+      });
       const role = resolveOperatorRolePolicy(options.client, options.context.getRuntimeConfig());
       options.respond(true, {
         personal,

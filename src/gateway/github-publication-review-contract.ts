@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { PreparedGitHubPublicationIdentity } from "../agents/github-tool-identity.js";
 import { isIncognitoSessionKey } from "../routing/session-key.js";
@@ -72,7 +71,7 @@ export type PreparedGitHubPublicationReview = Readonly<{
   candidate: GitHubPublicationReviewCandidate;
   requester: GitHubPublicationRequesterSnapshot;
   assertCurrent: () => void;
-  bindRequest: (db: DatabaseSync, requestId: string) => void;
+  assertBoundRequest: (requestId: string) => void;
   retain: () => {
     review: PreparedGitHubPublicationReview;
     signal: AbortSignal;

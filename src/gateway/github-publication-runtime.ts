@@ -28,8 +28,18 @@ export function createGitHubPublicationRuntime(params: {
         error instanceof GitHubPublicationReviewGenerationChangedError &&
         publication.lifecycleRevision !== undefined
       ) {
-        coordinator.retireReviewReport({ ...publication, reviewId: publication.result.requestId });
-        return;
+        try {
+          await coordinator.retireReviewReport({
+            ...publication,
+            reviewId: publication.result.requestId,
+          });
+          return;
+        } catch (retirementError) {
+          params.warn(
+            `GitHub publication review retirement deferred for ${publication.sessionId}: ${formatErrorMessage(retirementError)}`,
+          );
+          return;
+        }
       }
       params.warn(
         `GitHub publication result reporting deferred for ${publication.sessionId}: ${formatErrorMessage(error)}`,
@@ -77,7 +87,7 @@ export function createGitHubPublicationRuntime(params: {
     } catch (error) {
       params.warn(`GitHub publication recovery deferred: ${formatErrorMessage(error)}`);
     }
-    for (const publication of coordinator.listUnreportedResults()) {
+    for (const publication of await coordinator.listUnreportedResults()) {
       await reportDeferred(publication);
     }
   };

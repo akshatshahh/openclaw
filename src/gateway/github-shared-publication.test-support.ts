@@ -63,7 +63,6 @@ export function insertSharedWorktreeReceipt(
       sessionId: session.sessionId,
       lifecycleRevision: session.lifecycleRevision ?? null,
       requester: systemPublicationRequester.snapshot,
-      assertCurrent: systemPublicationRequester.assertCurrent,
       now: options.createdAtMs ?? 1_000,
       worktree: {
         id: options.worktreeId ?? "worktree-1",

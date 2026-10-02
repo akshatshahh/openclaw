@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { acquireWorktreeRunLease } from "../agents/worktrees/run-lease.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import * as operationAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import { ensurePersonalGitHubPublicationSchema } from "../state/openclaw-state-db-schema-additive.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import {
@@ -20,7 +21,6 @@ import {
   readPersonalGitHubPublication,
   requirePersonalGitHubPublicationConfirmation,
 } from "./github-personal-publication-store.js";
-import * as personalPublicationStore from "./github-personal-publication-store.js";
 import {
   callPersonalPublicationRpc,
   createForeignPublicationSession,
@@ -29,6 +29,7 @@ import {
   personalPublicationAccount as account,
   expectPersonalPublicationReplay,
 } from "./github-personal-publication.test-support.js";
+import * as publicationAdmission from "./github-publication-admission.js";
 import {
   BRANCH,
   NEW_HEAD,
@@ -363,22 +364,37 @@ describe("personal publication authority and recovery", () => {
   it("rolls back an admission stopped before its transaction commits", async () => {
     const controller = new AbortController();
     const db = openOpenClawStateDatabase().db;
-    ensurePersonalGitHubPublicationSchema(db);
-    db.function("stop_personal_admission", () => {
-      controller.abort();
-      return 1;
-    });
-    db.exec(`CREATE TEMP TRIGGER stop_personal_admission AFTER INSERT ON ${table}
-      BEGIN SELECT stop_personal_admission(); END`);
+    const createAdmission = operationAdmission.createSqliteWorkerOperationAdmission;
+    let stoppedAtCommit = false;
+    const admission = vi
+      .spyOn(operationAdmission, "createSqliteWorkerOperationAdmission")
+      .mockImplementation((admit, attachment) =>
+        createAdmission((nativeRequest, grant) => {
+          if (
+            nativeRequest.stage === "commit" &&
+            isRecord(nativeRequest.facts) &&
+            nativeRequest.facts.kind === "github-publication"
+          ) {
+            stoppedAtCommit = true;
+            controller.abort();
+          }
+          admit(nativeRequest, grant);
+        }, attachment),
+      );
     const stopped = preparePersonalGitHubSessionAction(
       { client, context, signal: controller.signal },
       { sessionKey: SESSION_KEY },
     );
-    await expect(coordinator.requestPersonalForSession(request(), stopped)).rejects.toThrow(
-      "current",
-    );
-    db.exec("DROP TRIGGER stop_personal_admission");
-    expect(db.prepare(`SELECT count(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+    try {
+      await expect(coordinator.requestPersonalForSession(request(), stopped)).rejects.toThrow(
+        "current",
+      );
+    } finally {
+      admission.mockRestore();
+    }
+    expect(stoppedAtCommit).toBe(true);
+    // Lazy schema creation and receipt insertion roll back in the same native transaction.
+    expect(tableExists(db, table)).toBe(false);
     const response = await rpc("sessions.github.options");
     expect(response[0], JSON.stringify(response[2])).toBe(true);
     expect(response[1].pendingPersonal).toBeNull();
@@ -387,11 +403,11 @@ describe("personal publication authority and recovery", () => {
 
   it("exposes a committed pre-claim stop for explicit confirmation and reports only a live execution as publishing", async () => {
     const controller = new AbortController();
-    const insert = personalPublicationStore.insertPersonalGitHubPublication;
+    const insert = publicationAdmission.insertPersonalGitHubPublication;
     const insertion = vi
-      .spyOn(personalPublicationStore, "insertPersonalGitHubPublication")
-      .mockImplementationOnce((...args) => {
-        const row = insert(...args);
+      .spyOn(publicationAdmission, "insertPersonalGitHubPublication")
+      .mockImplementationOnce(async (...args) => {
+        const row = await insert(...args);
         controller.abort();
         return row;
       });

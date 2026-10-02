@@ -17,6 +17,7 @@ import {
   listUnreportedPersonalGitHubPublications,
   markPersonalGitHubPublicationReported,
 } from "./github-personal-publication-store.js";
+import { insertGitHubPublicationRequest } from "./github-publication-admission.js";
 import {
   assertExpectedSharedGitHubPublisher,
   prepareCurrentGitHubPublicationIdentity,
@@ -37,7 +38,6 @@ import { readSharedGitHubPublication } from "./github-publication-shared-read.js
 import {
   deferGitHubPublicationRequests as deferRequests,
   digestGitHubPublicationRequest as digestRequest,
-  insertGitHubPublicationRequest,
   ensureGitHubPublicationStore as ensureSchema,
   githubPublicationDatabase as publicationDb,
   hasGitHubPublicationStore as schemaExists,
@@ -102,7 +102,7 @@ export function createSharedGitHubPublicationReadMethods(
       const row = await readSharedGitHubPublication(kind, session, { requestId });
       return row
         ? {
-            result: readGitHubPublicationReview({ publicationRequestId: row.request_id })
+            result: (await readGitHubPublicationReview({ publicationRequestId: row.request_id }))
               ? publicationNeedsReviewConfirmation(publicationResult(row))
               : publicationResult(row),
             confirmation: null,
@@ -138,7 +138,7 @@ export function createSharedGitHubPublicationReadMethods(
       }
       return row
         ? {
-            result: readGitHubPublicationReview({ publicationRequestId: row.request_id })
+            result: (await readGitHubPublicationReview({ publicationRequestId: row.request_id }))
               ? publicationNeedsReviewConfirmation(publicationResult(row))
               : publicationResult(row),
             confirmation: null,
@@ -331,42 +331,38 @@ export function createGitHubPublicationCoordinatorMethods(params: {
         sourceHeadCommit: string;
         sourceIndexTree: string;
         workspaceTree: string;
-      }): PublicationRow => {
+      }): Promise<PublicationRow> => {
         const now = Date.now();
         const requestId = randomUUID();
         assertRequester();
-        return runOpenClawStateWriteTransaction(
-          ({ db }) => {
-            return insertGitHubPublicationRequest(db, {
-              request: { ...input, sessionKey: loaded.canonicalKey },
-              requestId,
-              requestDigest,
-              now,
-              identity,
-              worktree,
+        return insertGitHubPublicationRequest(
+          {
+            request: { ...input, sessionKey: loaded.canonicalKey },
+            requestId,
+            requestDigest,
+            now,
+            identity,
+            worktree,
+            sessionId,
+            lifecycleRevision,
+            requester: input.requester.snapshot,
+            snapshot: input.preparedReview?.candidate.snapshot ?? snapshot,
+          },
+          () => {
+            assertRequester();
+            resolveGitHubPublicationWorktreeOwner({
               sessionId,
+              sessionKey: loaded.canonicalKey,
+              agentId: input.agentId,
               lifecycleRevision,
-              requester: input.requester.snapshot,
-              assertCurrent: () => {
-                assertRequester();
-                resolveGitHubPublicationWorktreeOwner({
-                  sessionId,
-                  sessionKey: loaded.canonicalKey,
-                  agentId: input.agentId,
-                  lifecycleRevision,
-                  expected: {
-                    worktreeId: worktree.id,
-                    repositoryFingerprint: worktree.repoFingerprint,
-                    branch: worktree.branch,
-                  },
-                });
+              expected: {
+                worktreeId: worktree.id,
+                repositoryFingerprint: worktree.repoFingerprint,
+                branch: worktree.branch,
               },
-              snapshot: input.preparedReview?.candidate.snapshot ?? snapshot,
-              bindReview: input.preparedReview?.bindRequest,
             });
           },
-          undefined,
-          { operationLabel: "github-publication.request-session" },
+          input.preparedReview,
         );
       };
       if (deferred) {
@@ -381,7 +377,7 @@ export function createGitHubPublicationCoordinatorMethods(params: {
             branch: worktree.branch,
           },
         });
-        return publicationResult(insertSessionRequest());
+        return publicationResult(await insertSessionRequest());
       }
       const current = params.placements.get(sessionId);
       if ((current && current.state !== "local") || current?.turnClaim) {
@@ -409,7 +405,7 @@ export function createGitHubPublicationCoordinatorMethods(params: {
           branch: worktree.branch,
         },
       });
-      const row = insertSessionRequest(snapshot);
+      const row = await insertSessionRequest(snapshot);
       return await processRow(
         row,
         validateLocalExecution,

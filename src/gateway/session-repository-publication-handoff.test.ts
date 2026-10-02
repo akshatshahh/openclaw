@@ -27,9 +27,9 @@ import {
   isGitHubPublicationExecutionOwner,
   projectGitHubPublicationResult,
 } from "./github-publication-store.js";
+import { insertRepositoryPublicationFixture } from "./github-publication-store.test-support.js";
 import { REMOTE_GITHUB_PUBLICATION_SNAPSHOT_JS } from "./github-repository-publication-snapshot.js";
 import {
-  insertRepositoryGitHubPublication,
   repositoryGitHubPublicationDigest,
   claimRepositoryGitHubPublication,
   readRepositoryGitHubPublication,
@@ -256,7 +256,7 @@ it.each([
         reported_at_ms: null,
       };
       row.request_digest = repositoryGitHubPublicationDigest(row);
-      insertRepositoryGitHubPublication(row, () => {});
+      insertRepositoryPublicationFixture(row, () => {});
       const prior = claimRepositoryGitHubPublication(row, "cloud-instance", {
         assertCustody: () => {},
         assertCurrent: () => {},
@@ -418,7 +418,6 @@ it.each([
             scopes: ["operator.admin"],
             grant: null,
           },
-          assertCurrent: () => {},
           now: Date.now(),
           worktree,
           identity,

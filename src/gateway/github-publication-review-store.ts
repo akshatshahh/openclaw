@@ -1,207 +1,94 @@
-import { createHash, randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
-import {
-  executeSqliteQuerySync,
-  executeSqliteQueryTakeFirstSync,
-  getNodeSqliteKysely,
-} from "../infra/kysely-sync.js";
-import { deferSqlitePostCommitPublication } from "../infra/sqlite-post-commit.js";
-import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
+import { randomUUID } from "node:crypto";
 import {
   encodeGitHubPublicationRequester,
   type GitHubPublicationRequesterSnapshot,
 } from "../state/github-publication-requester.js";
-import { ensureGitHubPublicationReviewSchema } from "../state/openclaw-state-db-schema-additive.js";
-import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
-import type { DB } from "../state/openclaw-state-db.generated.js";
-import {
-  openOpenClawStateDatabase,
-  runOpenClawStateWriteTransaction,
-} from "../state/openclaw-state-db.js";
+import { executeExistingOpenClawStateRead } from "../state/openclaw-state-db-readonly.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
+import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import type { PublicationSessionIdentity } from "./github-publication-availability.js";
+import { runGitHubPublicationMutation } from "./github-publication-mutation.js";
 import {
   gitHubPublicationReviewCandidateSchema,
   assertDurableGitHubPublicationReview,
   type GitHubPublicationReviewCandidate,
 } from "./github-publication-review-contract.js";
+import { prepareGitHubPublicationReviewRead } from "./github-publication-review-publication.js";
+import { digestGitHubPublicationReview } from "./github-publication-review-rows.js";
+import type {
+  GitHubPublicationReviewRead,
+  GitHubPublicationReviewRow,
+  GitHubPublicationReviewSelector,
+} from "./github-publication-review-store.types.js";
+export { readGitHubPublicationReviewCandidate } from "./github-publication-review-rows.js";
+export type { GitHubPublicationReviewRow } from "./github-publication-review-store.types.js";
 
-const table = "github_publication_review_candidates";
-const query = (db: DatabaseSync) => getNodeSqliteKysely<Pick<DB, typeof table>>(db);
-export type GitHubPublicationReviewRow = DB[typeof table];
-
-function changed(db: DatabaseSync, row: GitHubPublicationReviewRow): void {
-  deferSqlitePostCommitPublication(db, () => {
-    emitSessionLifecycleEvent({
-      sessionKey: row.session_key,
-      agentId: row.agent_id,
-      reason: "github-publication",
-    });
-  });
+async function read(
+  input: GitHubPublicationReviewRead,
+  context = captureOpenClawStateWorkerContext(),
+) {
+  const result = await executeExistingOpenClawStateRead(
+    { path: context.admission.databasePath, env: context.environment },
+    { type: "publicationReview.read", input },
+    { context, current: true },
+  );
+  context.admission.assertCurrent();
+  if (!result) return [];
+  if (!result.ok || result.type !== "publicationReview.read")
+    throw new Error("Publication reviews are unavailable.");
+  return result.rows;
 }
-
-export function readGitHubPublicationReview(
-  selector: { reviewId: string } | { publicationRequestId: string },
-  db: DatabaseSync = openOpenClawStateDatabase().db,
-): GitHubPublicationReviewRow | undefined {
-  if (!tableExists(db, table)) {
-    return undefined;
-  }
-  return executeSqliteQueryTakeFirstSync(
-    db,
-    query(db)
-      .selectFrom(table)
-      .selectAll()
-      .where(
-        "reviewId" in selector ? "review_id" : "publication_request_id",
-        "=",
-        "reviewId" in selector ? selector.reviewId : selector.publicationRequestId,
-      ),
+export async function readGitHubPublicationReview(
+  selector: GitHubPublicationReviewSelector,
+  context?: OpenClawStateWorkerContext,
+) {
+  return (await read({ kind: "row", selector }, context))[0];
+}
+export function prepareGitHubPublicationReviewObservation(reviewId: string) {
+  const context = captureOpenClawStateWorkerContext();
+  return prepareGitHubPublicationReviewRead(context.admission, reviewId, () =>
+    readGitHubPublicationReview({ reviewId }, context),
   );
 }
-
 export function listGitHubPublicationReviews(session: PublicationSessionIdentity) {
-  const db = openOpenClawStateDatabase().db;
-  if (!tableExists(db, table)) {
-    return [];
-  }
-  return executeSqliteQuerySync(
-    db,
-    query(db)
-      .selectFrom(table)
-      .selectAll()
-      .where("session_id", "=", session.sessionId)
-      .where("session_key", "=", session.sessionKey)
-      .where("agent_id", "=", session.agentId)
-      .orderBy("created_at_ms", "desc")
-      .orderBy("review_id", "desc")
-      .limit(20),
-  ).rows;
+  return read({ kind: "session", session });
 }
-
-export function findGitHubPublicationReview(input: {
+export async function findGitHubPublicationReview(input: {
   sessionId: string;
   profileId: string;
   idempotencyKey: string;
 }) {
-  const db = openOpenClawStateDatabase().db;
-  if (!tableExists(db, table)) return undefined;
-  return executeSqliteQueryTakeFirstSync(
-    db,
-    query(db)
-      .selectFrom(table)
-      .selectAll()
-      .where("session_id", "=", input.sessionId)
-      .where("requester_profile_id", "=", input.profileId)
-      .where("idempotency_key", "=", input.idempotencyKey),
-  );
+  return (await read({ kind: "find", ...input }))[0];
 }
-
 export function listUnreportedGitHubPublicationReviews() {
-  const db = openOpenClawStateDatabase().db;
-  if (!tableExists(db, table)) return [];
-  return executeSqliteQuerySync(
-    db,
-    query(db)
-      .selectFrom(table)
-      .selectAll()
-      .where("reported_at_ms", "is", null)
-      .where("publication_request_id", "is", null)
-      .orderBy("created_at_ms")
-      .limit(100),
-  ).rows;
+  return read({ kind: "unreported" });
 }
-
-export function markGitHubPublicationReviewReported(reviewId: string): void {
-  const db = openOpenClawStateDatabase().db;
-  if (!tableExists(db, table)) return;
-  runOpenClawStateWriteTransaction(
-    ({ db }) => {
-      executeSqliteQuerySync(
-        db,
-        query(db)
-          .updateTable(table)
-          .set({ reported_at_ms: Date.now() })
-          .where("review_id", "=", reviewId)
-          .where("reported_at_ms", "is", null),
-      );
-    },
-    undefined,
-    { operationLabel: "github-publication.review-reported" },
+export function markGitHubPublicationReviewReported(reviewId: string) {
+  return runGitHubPublicationMutation(
+    captureOpenClawStateWorkerContext(),
+    (scope) =>
+      scope.execute({ type: "publicationReview.reported", input: { reviewId, now: Date.now() } }),
+    () => {},
   );
 }
-
 export function retireGitHubPublicationReviewReport(
   input: PublicationSessionIdentity & { reviewId: string },
-): void {
-  const db = openOpenClawStateDatabase().db;
-  if (!tableExists(db, table)) return;
-  runOpenClawStateWriteTransaction(
-    ({ db }) => {
-      const row = executeSqliteQueryTakeFirstSync(
-        db,
-        query(db)
-          .updateTable(table)
-          .set({
-            reported_at_ms: Date.now(),
-            stale_reason:
-              "This conversation generation ended. Its review notification was not delivered to the replacement conversation.",
-          })
-          .where("review_id", "=", input.reviewId)
-          .where("session_id", "=", input.sessionId)
-          .where("session_key", "=", input.sessionKey)
-          .where("agent_id", "=", input.agentId)
-          .where(
-            "lifecycle_revision",
-            input.lifecycleRevision == null ? "is" : "=",
-            input.lifecycleRevision ?? null,
-          )
-          .where("publication_request_id", "is", null)
-          .where("reported_at_ms", "is", null)
-          .returningAll(),
-      );
-      if (row) changed(db, row);
-    },
-    undefined,
-    { operationLabel: "github-publication.review-report-retire" },
+) {
+  const captured = { ...input, now: Date.now() };
+  return runGitHubPublicationMutation(
+    captureOpenClawStateWorkerContext(),
+    (scope) => scope.execute({ type: "publicationReview.retire", input: captured }),
+    () => {},
   );
 }
-
-function digest(
-  row: Pick<
-    GitHubPublicationReviewRow,
-    | "review_id"
-    | "session_id"
-    | "session_key"
-    | "agent_id"
-    | "lifecycle_revision"
-    | "requester_profile_id"
-    | "requester_authority_json"
-    | "candidate_json"
-  >,
-): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify([
-        row.review_id,
-        row.session_id,
-        row.session_key,
-        row.agent_id,
-        row.lifecycle_revision,
-        row.requester_profile_id,
-        row.requester_authority_json,
-        row.candidate_json,
-      ]),
-    )
-    .digest("hex");
+export function markGitHubPublicationReviewStale(row: GitHubPublicationReviewRow, reason: string) {
+  const input = { reviewId: row.review_id, digest: row.candidate_digest, reason };
+  return runGitHubPublicationMutation(
+    captureOpenClawStateWorkerContext(),
+    (scope) => scope.execute({ type: "publicationReview.stale", input }),
+    () => {},
+  );
 }
-
-export function readGitHubPublicationReviewCandidate(row: GitHubPublicationReviewRow) {
-  if (!row.candidate_json || !row.candidate_digest || digest(row) !== row.candidate_digest) {
-    throw new Error("The publication review has no intact candidate; request a new review.");
-  }
-  return gitHubPublicationReviewCandidateSchema.parse(JSON.parse(row.candidate_json));
-}
-
 /** A guest's inert request and a maintainer's candidate always receive separate identities. */
 export function insertGitHubPublicationReview(input: {
   session: PublicationSessionIdentity;
@@ -213,7 +100,7 @@ export function insertGitHubPublicationReview(input: {
     requester: GitHubPublicationRequesterSnapshot;
   };
   assertCurrent: () => void;
-}): GitHubPublicationReviewRow {
+}): Promise<GitHubPublicationReviewRow> {
   assertDurableGitHubPublicationReview(input.session.sessionKey);
   input.assertCurrent();
   const candidateJson = input.reviewed
@@ -239,112 +126,11 @@ export function insertGitHubPublicationReview(input: {
     reported_at_ms: null,
   };
   if (candidateJson) {
-    row.candidate_digest = digest(row);
+    row.candidate_digest = digestGitHubPublicationReview(row);
   }
-  return runOpenClawStateWriteTransaction(
-    ({ db }) => {
-      ensureGitHubPublicationReviewSchema(db);
-      input.assertCurrent();
-      const existing = executeSqliteQueryTakeFirstSync(
-        db,
-        query(db)
-          .selectFrom(table)
-          .selectAll()
-          .where("session_id", "=", row.session_id)
-          .where("requester_profile_id", "=", row.requester_profile_id)
-          .where("idempotency_key", "=", row.idempotency_key),
-      );
-      if (existing) {
-        if (
-          existing.candidate_json !== candidateJson ||
-          existing.requested_review_id !== row.requested_review_id ||
-          existing.requester_authority_json !== row.requester_authority_json ||
-          existing.lifecycle_revision !== row.lifecycle_revision
-        ) {
-          throw new Error("Publication review idempotency key was reused; start a new review.");
-        }
-        return existing;
-      }
-      if (input.requestedReviewId) {
-        const request = readGitHubPublicationReview({ reviewId: input.requestedReviewId }, db);
-        if (
-          !request ||
-          request.candidate_json ||
-          request.session_id !== row.session_id ||
-          request.session_key !== row.session_key ||
-          request.agent_id !== row.agent_id ||
-          request.lifecycle_revision !== row.lifecycle_revision
-        ) {
-          throw new Error("The original review request no longer matches this session.");
-        }
-      }
-      executeSqliteQuerySync(db, query(db).insertInto(table).values(row));
-      input.assertCurrent();
-      changed(db, row);
-      return row;
-    },
-    undefined,
-    { operationLabel: "github-publication.review" },
-  );
-}
-
-/** Called inside the publication receipt transaction, before any execution can observe it. */
-export function bindGitHubPublicationReviewRequest(
-  db: DatabaseSync,
-  row: GitHubPublicationReviewRow,
-  requestId: string,
-  assertCurrent: () => void,
-): void {
-  assertCurrent();
-  const current = readGitHubPublicationReview({ reviewId: row.review_id }, db);
-  if (
-    current?.candidate_digest !== row.candidate_digest ||
-    current.stale_reason ||
-    !current.candidate_json ||
-    (current.publication_request_id && current.publication_request_id !== requestId)
-  ) {
-    throw new Error("The reviewed candidate was already consumed or changed.");
-  }
-  if (current.publication_request_id === requestId) return;
-  const updated = executeSqliteQueryTakeFirstSync(
-    db,
-    query(db)
-      .updateTable(table)
-      .set({ publication_request_id: requestId })
-      .where("review_id", "=", row.review_id)
-      .where("candidate_digest", "=", row.candidate_digest)
-      .where("publication_request_id", "is", null)
-      .where("stale_reason", "is", null)
-      .returningAll(),
-  );
-  if (!updated) throw new Error("The reviewed candidate was already consumed or changed.");
-  assertCurrent();
-  changed(db, updated);
-}
-
-export function markGitHubPublicationReviewStale(
-  row: GitHubPublicationReviewRow,
-  reason: string,
-): void {
-  runOpenClawStateWriteTransaction(
-    ({ db }) => {
-      const updated = executeSqliteQueryTakeFirstSync(
-        db,
-        query(db)
-          .updateTable(table)
-          .set({ stale_reason: reason })
-          .where("review_id", "=", row.review_id)
-          .where(
-            "candidate_digest",
-            row.candidate_digest === null ? "is" : "=",
-            row.candidate_digest,
-          )
-          .where("stale_reason", "is", null)
-          .returningAll(),
-      );
-      if (updated) changed(db, updated);
-    },
-    undefined,
-    { operationLabel: "github-publication.review-stale" },
+  return runGitHubPublicationMutation(
+    captureOpenClawStateWorkerContext(),
+    (scope) => scope.execute({ type: "publicationReview.insert", input: row }),
+    input.assertCurrent,
   );
 }

@@ -51,7 +51,7 @@ async function fixture(backend: "local" | "repository") {
   });
   expect(prepared[0], JSON.stringify(prepared[2])).toBe(true);
   const review = { reviewId: prepared[1].reviewId as string, digest: prepared[1].digest as string };
-  const row = readGitHubPublicationReview({ reviewId: review.reviewId })!;
+  const row = (await readGitHubPublicationReview({ reviewId: review.reviewId }))!;
   const candidate = readGitHubPublicationReviewCandidate(row);
   const pages: string[] = [];
   let offset: number | null = 0;
@@ -205,7 +205,7 @@ describe("personal publication review in a restricted conversation", () => {
       expect(mocks.prepareIdentity).toHaveBeenCalledTimes(sharedPreparations);
       expect(
         readGitHubPublicationReviewCandidate(
-          readGitHubPublicationReview({ reviewId: f.review.reviewId })!,
+          (await readGitHubPublicationReview({ reviewId: f.review.reviewId }))!,
         ),
       ).toEqual(f.candidate);
     },
@@ -234,7 +234,7 @@ describe("personal publication review in a restricted conversation", () => {
       });
       expect(revoked[0]).toBe(false);
       expect(f.effects).toEqual([]);
-      expect(readGitHubPublicationReview({ reviewId: f.review.reviewId })).toEqual(f.row);
+      expect(await readGitHubPublicationReview({ reviewId: f.review.reviewId })).toEqual(f.row);
     },
   );
 });

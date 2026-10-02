@@ -126,6 +126,6 @@ export function createGitHubPublicationTranscriptReporter(
     if (!appended.ok) {
       throw new Error("GitHub publication transcript owner changed", { cause: appended.error });
     }
-    coordinator.markReported(params.result.requestId);
+    await coordinator.markReported(params.result.requestId);
   };
 }

@@ -199,7 +199,7 @@ describe("repository checkpoint GitHub publication", () => {
       expect(await request()).toEqual(result);
       await coordinator.resumeSessionRequests();
       expect(checkpoint).toHaveBeenCalledOnce();
-      expect(coordinator.listUnreportedResults()).toEqual([
+      expect(await coordinator.listUnreportedResults()).toEqual([
         expect.objectContaining({
           result: expect.objectContaining({
             requestId: result.requestId,
@@ -752,7 +752,7 @@ describe("repository checkpoint GitHub publication", () => {
           error_code: "unavailable",
           last_effect: null,
         });
-        expect(f.coordinator.listUnreportedResults()).toEqual([
+        expect(await f.coordinator.listUnreportedResults()).toEqual([
           expect.objectContaining({
             result: expect.objectContaining({
               requestId: requested.requestId,
