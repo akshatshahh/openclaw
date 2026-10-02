@@ -1,6 +1,10 @@
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { requireGit } from "../agents/worktrees/git.js";
+import {
+  attachRuntimeConfigWriteApplication,
+  createRuntimeConfigWriteApplication,
+} from "../config/runtime-write-application.js";
 import { loadSessionEntry, upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -24,6 +28,8 @@ import { getGatewayConfigModule } from "./test/server-sessions.test-helpers.js";
 const { createSessionStoreDir, withSessionTestState } = setupSessionCreateHandlerTestHarness();
 
 test("a contributor creates, reads, and runs a required workspace on a non-main agent over the Gateway", async () => {
+  // Revocation must commit through the reload owner; minimal Gateways retain startup policy.
+  process.env.OPENCLAW_TEST_MINIMAL_GATEWAY = "0";
   await withSessionTestState({ layout: "state-only" }, async (state) => {
     const workspace = await initializeRepository(state.root, "project");
     const main = await requireGit(workspace, ["rev-parse", "main"]);
@@ -67,7 +73,9 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
     };
     const config = await getGatewayConfigModule();
     await config.writeConfigFile(cfg);
-    await withGatewayServer(async ({ port }) => {
+    const configIO = await vi.importActual<typeof import("../config/io.js")>("../config/io.js");
+    await withGatewayServer(async ({ port, server }) => {
+      await server.startupSettled;
       const headers = {
         origin,
         "x-forwarded-for": "203.0.113.50",
@@ -159,19 +167,18 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         const invalidated = new Promise<{ code: number; reason: string }>((resolve) => {
           ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
         });
-        cfg.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
-        await config.writeConfigFile(cfg);
-        // A changed role fences the old transport before method authorization runs.
-        await expect(
-          rpcReq(ws, "chat.send", {
-            sessionKey: payload.key,
-            message: "old policy connection",
-            idempotencyKey: "stale-policy-workspace-turn",
-          }),
-        ).rejects.toThrow("closed 4001: client invalidated: gateway-policy-changed");
+        const revokedConfig = structuredClone(configIO.getRuntimeConfig());
+        revokedConfig.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
+        const application = createRuntimeConfigWriteApplication();
+        await configIO.writeConfigFile(
+          revokedConfig,
+          attachRuntimeConfigWriteApplication({}, application),
+        );
+        expect(application.claimed).toBe(true);
+        expect(await application.result).toBe("applied");
         expect(await invalidated).toEqual({
           code: 4001,
-          reason: "client invalidated: gateway-policy-changed",
+          reason: "gateway policy changed",
         });
         expect(gatewayReplyMock).toHaveBeenCalledOnce();
         const reconnected = await openWs(port, headers);
