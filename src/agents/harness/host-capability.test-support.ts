@@ -5,6 +5,7 @@ import {
   prepareAgentRunAdmission,
   type AdmittedRunContext,
   type AdmittedRunOperatorAuthority,
+  type PreparedAgentRunAdmission,
 } from "../admitted-run-context.js";
 import { createAgentHarnessCompletionScope } from "../agent-harness-completion-scope.js";
 import { createAgentHarnessHostCapabilities } from "./host-capability.js";
@@ -16,7 +17,7 @@ type AdmittedHostCapabilityTestFixture = Readonly<{
   hostCapabilities: ReturnType<typeof createAgentHarnessHostCapabilities>["capabilities"];
   agentHarnessCompletionScope?: ReturnType<typeof createAgentHarnessCompletionScope>;
   closeHost: () => void;
-  closeAdmission: () => void;
+  closeAdmission: PreparedAgentRunAdmission["close"];
   runWithGatewayScope: <T>(run: () => T) => T;
   closeGateway: () => void;
 }>;

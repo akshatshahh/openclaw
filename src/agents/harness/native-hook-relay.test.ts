@@ -27,10 +27,7 @@ import { createDeferredCore } from "../../shared/deferred.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import { useSessionStoreTempDirs } from "../../test-utils/session-state-cleanup.js";
 import { splitShellArgs } from "../../utils/shell-argv.js";
-import {
-  closeAdmittedRunDelegatedAuthority,
-  getAdmittedRunDelegatedAuthority,
-} from "../admitted-run-context.js";
+import { getAdmittedRunDelegatedAuthority } from "../admitted-run-context.js";
 import { createAdmittedHostCapabilityTestFixture } from "./host-capability.test-support.js";
 import * as nativeHookRelayBridge from "./native-hook-relay-bridge.js";
 import { invokeNativeHookRelayBridge } from "./native-hook-relay-client.js";
@@ -386,7 +383,7 @@ describe("native hook relay registry", () => {
   });
 
   it("rejects an in-flight root policy after foreground close while a child retains the relay", async () => {
-    const { admittedRunContext, hostCapabilities } = await createAdmittedHostCapabilityTestFixture({
+    const { hostCapabilities, closeAdmission } = await createAdmittedHostCapabilityTestFixture({
       runId: "run-root-foreground-close",
     });
     let resolvePolicy: ((value: undefined) => void) | undefined;
@@ -429,14 +426,15 @@ describe("native hook relay registry", () => {
 
     await expect(invocation).rejects.toThrow("foreground invocation not allowed");
     expect(testing.getNativeHookRelayRegistrationForTests(relay.relayId)).toBeDefined();
-    closeAdmittedRunDelegatedAuthority(admittedRunContext);
+    await closeAdmission();
     relay.unregister();
   });
 
   it("keeps only a claimed flat native child after foreground cleanup", async () => {
-    const { admittedRunContext, hostCapabilities } = await createAdmittedHostCapabilityTestFixture({
-      runId: "run-retained-child",
-    });
+    const { admittedRunContext, hostCapabilities, closeAdmission } =
+      await createAdmittedHostCapabilityTestFixture({
+        runId: "run-retained-child",
+      });
     const delegatedAuthority = getAdmittedRunDelegatedAuthority(admittedRunContext);
     if (!delegatedAuthority) {
       throw new Error("Expected admitted delegated authority");
@@ -498,7 +496,7 @@ describe("native hook relay registry", () => {
     ).resolves.toMatchObject({ exitCode: 0 });
     expect(afterToolCall).toHaveBeenCalledOnce();
 
-    expect(closeAdmittedRunDelegatedAuthority(admittedRunContext)).toBe(true);
+    await closeAdmission();
     expect(validateAgentRunDelegatedAuthority(delegatedAuthority)).toBe(false);
     await expect(
       mintAgentRuntimeIdentityToken({
@@ -572,7 +570,7 @@ describe("native hook relay registry", () => {
       if (cause === "expiry") {
         vi.useFakeTimers();
       }
-      const { admittedRunContext, hostCapabilities } =
+      const { admittedRunContext, hostCapabilities, closeAdmission } =
         await createAdmittedHostCapabilityTestFixture({ runId: `run-retained-${cause}` });
       const delegatedAuthority = getAdmittedRunDelegatedAuthority(admittedRunContext);
       if (!delegatedAuthority) {
@@ -594,7 +592,7 @@ describe("native hook relay registry", () => {
         ...(cause === "abort" ? { signal: controller.signal } : { ttlMs: 5 }),
       });
 
-      closeAdmittedRunDelegatedAuthority(admittedRunContext);
+      await closeAdmission();
       expect(validateAgentRunDelegatedAuthority(delegatedAuthority)).toBe(false);
       relay.unregister();
       await expect(
@@ -623,7 +621,7 @@ describe("native hook relay registry", () => {
   );
 
   it("leaves retained host authority available after an ordinary same-host relay", async () => {
-    const { admittedRunContext, hostCapabilities } = await createAdmittedHostCapabilityTestFixture({
+    const { hostCapabilities, closeAdmission } = await createAdmittedHostCapabilityTestFixture({
       runId: "run-ordinary-then-retaining",
     });
     const ordinary = registerRelay({
@@ -647,7 +645,7 @@ describe("native hook relay registry", () => {
       },
     });
 
-    closeAdmittedRunDelegatedAuthority(admittedRunContext);
+    await closeAdmission();
     ordinary.unregister();
     retaining.unregister();
     await expect(
@@ -661,7 +659,7 @@ describe("native hook relay registry", () => {
   });
 
   it("does not retain authority from a runtime-shaped public registration", async () => {
-    const { admittedRunContext, hostCapabilities } = await createAdmittedHostCapabilityTestFixture({
+    const { hostCapabilities, closeAdmission } = await createAdmittedHostCapabilityTestFixture({
       runId: "run-forged-public-retention",
     });
     const onDispose = vi.fn();
@@ -681,7 +679,7 @@ describe("native hook relay registry", () => {
       },
     } as unknown as Parameters<typeof registerNativeHookRelay>[0]);
 
-    expect(closeAdmittedRunDelegatedAuthority(admittedRunContext)).toBe(true);
+    await closeAdmission();
     relay.unregister();
 
     expect(testing.getNativeHookRelayRegistrationForTests(relay.relayId)).toBeUndefined();
@@ -729,7 +727,7 @@ describe("native hook relay registry", () => {
       ).rejects.toThrow("native hook relay not found");
     } finally {
       host.closeHost();
-      host.closeAdmission();
+      await host.closeAdmission();
     }
   });
 
@@ -833,9 +831,10 @@ describe("native hook relay registry", () => {
   });
 
   it("cleans a partial retained relay when bridge setup throws", async () => {
-    const { admittedRunContext, hostCapabilities } = await createAdmittedHostCapabilityTestFixture({
-      runId: "run-bridge-setup-throws",
-    });
+    const { admittedRunContext, hostCapabilities, closeAdmission } =
+      await createAdmittedHostCapabilityTestFixture({
+        runId: "run-bridge-setup-throws",
+      });
     const relayId = uniqueNativeHookRelayIdForTests("bridge-setup-throws");
     const bridgeFailure = vi
       .spyOn(nativeHookRelayBridge, "registerNativeHookRelayBridge")
@@ -867,6 +866,7 @@ describe("native hook relay registry", () => {
       "run-bridge-setup-successor",
     );
     successor.unregister();
+    await closeAdmission();
   });
 
   it("does not remember allow-always approvals when expiry would exceed Date range", async () => {

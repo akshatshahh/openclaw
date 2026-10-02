@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
 import {
   configureExecutionIdentityAdmissionSink,
   createExecutionIdentityAdmissionToken,
@@ -16,7 +15,6 @@ import {
   getGatewayContextResolver,
 } from "../plugins/runtime/gateway-context-binding.js";
 import {
-  closeAdmittedRunDelegatedAuthority,
   createExecutionIdentityRecoveryAdmission,
   createOperationalRunInstanceRef,
   createAdmittedRunOperatorAuthority,
@@ -25,7 +23,6 @@ import {
   prepareAgentRunAdmission,
   readAdmittedRunOperatorAuthority,
   readPreparedRunOperatorAuthority,
-  registerAdmittedRunCleanup,
   retainAdmittedRunBeforeToolCallRecovery,
   resolveAdmittedRunActiveAssertion,
   resolvePreparedRunAdmission,
@@ -49,65 +46,6 @@ afterEach(() => {
 });
 
 describe("prepared run admission", () => {
-  it("closes admission before joining owned resources and retains the source until settlement", async () => {
-    const resource = createDeferred<void>();
-    const started = createDeferred<void>();
-    const release = vi.fn();
-    const prepared = prepareAgentRunAdmission({
-      cfg: {},
-      facts,
-      operationalRunInstance: createOperationalRunInstanceRef(facts.runId),
-      operatorAuthority: createAdmittedRunOperatorAuthority({
-        profileId: "foreground-owner",
-        scopes: ["operator.sessions.write"],
-        assertCurrent() {},
-        retain: () => release,
-      }),
-    });
-    const context = await prepared.admit("embedded");
-    registerAdmittedRunCleanup(context, async () => {
-      started.resolve();
-      await resource.promise;
-    });
-    const closing = prepared.close();
-    await started.promise;
-    expect(getAdmittedRunDelegatedAuthority(context)).toBeUndefined();
-    expect(() => registerAdmittedRunCleanup(context, async () => {})).toThrow("no longer active");
-    expect(release).not.toHaveBeenCalled();
-    expect(prepared.close()).toBe(closing);
-    resource.resolve();
-    await closing;
-    expect(release).toHaveBeenCalledOnce();
-  });
-
-  it("joins every cleanup and preserves a failed settlement on repeated close", async () => {
-    const resource = createDeferred<void>();
-    const started = createDeferred<void>();
-    const failure = new Error("container exit unconfirmed");
-    const prepared = prepareAgentRunAdmission({
-      cfg: {},
-      facts,
-      operationalRunInstance: createOperationalRunInstanceRef(facts.runId),
-    });
-    const context = await prepared.admit("plugin-harness");
-    registerAdmittedRunCleanup(context, async () => {
-      throw failure;
-    });
-    registerAdmittedRunCleanup(context, async () => {
-      started.resolve();
-      await resource.promise;
-    });
-    const closing = prepared.close();
-    const rejected = expect(closing).rejects.toMatchObject({ errors: [failure] });
-    await started.promise;
-    resource.resolve();
-    await rejected;
-    await expect(prepared.close()).rejects.toMatchObject({ errors: [failure] });
-    await expect(closeAdmittedRunDelegatedAuthority(context)).rejects.toMatchObject({
-      errors: [failure],
-    });
-  });
-
   it.each([false, true])(
     "owns real fixture authority across module resets and runner settlement (reject=%s)",
     async (reject) => {
@@ -377,7 +315,8 @@ describe("prepared run admission", () => {
     expect(() => prepared.assertSourceCurrent()).not.toThrow();
     expect(validateAgentRunDelegatedAuthority(first)).toBe(false);
     expect(getAdmittedRunSource(first)).toBeUndefined();
-    expect(await closeAdmittedRunDelegatedAuthority(admitted)).toBe(false);
+    await prepared.close();
+    expect(getAdmittedRunDelegatedAuthority(admitted)).toBeUndefined();
     await expect(prepared.admit(runtime.kind)).rejects.toThrow("already closed");
   });
 
@@ -512,7 +451,7 @@ describe("prepared run admission", () => {
 
     expect(authority).toBeDefined();
     expect(recovery).toBeDefined();
-    expect(await closeAdmittedRunDelegatedAuthority(admitted)).toBe(true);
+    await prepared.close();
     expect(getAdmittedRunDelegatedAuthority(admitted)).toBeUndefined();
     expect(validateAgentRunDelegatedAuthority(authority!)).toBe(false);
     expect(() => recovery?.assertActive()).not.toThrow();
@@ -618,7 +557,6 @@ describe("prepared run admission", () => {
     let releaseHook: (() => void) | undefined;
     let authority: ReturnType<typeof getAdmittedRunDelegatedAuthority>;
     const releaseSource = vi.fn();
-    const reclaimLateResource = vi.fn();
     const hookPending = new Promise<void>((resolve) => {
       releaseHook = resolve;
     });
@@ -635,19 +573,13 @@ describe("prepared run admission", () => {
       onAdmitted: async (context) => {
         authority = getAdmittedRunDelegatedAuthority(context);
         await hookPending;
-        try {
-          registerAdmittedRunCleanup(context, async () => {});
-        } catch (error) {
-          // Acquisition lost admission; its producer still owns reclamation.
-          reclaimLateResource();
-          throw error;
-        }
       },
     });
     const admission = prepared.admit(runtime.kind);
     await vi.waitFor(() => expect(authority).toBeDefined());
 
     const closing = prepared.close();
+    expect(prepared.close()).toBe(closing);
     const settled = vi.fn();
     void Promise.resolve(closing).then(settled);
 
@@ -656,9 +588,8 @@ describe("prepared run admission", () => {
     expect(settled).not.toHaveBeenCalled();
     expect(releaseSource).not.toHaveBeenCalled();
     releaseHook?.();
-    await expect(admission).rejects.toThrow("resource owner is no longer active");
+    await expect(admission).rejects.toThrow("closed during admission");
     await closing;
-    expect(reclaimLateResource).toHaveBeenCalledOnce();
     expect(releaseSource).toHaveBeenCalledOnce();
   });
 });
