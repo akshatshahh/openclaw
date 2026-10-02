@@ -796,8 +796,6 @@ function mergeSessionEntryWithPolicy(
     next.parentSessionId = existing.parentSessionId;
     next.parentLifecycleRevision = existing.parentLifecycleRevision;
     next.repositoryWorkspaceId = existing.repositoryWorkspaceId;
-    next.pendingWorktree = existing.pendingWorktree;
-    next.pendingProjectGitUrl = existing.pendingProjectGitUrl;
   }
   if (existing.sandbox === "required") {
     next.sandbox = existing.sandbox;

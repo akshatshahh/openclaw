@@ -8,6 +8,7 @@ import {
 import { loadSessionEntry, upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { setLoggerOverride } from "../logging.js";
 import { registerProjectRegistry } from "../projects/project-registry.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import {
@@ -172,12 +173,18 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         const revokedConfig = structuredClone(configIO.getRuntimeConfig());
         revokedConfig.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
         const application = createRuntimeConfigWriteApplication();
-        await configIO.writeConfigFile(
-          revokedConfig,
-          attachRuntimeConfigWriteApplication({}, application),
-        );
-        expect(application.claimed).toBe(true);
-        expect(await application.result).toBe("applied");
+        // The harness silences both sinks; retain the real reload owner's failure reason.
+        setLoggerOverride({ level: "silent", consoleLevel: "info" });
+        try {
+          await configIO.writeConfigFile(
+            revokedConfig,
+            attachRuntimeConfigWriteApplication({}, application),
+          );
+          expect(application.claimed).toBe(true);
+          expect(await application.result).toBe("applied");
+        } finally {
+          setLoggerOverride({ level: "silent", consoleLevel: "silent" });
+        }
         expect(await invalidated).toEqual({
           code: 4001,
           reason: "gateway policy changed",

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import { withSessionEntryReadOnlyInWorker } from "../../config/sessions/session-entry-read-runtime.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
+import type { InternalSessionEntry, SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { requireGit } from "./git.js";
@@ -68,7 +68,7 @@ export async function assertRequiredSessionWorktreeCheckout(
 
 /** Validate recorded custody at execution, before a run can acquire its existing native lease. */
 export async function assertRequiredSessionWorktree(params: {
-  entry: SessionEntry;
+  entry: InternalSessionEntry;
   sessionKey?: string;
   cfg?: OpenClawConfig;
   record?: ManagedWorktreeRecord;
