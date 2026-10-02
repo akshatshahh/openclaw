@@ -31,6 +31,7 @@ import { recordSessionParticipant } from "../config/sessions/session-accessor.sq
 import * as workerAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { withOpenClawStateLease } from "../state/openclaw-state-lease.js";
+import { setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
 import { handleGatewayRequest } from "./server-methods.js";
 import { flushPendingSessionsChangedEvents } from "./server-methods/session-change-event.js";
@@ -51,19 +52,23 @@ const { createArchiveWorktreeFixture } = setupGatewaySessionsWorktreeTestHarness
 const execFileAsync = promisify(execFile);
 
 test("revoking archive access while restore waits preserves the archived checkout", async () => {
-  const { key, sessionId, storePath, worktree, workspace } = await createArchiveWorktreeFixture();
+  const { key, sessionId, storePath, worktree, workspace, client } =
+    await createArchiveWorktreeFixture(() => {
+      const creator = roleClient("view", "restore-capability");
+      setUserProfileRole(creator.authenticatedUserProfile!.profileId, "admin");
+      creator.connect.scopes = ["operator.admin"];
+      return creator;
+    });
+  expect(loadSessionEntry({ storePath, sessionKey: key })?.createdActor).toMatchObject({
+    type: "human",
+    source: "profile",
+    id: client.authenticatedUserProfile!.profileId,
+  });
   expect(
     await directSessionReq("sessions.patch", { key, expectedSessionId: sessionId, archived: true }),
   ).toMatchObject({ ok: true });
-  const client = roleClient("view", "restore-capability");
+  setUserProfileRole(client.authenticatedUserProfile!.profileId, "view");
   client.connect.scopes = ["operator.sessions.write", "operator.sessions.archive"];
-  await patchSessionEntryCore({ storePath, sessionKey: key }, () => ({
-    createdActor: {
-      type: "human",
-      source: "profile",
-      id: client.authenticatedUserProfile!.profileId,
-    },
-  }));
   const cfg = {
     ...rolePolicyConfig(),
     agents: { defaults: { workspace } },

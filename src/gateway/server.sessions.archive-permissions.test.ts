@@ -52,7 +52,7 @@ test.each(["sessions.patch", "sessions.patchMany"] as const)(
       await initializeSessionReadContext(context);
       for (const archived of [true, false]) {
         expect(
-          await request(method, client, context, [key], { archived, icon: "note" }),
+          await request(method, client, context, [key], { archived, icon: "book" }),
         ).toMatchObject([
           false,
           undefined,
@@ -62,7 +62,12 @@ test.each(["sessions.patch", "sessions.patchMany"] as const)(
         expectNoSessionQueueCleanup();
         expect(loadSessionEntry({ sessionKey: key, storePath })?.archivedAt).toBeUndefined();
       }
-      expect((await request(method, client, context, [key], { icon: "note" }))?.[0]).toBe(true);
+      const organized = await request(method, client, context, [key], { icon: "book" });
+      expect(organized?.[0]).toBe(true);
+      if (method === "sessions.patchMany") {
+        expect(organized?.[1]).toMatchObject({ outcomes: [{ ok: true }] });
+      }
+      expect(loadSessionEntry({ sessionKey: key, storePath })?.icon).toBe("book");
     } finally {
       persistence.resolve();
       active.unsubscribe();
