@@ -160,6 +160,7 @@ export async function resolveWorktreeIdForPath(params: {
     if (params.sessionEntry?.requiredWorkspace) {
       await assertRequiredSessionWorktree({
         ...params,
+        // SAFETY: The validator reads custody fields only and rejects missing bindings.
         entry: params.sessionEntry as SessionEntry,
         record,
         env,
@@ -173,6 +174,7 @@ export async function resolveWorktreeIdForPath(params: {
   if (params.sessionEntry?.requiredWorkspace) {
     await assertRequiredSessionWorktree({
       ...params,
+      // SAFETY: The validator reads custody fields only and rejects missing bindings.
       entry: params.sessionEntry as SessionEntry,
       env,
     });
