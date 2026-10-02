@@ -7,6 +7,7 @@ import {
   controlUiSessionUrl,
   createChatFlowE2eSuite,
   installMockGateway,
+  requireRecord,
 } from "./chat-flow.test-support.ts";
 
 const suite = createChatFlowE2eSuite();
@@ -73,9 +74,10 @@ suite.define(() => {
         expect(await gateway.getRequests("chat.send")).toHaveLength(0);
         await page.getByRole("button", { name: "Send message", exact: true }).click();
         const request = await gateway.waitForRequest("chat.send");
-        expect(request.params).toMatchObject({ sessionKey: session.key, message: newMessage });
-        expect(request.params.idempotencyKey).toEqual(expect.any(String));
-        expect(request.params.idempotencyKey).not.toBe(previousRunId);
+        const params = requireRecord(request.params);
+        expect(params).toMatchObject({ sessionKey: session.key, message: newMessage });
+        expect(params.idempotencyKey).toEqual(expect.any(String));
+        expect(params.idempotencyKey).not.toBe(previousRunId);
         await page.getByRole("button", { name: "Stop generating", exact: true }).waitFor();
         await page.getByText(newMessage, { exact: true }).waitFor();
         expect(await stoppedNotice.isVisible()).toBe(true);
