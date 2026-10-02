@@ -9,6 +9,7 @@ import { ensureProfileForEmail } from "../state/user-profiles.js";
 import {
   connectReq,
   CONTROL_UI_CLIENT,
+  onceMessage,
   openWs,
   rpcReq,
   testState,
@@ -16,7 +17,7 @@ import {
 } from "./server.auth.test-helpers.js";
 import { initializeRepository } from "./server.sessions.create.projects.test-support.js";
 import { setupSessionCreateHandlerTestHarness } from "./server.sessions.create.test-support.js";
-import { dispatchInboundMessageMock } from "./test-helpers.js";
+import { gatewayReplyMock } from "./test-helpers.js";
 import { settleGatewaySessionStoreFixture } from "./test/server-sessions-resources.test-helpers.js";
 import { getGatewayConfigModule } from "./test/server-sessions.test-helpers.js";
 
@@ -101,14 +102,40 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         });
         const read = await rpcReq(ws, "sessions.get", { key: payload.key });
         expect(read.ok, JSON.stringify(read.error)).toBe(true);
+        const runId = "required-workspace-turn";
+        const replyText = "The selected workspace is ready.";
+        // Keep the real dispatcher and delivery owner; control only the model reply source.
+        gatewayReplyMock.mockResolvedValueOnce({ text: replyText });
+        const terminal = onceMessage(
+          ws,
+          (frame) =>
+            frame.type === "event" &&
+            frame.event === "chat" &&
+            frame.payload?.runId === runId &&
+            frame.payload?.sessionKey === payload.key &&
+            (frame.payload?.state === "final" ||
+              frame.payload?.state === "error" ||
+              frame.payload?.state === "aborted"),
+        );
+        void terminal.catch(() => undefined);
         const accepted = await rpcReq(ws, "chat.send", {
           sessionKey: payload.key,
           message: "inspect the selected workspace",
-          idempotencyKey: "required-workspace-turn",
+          idempotencyKey: runId,
         });
         expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
+        expect(accepted.payload).toMatchObject({ runId, status: "started" });
+        expect((await terminal).payload).toMatchObject({
+          state: "final",
+          message: {
+            role: "assistant",
+            content: expect.arrayContaining([{ type: "text", text: replyText }]),
+          },
+        });
         await settleGatewaySessionStoreFixture(dir);
-        expect(dispatchInboundMessageMock).toHaveBeenCalled();
+        expect(gatewayReplyMock).toHaveBeenCalledOnce();
+        expect(gatewayReplyMock.mock.calls[0]?.[0]).toMatchObject({ SessionKey: payload.key });
+        expect(gatewayReplyMock.mock.calls[0]?.[1]).toMatchObject({ runId });
 
         const key = "agent:contributor-agent:dashboard:old-shared-thread";
         await upsertSessionEntryCore(
@@ -120,14 +147,13 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
             createdVia: "operator",
           },
         );
-        dispatchInboundMessageMock.mockClear();
         const continued = await rpcReq(ws, "chat.send", {
           sessionKey: key,
           message: "must select a new workspace",
           idempotencyKey: "old-workspace-turn",
         });
         expect(continued).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
-        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+        expect(gatewayReplyMock).toHaveBeenCalledOnce();
         cfg.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
         await config.writeConfigFile(cfg);
         const revoked = await rpcReq(ws, "chat.send", {
@@ -136,7 +162,7 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
           idempotencyKey: "revoked-project-turn",
         });
         expect(revoked).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
-        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+        expect(gatewayReplyMock).toHaveBeenCalledOnce();
       } finally {
         ws.close();
       }

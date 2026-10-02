@@ -399,7 +399,12 @@ test("message-cut forks allocate a new main checkout and real reset revokes a jo
     // A borrowed child owns only its conversation, even after its parent reset.
     const archived = await directSessionReq(
       "sessions.patch",
-      { key: childScope.sessionKey, archived: true },
+      {
+        key: childScope.sessionKey,
+        archived: true,
+        expectedSessionId: child.sessionId,
+        expectedLifecycleRevision: child.lifecycleRevision,
+      },
       { context },
     );
     expect(archived.ok, JSON.stringify(archived.error)).toBe(true);
