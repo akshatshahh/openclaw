@@ -6,7 +6,7 @@ import {
   DOCKER_SANDBOX_ENGINE,
   PODMAN_SANDBOX_ENGINE,
 } from "./container-engine.js";
-import { retireNativeSandboxContainer } from "./docker-native-custody.js";
+import { holdNativeSandboxAllocation } from "./docker-native-custody.js";
 import type { SandboxRegistryEntry } from "./registry.types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -22,12 +22,22 @@ vi.mock("./registry.js", () => ({
   assertForegroundSandboxRegistryEntryCurrent: mocks.assertCurrent,
   recordForegroundSandboxReceipt: mocks.record,
   retireForegroundSandboxRegistryEntry: mocks.retire,
+  withSandboxRegistryEntryLock: <T>(_entry: unknown, run: () => Promise<T>) => run(),
 }));
 vi.mock("./container-engine.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./container-engine.js")>()),
   runNativeSandboxCleanup: (_engine: unknown, run: (exec: typeof mocks.command) => Promise<void>) =>
     run(mocks.command),
 }));
+
+async function retireAllocation(native: Parameters<typeof holdNativeSandboxAllocation>[0]) {
+  let cleanup!: (reason: string) => Promise<void>;
+  native.custody.registerCleanup = (callback) => {
+    cleanup = callback;
+  };
+  await holdNativeSandboxAllocation(native);
+  await cleanup("foreground-end");
+}
 
 function fixture(kind: "docker" | "podman") {
   const custody: NativeSandboxCustody = {
@@ -161,7 +171,7 @@ describe("exact native foreground retirement", () => {
       startAttempted: false,
     });
     delete native.reservation.foreground!.containerId;
-    await retireNativeSandboxContainer(native);
+    await retireAllocation(native);
     expect(mocks.command).not.toHaveBeenCalled();
     expect(mocks.retire).toHaveBeenCalledWith(native.reservation);
   });
@@ -170,7 +180,7 @@ describe("exact native foreground retirement", () => {
     const { native, inspection } = fixture("docker");
     native.reservation.foreground!.startNotDispatched = true;
     Object.assign(inspection.State, { Status: "created", Running: false, Pid: 0 });
-    await retireNativeSandboxContainer(native);
+    await retireAllocation(native);
     expect(mocks.command.mock.calls.map(([args]) => args[0])).toEqual(["info", "inspect", "rm"]);
     expect(mocks.retire).toHaveBeenCalledWith(native.reservation);
   });
@@ -179,7 +189,7 @@ describe("exact native foreground retirement", () => {
     "joins %s kill, wait and exit inspection before non-force removal",
     async (kind) => {
       const { native } = fixture(kind);
-      await retireNativeSandboxContainer(native);
+      await retireAllocation(native);
       expect(mocks.command.mock.calls.map(([args]) => args[0])).toEqual([
         "info",
         "inspect",
@@ -214,7 +224,7 @@ describe("exact native foreground retirement", () => {
         native.reservation.foreground!.engineIdentity.kind === "podman"
       )
         native.reservation.foreground!.engineIdentity.runRoot = "/another/run";
-      await expect(retireNativeSandboxContainer(native)).rejects.toThrow();
+      await expect(retireAllocation(native)).rejects.toThrow();
       expect(mocks.command.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
       expect(mocks.retire).not.toHaveBeenCalled();
       expect(mocks.record).toHaveBeenCalledWith(
@@ -233,7 +243,7 @@ describe("exact native foreground retirement", () => {
       if (args[0] === "rm") throw new Error("container disappeared before our removal");
       return execute(args);
     });
-    await expect(retireNativeSandboxContainer(native)).rejects.toThrow();
+    await expect(retireAllocation(native)).rejects.toThrow();
     expect(mocks.retire).not.toHaveBeenCalled();
     expect(native.reservation.foreground?.cleanupUncertain).toBe(true);
   });

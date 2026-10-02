@@ -170,19 +170,6 @@ export async function readNativeSandboxEngineIdentity(
   };
 }
 
-export async function assertNativeSandboxEngineCurrent(native: NativeSandboxContainerCustody) {
-  const { engine } = native;
-  const engineIdentity = native.reservation?.foreground?.engineIdentity;
-  if (
-    !engine ||
-    !engineIdentity ||
-    !isDeepStrictEqual(await readNativeSandboxEngineIdentity(engine), engineIdentity)
-  ) {
-    throw new Error("Native sandbox engine identity changed.");
-  }
-  native.custody.assertCurrent();
-}
-
 /** The exact allocation must retain its private namespace and non-restarting policy. */
 export async function assertNativeSandboxCreatedContainer(
   engine: SandboxContainerEngine,
@@ -264,7 +251,7 @@ function assertExited(
   }
 }
 
-export async function retireNativeSandboxContainer(
+async function retireNativeSandboxContainer(
   native: Pick<NativeSandboxContainerCustody, "reservation" | "engine"> & {
     custody?: Pick<NativeSandboxCustody, "assertCleanupConfirmed">;
   },

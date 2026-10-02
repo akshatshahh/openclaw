@@ -1,8 +1,7 @@
-import type { OperationalRunInstanceRef } from "./admitted-run-context.js";
-
 /** Host-owned accepted input; serializing or copying the carrier grants no admission. */
 export type ForegroundUserRequest = Readonly<{ kind: "foreground-user-request" }>;
-type Source = { assertCurrent: () => void; owner?: OperationalRunInstanceRef };
+// Claims compare the admitted owner's exact identity without importing its admission lifecycle.
+type Source = { assertCurrent: () => void; owner?: object };
 const sources = new WeakMap<ForegroundUserRequest, readonly Source[]>();
 const requestKey = Symbol("accepted foreground user input");
 type RequestOwner = { [requestKey]?: ForegroundUserRequest };
@@ -44,7 +43,7 @@ export function combineForegroundUserRequests(
 /** Claim only when foreground policy is required; ordinary queued work keeps its existing lifetime. */
 export function prepareForegroundUserRequestClaim(
   request: ForegroundUserRequest | undefined,
-  owner: OperationalRunInstanceRef,
+  owner: object,
 ): (() => void) | undefined {
   const batch = request && sources.get(request);
   if (!batch) return undefined;

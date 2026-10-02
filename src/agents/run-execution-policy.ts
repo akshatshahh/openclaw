@@ -27,13 +27,6 @@ export function isAdmittedRunForegroundOnly(context: AdmittedRunContext | undefi
   );
 }
 
-export function assertAdmittedRunMayContinue(
-  context: AdmittedRunContext | undefined,
-  activity: string,
-): void {
-  assertExecutionMayContinue(isAdmittedRunForegroundOnly(context), activity);
-}
-
 /** Consumers pass only host-captured admission or immutable session facts. */
 export function assertExecutionMayContinue(foregroundOnly: boolean, activity: string): void {
   if (foregroundOnly) {
