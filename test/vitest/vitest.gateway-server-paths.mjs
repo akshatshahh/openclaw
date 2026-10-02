@@ -57,6 +57,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/github-publication-reconciliation.test.ts",
   "src/gateway/github-publication-requester-aliases.test.ts",
   "src/gateway/github-publication-requester.test.ts",
+  "src/gateway/github-publication-review-store.test.ts",
   "src/gateway/github-publication-review-target.test.ts",
   "src/gateway/github-publication-review.test.ts",
   "src/gateway/github-publication-session-access.test.ts",
