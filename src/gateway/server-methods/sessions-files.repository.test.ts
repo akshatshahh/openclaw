@@ -513,19 +513,22 @@ it.each(["tunnel", "result"])(
   "retains a scoped diff requester through remote %s work",
   async (phase) => {
     let current = true;
-    if (phase === "tunnel")
+    if (phase === "tunnel") {
       onTunnel = () => {
         current = false;
       };
-    else
+    } else {
       onResult = () => {
         current = false;
       };
+    }
     await expect(
       loadSessionDiff({ sessionKey }, context as never, {
         ownWorkspaceOnly: true,
         assertCurrent: () => {
-          if (!current) throw new Error("requester revoked");
+          if (!current) {
+            throw new Error("requester revoked");
+          }
         },
       }),
     ).rejects.toThrow("requester revoked");

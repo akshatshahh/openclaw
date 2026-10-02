@@ -219,7 +219,9 @@ suite.define(() => {
           menu.getByRole("menuitem", { name: "Move to group" }),
         ]) {
           expect((await action.getAttribute("disabled")) === null).toBe(canOrganize);
-          if (!canOrganize) await action.click({ force: true });
+          if (!canOrganize) {
+            await action.click({ force: true });
+          }
         }
         if (canOrganize) {
           await activateSelfRemovingControl(

@@ -121,10 +121,12 @@ describe("scoped session review", () => {
           owned: kind !== "foreign",
           isolated: kind !== "shared-checkout",
         });
-        if (kind === "foreign-registry")
+        if (kind === "foreign-registry") {
           test.registry.mockResolvedValue({ ...record, ownerId: "agent:main:another" });
-        if (kind === "removed-worktree")
+        }
+        if (kind === "removed-worktree") {
           test.registry.mockResolvedValue({ ...record, removedAt: 2 });
+        }
         await test.request();
         expect(test.io).not.toHaveBeenCalled();
         expect(test.respond).toHaveBeenCalledOnce();
@@ -159,7 +161,9 @@ describe("scoped session review", () => {
         await outcome;
       }
       expect(test.respond.mock.calls.some(([ok]) => ok === true)).toBe(false);
-      if (readNumber === 1) expect(test.io).not.toHaveBeenCalled();
+      if (readNumber === 1) {
+        expect(test.io).not.toHaveBeenCalled();
+      }
     });
   });
 
@@ -180,14 +184,18 @@ describe("scoped session review", () => {
         try {
           await Promise.race([entered.promise, request]);
           expect(test.io).toHaveBeenCalledOnce();
-          if (change === "requester") test.revoke();
-          if (change === "registry")
+          if (change === "requester") {
+            test.revoke();
+          }
+          if (change === "registry") {
             test.registry.mockResolvedValue({ ...record, ownerId: "agent:main:replacement" });
-          if (change === "session")
+          }
+          if (change === "session") {
             await upsertSessionEntryCore(
               { agentId: "main", sessionKey: key },
               { ...test.entry, lifecycleRevision: "replacement" },
             );
+          }
         } finally {
           release.resolve();
           await outcome;

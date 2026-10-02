@@ -72,9 +72,40 @@ describe("chat pane embedded panels", () => {
     state.sessionWorkspaceSession = { sharingRole: "viewer" };
     const slots = () =>
       availableSidebarSlots(
-        sidebarPanelDefinitions({ state, renderDetail: () => nothing } as Parameters<
-          typeof sidebarPanelDefinitions
-        >[0]),
+        sidebarPanelDefinitions({
+          state,
+          themeMode: "light",
+          agentId: null,
+          browserPresented: false,
+          browserTabsInHeader: false,
+          terminalTabsInHeader: false,
+          browserRefreshOnPresentation: false,
+          desktopPresented: false,
+          desktopRefreshOnPresentation: false,
+          desktopAvailable: false,
+          desktopSource: null,
+          desktopFocusHref: "",
+          onDesktopFocusTargetChange: () => {},
+          dashboard: nothing,
+          workspace: nothing,
+          renderDetail: () => html``,
+          digest: null,
+          activeRunId: null,
+          pullRequests: [],
+          companion: { turns: [], loading: false, draft: "" },
+          companionPresented: false,
+          companionFocusRequest: undefined,
+          onCompanionSubmit: () => {},
+          onCompanionDraftChange: () => {},
+          connected: state.connected,
+          onClearCompanion: () => {},
+          discussion: null,
+          discussionAvailable: false,
+          discussionOpenUrl: null,
+          discussionSourceGeneration: 0,
+          pluginPanels: [],
+          isPluginPanelPresented: () => false,
+        }),
       );
     expect(slots()).not.toContain("detail");
     expect(slots()).toContain("workspace");

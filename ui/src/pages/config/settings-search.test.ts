@@ -299,13 +299,12 @@ describe("findSettingsSearchBlocks", () => {
     expect(findSettingsSearchBlocks(params)).toEqual([common]);
     expect(findSettingsSearchBlocks({ ...params, operatorScopes: ["operator.read"] })).toEqual([]);
     expect(findSettingsSearchBlocks(params)).toEqual([common]);
-    expect(
-      findSettingsSearchBlocks({ operatorScopes: ["operator.admin"], ...params, uiHints: {} }),
-    ).toEqual([{ ...common, search: "?section=mcp&advanced=1" }]);
+    expect(findSettingsSearchBlocks({ ...params, uiHints: {} })).toEqual([
+      { ...common, search: "?section=mcp&advanced=1" },
+    ]);
     expect(findSettingsSearchBlocks(params)).toEqual([common]);
     expect(
       findSettingsSearchBlocks({
-        operatorScopes: ["operator.admin"],
         ...params,
         schema: {
           type: "object",

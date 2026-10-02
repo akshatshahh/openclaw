@@ -6,6 +6,7 @@ import { createDeferredCore } from "../shared/deferred.js";
 import { markChatAbortTerminalPersistenceError } from "./chat-abort-lifecycle-internal.js";
 import { registerChatAbortController, removeChatAbortControllerEntry } from "./chat-abort.js";
 import { createChatRunState } from "./server-chat-state.js";
+import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
 import type { GatewayClient, GatewayRequestContext, RespondFn } from "./server-methods/types.js";
 import type { resolveSessionMutationAuthorization } from "./session-sharing.js";
 import {
@@ -74,7 +75,7 @@ export function activeRunContext(params: {
       cancelRunBoundApprovals: vi.fn(),
       chatAbortControllers,
       chatRunState,
-      logGateway: { warn: vi.fn() },
+      logGateway: createDirectChatContext().logGateway,
       nodeSendToSession: vi.fn(),
       removeChatRun: vi.fn(() => ({
         sessionKey: params.sessionKey,

@@ -540,9 +540,7 @@ export function resolveSessionReviewSidebarContent(
     : diffContent;
 }
 
-export function resolveSessionDiffSidebarContent(
-  state: SessionWorkspaceHost,
-): SidebarContent | null {
+function resolveSessionDiffSidebarContent(state: SessionWorkspaceHost): SidebarContent | null {
   const workspace = getSessionWorkspace(state);
   const canOpenDiff =
     isGatewayMethodAdvertised(state, "sessions.diff") === true &&

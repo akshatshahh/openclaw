@@ -16,7 +16,7 @@ import {
   refreshSessionWorkspace,
   renderSessionWorkspaceRail,
   revealSessionWorkspaceFile,
-  resolveSessionDiffSidebarContent,
+  resolveSessionReviewSidebarContent,
   type SessionWorkspaceHost,
 } from "./chat-session-workspace.ts";
 import type { SidebarContent, SidebarSelection } from "./chat-sidebar.ts";
@@ -46,8 +46,10 @@ describe("session workspace state", () => {
     expect(
       createSessionWorkspaceProps(state, { session: { sharingRole: "owner" } }).onOpenDiff,
     ).toBeTypeOf("function");
-    const content = resolveSessionDiffSidebarContent(state);
-    if (content?.kind !== "session-diff") throw new Error("Expected scoped Review");
+    const content = resolveSessionReviewSidebarContent(state);
+    if (content?.kind !== "session-diff") {
+      throw new Error("Expected scoped Review");
+    }
     const result = content.load({ scope: "all" });
     const outcome = expect(result).rejects.toThrow("creator");
     createSessionWorkspaceProps(state, { session: { sharingRole: "viewer" } });
@@ -287,7 +289,7 @@ describe("session workspace state", () => {
     await vi.waitFor(() =>
       expect(createSessionWorkspaceProps(state).list?.root).toBe("/checkout/a"),
     );
-    const oldDiff = resolveSessionDiffSidebarContent(state);
+    const oldDiff = resolveSessionReviewSidebarContent(state);
     expect(oldDiff?.kind).toBe("session-diff");
     createSessionWorkspaceProps(state, { expanded: true }).onOpenDiff?.();
     expect(state.sidebarContent).toBe(oldDiff);
@@ -337,7 +339,7 @@ describe("session workspace state", () => {
     await Promise.resolve();
     expect(state.sessionWorkspaceState).toBe(replacementWorkspace);
     expect(state.sessionWorkspaceState?.list).toBe(replacementContents);
-    expect(resolveSessionDiffSidebarContent(state)).not.toBe(oldDiff);
+    expect(resolveSessionReviewSidebarContent(state)).not.toBe(oldDiff);
   });
 
   it("refreshes content in place while rotating an open default Review loader", async () => {
@@ -372,7 +374,7 @@ describe("session workspace state", () => {
     };
     createSessionWorkspaceProps(state, { expanded: true });
     await vi.waitFor(() => expect(createSessionWorkspaceProps(state).list).not.toBeNull());
-    const oldDiff = resolveSessionDiffSidebarContent(state)!;
+    const oldDiff = resolveSessionReviewSidebarContent(state)!;
     createSessionWorkspaceProps(state, { expanded: true }).onOpenDiff?.();
 
     refreshSessionWorkspace(state, true);
@@ -599,7 +601,7 @@ describe("openSessionWorkspaceFile", () => {
       }
       const workspace = state.sessionWorkspaceState!;
       workspace.browserSearch = "notes";
-      const oldDiff = resolveSessionDiffSidebarContent(state);
+      const oldDiff = resolveSessionReviewSidebarContent(state);
       state.sidebarContent = oldDiff;
       const savedUpdate = createDeferred();
       state.requestUpdate = () => {
