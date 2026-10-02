@@ -170,7 +170,10 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         const invalidated = new Promise<{ code: number; reason: string }>((resolve) => {
           ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
         });
-        const revokedConfig = structuredClone(configIO.getRuntimeConfig());
+        const prepared = await configIO.readConfigFileSnapshotForWrite();
+        expect(prepared.snapshot.valid, JSON.stringify(prepared.snapshot.issues)).toBe(true);
+        // Edit the source policy only; runtime defaults require unrelated service reloads.
+        const revokedConfig = structuredClone(prepared.snapshot.sourceConfig);
         revokedConfig.gateway!.roles!.definitions.contributor.sessions.workspace!.projects = [];
         const application = createRuntimeConfigWriteApplication();
         // The harness silences both sinks; retain the real reload owner's failure reason.
@@ -178,7 +181,14 @@ test("a contributor creates, reads, and runs a required workspace on a non-main 
         try {
           await configIO.writeConfigFile(
             revokedConfig,
-            attachRuntimeConfigWriteApplication({}, application),
+            attachRuntimeConfigWriteApplication(
+              {
+                ...prepared.writeOptions,
+                baseSnapshot: prepared.snapshot,
+                inputBase: "source" as const,
+              },
+              application,
+            ),
           );
           expect(application.claimed).toBe(true);
           expect(await application.result).toBe("applied");
