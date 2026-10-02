@@ -450,7 +450,7 @@ describe("patchSessionRows", () => {
     );
   });
 
-  it("sends no mutation when operator.write is missing", async () => {
+  it("sends no mutation when operator.sessions.write is missing", async () => {
     const harness = createHarness({ scopes: ["operator.read"] });
 
     await expect(
@@ -461,7 +461,7 @@ describe("patchSessionRows", () => {
     expect(harness.reconcileMutation).not.toHaveBeenCalled();
     expect(harness.publishSessionMutationError).toHaveBeenCalledWith(
       harness.scope,
-      "This action requires operator.write access.",
+      "This action requires operator.sessions.write access.",
     );
   });
 
