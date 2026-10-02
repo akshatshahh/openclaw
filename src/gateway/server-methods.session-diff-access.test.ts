@@ -49,7 +49,9 @@ async function fixture(options: { owned?: boolean; isolated?: boolean; scopes?: 
         }),
   };
   await upsertSessionEntryCore({ agentId: "main", sessionKey: key }, entry);
-  const context = await createHistoryReadContext({ getRuntimeConfig: () => rolePolicyConfig() });
+  // Projection admission compares snapshot identity across its asynchronous reads.
+  const config = rolePolicyConfig();
+  const context = await createHistoryReadContext({ getRuntimeConfig: () => config });
   const registry = vi.spyOn(registryReads, "readRegistryWorktree").mockResolvedValue(record);
   vi.spyOn(managedWorktrees, "resolveRepositoryIdentity").mockResolvedValue({
     checkoutRoot: record.path,
