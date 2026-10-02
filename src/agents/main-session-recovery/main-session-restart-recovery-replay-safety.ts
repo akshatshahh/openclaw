@@ -26,7 +26,7 @@ type RecoverySource =
   | "external_user";
 
 export async function readMainSessionRecoveryCheckpoint(
-  scope: SessionTranscriptReadScope & { agentId: string },
+  scope: SessionTranscriptReadScope & { agentId: string; sessionKey: string },
   sourceRunId?: string,
   restartSources: readonly RestartRecoveryRun[] = [],
 ): Promise<{

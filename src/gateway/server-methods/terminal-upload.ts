@@ -54,7 +54,7 @@ export const terminalUploadHandlers: GatewayRequestHandlers = {
         contentBase64: params.contentBase64,
         assertCommitAllowed: () => {
           assertMayContinue();
-          assertUploadCurrent();
+          assertUploadCurrent?.();
         },
       });
       if (!result) {

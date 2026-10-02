@@ -118,7 +118,6 @@ export async function reconcileForegroundSandboxWorkspace(params: {
         custody: params.custody,
         engine: bindNativeSandboxEngineTarget(params.engine, entry.backendTarget!),
         reservation: current,
-        reserved: true,
       });
     });
   }

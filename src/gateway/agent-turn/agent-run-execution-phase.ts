@@ -380,8 +380,11 @@ export async function startAgentRunExecution(params: StartAgentRunExecutionParam
         } else if (localUserIngress) {
           attachAgentCommandAdmissionFacts(runContext, localUserIngress.facts);
         }
+        // Accepted staff work can outlive transport, but only a live connection can mint custody.
         if (
           !isSyntheticGatewayCaller(params.client ?? null) &&
+          !params.client?.invalidated &&
+          !params.client?.connectionSignal?.aborted &&
           (!params.inputProvenance || params.inputProvenance.kind === "external_user") &&
           !params.restoredCronContinuation &&
           !params.isOneShotModelRun &&
