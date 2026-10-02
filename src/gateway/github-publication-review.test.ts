@@ -240,11 +240,25 @@ describe("reviewed publication from restricted conversations", () => {
     async (backend) => {
       const f = await fixture(backend);
       const input = await f.reviewedRequest("restart", f.publisher);
-      const claim = await holdWorkerTurn(f);
-      const accepted = await f.coordinator.requestForSession(input);
+      const claim =
+        backend === "local"
+          ? f.placements.claimTurn({
+              ...f.session,
+              agentId: "main",
+              claimId: "restart-local",
+              runId: "restart-local",
+              owner: { kind: "local" },
+            })
+          : await holdWorkerTurn(f);
+      const accepted =
+        backend === "local"
+          ? await f.coordinator.requestForClaim({ ...input, claim })
+          : await f.coordinator.requestForSession(input);
+      expect(accepted.status).toBe("requested");
       f.publisherSource.release();
       await f.placements.releaseTurn(claim);
       const restarted = f.restart();
+      restarted.deferOrphanedRequests();
       await restarted.resumeSessionRequests();
       expect(f.externalWrites).toEqual([]);
       expect(
@@ -262,7 +276,8 @@ describe("reviewed publication from restricted conversations", () => {
       );
       expect(
         await restarted.requestForSession({ ...input, requester: fresh.requester, preparedReview }),
-      ).toMatchObject({ status: "published" });
+      ).toMatchObject({ status: "published", requestId: accepted.requestId });
+      expect(f.local?.effects ?? f.repository!.runtime.effects).toEqual(["push", "pull_request"]);
     },
   );
 

@@ -308,24 +308,45 @@ describe("accepted GitHub workflow publication", () => {
     },
   );
 
-  it("rejects workflow edits introduced after review without publishing them", async () => {
+  it("rejects workflow edits introduced before confirmation without publishing them", async () => {
     const f = await createRequesters();
     const workspace = f.local;
     const file = path.join(workspace.cwd, ".github/workflows/later.yml");
     const reviewed = await f.reviewedRequest("immutable-workflows", f.publisher);
+    const head = await workspace.git("rev-parse", "HEAD");
+    const index = await fs.readFile(path.join(workspace.cwd, ".git/index"));
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, workflow);
+    expect(await f.coordinator.requestForSession(reviewed)).toMatchObject({
+      status: "failed",
+      code: "workspace_changed",
+    });
+    expect(await workspace.git("rev-parse", "HEAD")).toBe(head);
+    expect(await fs.readFile(path.join(workspace.cwd, ".git/index"))).toEqual(index);
+    expect(await workspace.git("ls-tree", "HEAD", ".github/workflows")).toBe("");
+    expect(await fs.readFile(file, "utf8")).toBe(workflow);
+    expect(workspace.effects).toEqual([]);
+  });
+
+  it("publishes the reviewed tree while leaving later workflow edits unpublished", async () => {
+    const f = await createRequesters();
+    const workspace = f.local;
+    const file = path.join(workspace.cwd, ".github/workflows/later.yml");
+    const reviewed = await f.reviewedRequest("in-flight-workflows", f.publisher);
     const resolveRepository = mocks.resolveRepository.getMockImplementation()!;
     mocks.resolveRepository.mockImplementationOnce(async () => {
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.writeFile(file, workflow);
       return await resolveRepository();
     });
-    expect(await f.coordinator.requestForSession(reviewed)).toMatchObject({
-      status: "failed",
-      code: "workspace_changed",
-    });
+    expect(await f.coordinator.requestForSession(reviewed)).toMatchObject({ status: "published" });
+    expect(await workspace.git("rev-parse", "HEAD^{tree}")).toBe(
+      reviewed.preparedReview.candidate.snapshot.workspaceTree,
+    );
     expect(await workspace.git("ls-tree", "HEAD", ".github/workflows")).toBe("");
+    expect(await workspace.git("ls-files", "--", ".github/workflows/later.yml")).toBe("");
     expect(await fs.readFile(file, "utf8")).toBe(workflow);
-    expect(workspace.effects).toEqual([]);
+    expect(workspace.effects).toEqual(["push", "pull_request"]);
   });
 
   it("rechecks publication authority before push while settling an accepted local commit", async () => {
