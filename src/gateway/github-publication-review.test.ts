@@ -38,6 +38,7 @@ import {
   readGitHubPublicationReviewDiff,
 } from "./github-publication-review.js";
 import { readGitHubPublicationRequest } from "./github-publication-store.js";
+import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import { createContext } from "./server-plugin-in-process-dispatch.test-support.js";
 import { createWorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
@@ -392,7 +393,7 @@ describe("reviewed publication from restricted conversations", () => {
   });
 
   it.each(["transaction", "commit"] as const)(
-    "keeps candidate and receipt unchanged when the publisher loses authority at %s",
+    "keeps candidate and receipt unchanged when the publisher role is invalidated at %s",
     async (stage) => {
       const f = await fixture("local");
       const input = await f.reviewedRequest(`revoked-${stage}`, f.publisher);
@@ -410,18 +411,22 @@ describe("reviewed publication from restricted conversations", () => {
         .mockImplementation((admit, attachment) =>
           createAdmission((nativeRequest, grant) => {
             if (nativeRequest.stage === stage) {
-              f.publisherSource.client.connect.scopes = [];
+              // Captured scopes do not track the socket; revoke the retained source.
+              invalidateOperatorRolePolicy(f.publisherProfile);
               refused = true;
             }
             admit(nativeRequest, grant);
           }, attachment),
         );
       try {
-        await expect(f.coordinator.requestForClaim({ ...input, claim })).rejects.toThrow();
+        await expect(f.coordinator.requestForClaim({ ...input, claim })).rejects.toThrow(
+          GitHubPublicationRequesterUnavailableError,
+        );
       } finally {
         admission.mockRestore();
       }
       expect(refused).toBe(true);
+      expect(f.publisher.assertCurrent).toThrow(GitHubPublicationRequesterUnavailableError);
       expect(
         readGitHubPublicationRequest(f.database.db, {
           sessionId: f.session.sessionId,
