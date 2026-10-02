@@ -56,6 +56,7 @@ import {
   createClientInfo,
   createAttachments,
 } from "./chat-send-user-turn.test-support.js";
+import type { GatewayClient } from "./types.js";
 
 function requesterProfile(text: string) {
   const json = text.match(/```json\n([\s\S]*?)\n```/u)?.[1];
@@ -363,6 +364,22 @@ describe("prepareChatSendUserTurn", () => {
         },
       };
       const { controller } = createUserTurnInputController();
+      const client: GatewayClient = {
+        ...(systemActor ? { internal: { operatorRoleActor: { kind: "system" } } } : {}),
+        authenticatedUserProfile: {
+          profileId: profile.id,
+          displayName: profile.displayName,
+          hasAvatar: false,
+          updatedAt: profile.updatedAt,
+        },
+        connect: {
+          minProtocol: 1,
+          maxProtocol: 1,
+          client: createClientInfo(),
+          role: "operator",
+          scopes: ["operator.write"],
+        },
+      };
       const prepared = prepareChatSendUserTurn({
         request: {
           inboundMessage: "hello",
@@ -381,16 +398,7 @@ describe("prepareChatSendUserTurn", () => {
           originatingRoute: { originatingChannel: "webchat", explicitDeliverRoute: false },
         },
         attachments: createAttachments(),
-        client: {
-          ...(systemActor ? { internal: { operatorRoleActor: { kind: "system" } } } : {}),
-          authenticatedUserProfile: {
-            profileId: profile.id,
-            displayName: profile.displayName,
-            hasAvatar: false,
-            updatedAt: profile.updatedAt,
-          },
-          connect: { scopes: ["operator.write"] },
-        } as never,
+        client,
         logGateway: { warn: vi.fn() } as never,
         userTurn: controller,
       });
@@ -403,7 +411,6 @@ describe("prepareChatSendUserTurn", () => {
           : { sandbox: "required", ...(foreground ? { execution: "foreground-only" } : {}) }),
         skillLibrarySelections: [],
       });
-      const client = { authenticatedUserProfile: { profileId: profile.id } } as never;
       const creation = prepareChatSendSessionEntry({
         cfg,
         client,
