@@ -443,7 +443,7 @@ export async function preparePublisherAccessPolicyFixture(f: { config: OpenClawC
   };
 }
 
-export function requireVisitorPublicationPolicy(f: { config: OpenClawConfig }): OpenClawConfig {
+function requireVisitorPublicationPolicy(f: { config: OpenClawConfig }): OpenClawConfig {
   const roles = f.config.gateway!.roles!;
   const config: OpenClawConfig = {
     ...f.config,
