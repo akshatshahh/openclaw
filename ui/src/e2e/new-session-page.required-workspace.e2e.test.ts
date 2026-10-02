@@ -74,7 +74,10 @@ suite.define(() => {
             ],
             profiles: [{ id: "cloud", providerId: "crabbox" }],
           },
-          "sessions.create": { key: "agent:main:placed-thread", runStarted: true },
+          "sessions.create": {
+            key: "agent:main:placed-thread",
+            runStarted: execution === "foreground-only",
+          },
         },
       });
       try {
