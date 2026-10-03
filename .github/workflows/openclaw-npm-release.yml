@@ -903,6 +903,8 @@ jobs:
         id: full_manifest
         if: ${{ inputs.release_evidence_mode == 'full-release-validation' && inputs.full_release_validation_run_id != '' }}
         env:
+          GH_TOKEN: ${{ github.token }}
+          FULL_RELEASE_VALIDATION_RUN_ID: ${{ inputs.full_release_validation_run_id }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
         run: |
@@ -913,8 +915,14 @@ jobs:
             ls -la full-release-validation >&2 || true
             exit 1
           fi
+          plan_args=()
+          if jq -e ' .evidenceReuse != null and any(.childEvidence[]?; (.flakeClassifications // []) | length > 0)' "$MANIFEST_FILE" >/dev/null; then
+            gh run download "$FULL_RELEASE_VALIDATION_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "full-release-execution-plan-${FULL_RELEASE_VALIDATION_RUN_ID}" --dir "$(dirname "$MANIFEST_FILE")"
+            plan_args+=(--execution-plan "$(dirname "$MANIFEST_FILE")/full-release-execution-plan.json")
+          fi
           node trusted-workflow/scripts/lib/release-publish-gates.mts \
-            --consumer core-npm --manifest "$MANIFEST_FILE"
+            --consumer core-npm --manifest "$MANIFEST_FILE" "${plan_args[@]}"
 
       - name: Recheck npm release request
         env:

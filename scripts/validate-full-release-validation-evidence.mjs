@@ -18,9 +18,12 @@ import {
   normalizeReleaseCoveragePolicy,
   isSplitChangelogEvidenceDelta,
   SPLIT_CHANGELOG_EVIDENCE_REUSE_POLICY,
+  validateReleaseManifestAdvisoryJobs,
+  validateRetiredReleaseRetryFields,
 } from "./full-release-validation-policy.mjs";
 import { sortJsonValueKeys } from "./lib/canonical-json.mjs";
 import { resolveReleaseContextIdentity } from "./lib/release-context.mjs";
+import { resolveReleasePublishInputs } from "./lib/release-publish-inputs.mjs";
 import { createReleaseEvidenceClient, validateReleaseRunEvidence } from "./release-ci-summary.mjs";
 import { qualificationAdmissionContract } from "./release-qualification-coverage.mjs";
 
@@ -67,13 +70,16 @@ function displayValue(value) {
  * @property {unknown} [schema]
  * @property {unknown} [valid]
  * @property {{ runId?: unknown, targetSha?: unknown, runAttempt?: unknown, manifest?: unknown, workflowRefProof?: unknown }} [current]
- * @property {{ runId?: unknown, targetSha?: unknown }} [root]
- * @property {{ changedPaths?: unknown, evidenceSha?: unknown, policy?: unknown, rootRunId?: unknown, selectedRunId?: unknown }} [evidenceReuse]
+ * @property {{ runId?: unknown, targetSha?: unknown, manifest?: unknown }} [root]
+ * @property {{ changedPaths?: unknown, evidenceSha?: unknown, policy?: unknown, rootRunId?: unknown, selectedRunId?: unknown } | null} [evidenceReuse]
  * @property {{ allRequiredSucceeded?: unknown }} [conclusions]
  */
 /**
  * @typedef {object} FullReleaseValidationManifest
  * @property {unknown} [version]
+ * @property {unknown} [advisoryJobs]
+ * @property {unknown} [childEvidence]
+ * @property {unknown} [childRuns]
  * @property {unknown} [workflowName]
  * @property {unknown} [runId]
  * @property {unknown} [runAttempt]
@@ -92,7 +98,7 @@ function displayValue(value) {
  * @property {unknown} [publicationAdmission]
  * @property {unknown} [sourceParentRunAttempt]
  * @property {{ package?: { version?: unknown } }} [candidateBinding]
- * @property {{ coveragePolicy?: unknown, targetVersion?: unknown, targetContextRef?: unknown }} [validationInputs]
+ * @property {{ coveragePolicy?: unknown, targetVersion?: unknown, targetContextRef?: unknown, knownFlakyJobsJson?: unknown }} [validationInputs]
  * @property {unknown} [qualificationCoverage]
  * @property {{ changedPaths?: unknown, evidenceSha?: unknown, policy?: unknown, runId?: unknown, selectedRunId?: unknown }} [evidenceReuse]
  */
@@ -231,6 +237,14 @@ export function validateFullReleaseValidationEvidence({
       `Full release validation manifest must use version 3 or 4, got ${displayValue(manifest.version)}.`,
     );
   }
+  validateRetiredReleaseRetryFields(manifest);
+  resolveReleasePublishInputs(manifest);
+  if (
+    manifest.validationInputs?.knownFlakyJobsJson !== undefined &&
+    manifest.validationInputs.knownFlakyJobsJson !== "[]"
+  ) {
+    throw new Error("release validation manifest knownFlakyJobsJson must be empty");
+  }
   const manifestChecks = [
     ["workflowName", FULL_RELEASE_WORKFLOW],
     ["runId", String(expectedRunId)],
@@ -322,6 +336,25 @@ export function validateFullReleaseValidationEvidence({
     }
     return strictEvidence;
   };
+  let classificationRoot;
+  if (
+    manifest.evidenceReuse &&
+    Object.values(manifest.childEvidence ?? {}).some((child) => child.flakeClassifications?.length)
+  ) {
+    const authenticated = strict();
+    if (
+      authenticated.valid !== true ||
+      authenticated.current?.runId !== String(expectedRunId) ||
+      authenticated.current?.runAttempt !== run.runAttempt ||
+      authenticated.conclusions?.allRequiredSucceeded !== true ||
+      publicationObservationJson(authenticated.current?.manifest) !==
+        publicationObservationJson(manifest)
+    ) {
+      throw new Error("Release classification evidence differs from its authenticated manifest.");
+    }
+    classificationRoot = authenticated.root?.manifest;
+  }
+  validateReleaseManifestAdvisoryJobs(manifest, classificationRoot);
   if (sourceAdmission) {
     // Historical recovery must not acquire a new publication-selection contract.
     const selected =

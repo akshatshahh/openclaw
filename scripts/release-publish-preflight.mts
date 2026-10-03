@@ -349,26 +349,9 @@ export async function runReleasePublishPreflight(
           pluginSdkApiAcknowledgement: sealedInputs.pluginSdkApiAcknowledgement,
         };
       }
-      for (const consumer of [
-        "publisher",
-        ...(options.publishOpenclawNpm === false ? [] : ["core-npm"]),
-        ...(!options.tag.includes("-beta.") && options.publishOpenclawNpm !== false
-          ? ["stable-closeout"]
-          : []),
-      ] as const) {
-        rows.push(
-          ...evaluateReleasePublishGates({
-            manifest,
-            consumer: consumer as "publisher" | "core-npm" | "stable-closeout",
-            releaseTag: options.tag,
-            npmDistTag: options.npmDistTag,
-            expectedSha: sourceSha,
-            expectedReleaseProfile: options.releaseProfile,
-          }),
-        );
-      }
+      let classificationRoot: unknown;
       if (run && sourceSha && SHA.test(toolingSha)) {
-        await check(
+        const authenticated = await check(
           "validation.provenance",
           "Full Release Validation provenance and publication selection authenticated.",
           "Use evidence admitted for this exact release source, tooling lineage, publication route and package selection.",
@@ -435,14 +418,40 @@ export async function runReleasePublishPreflight(
                 "authenticated candidate evidence",
               );
               const evidence = requirePreflightRecord(prior.evidence, "strict candidate evidence");
-              return validateFullReleaseValidationEvidence({
+              const validated = validateFullReleaseValidationEvidence({
                 ...validationOptions,
                 getWorkflowSource: (sha: string) => client.getWorkflowSource(sha),
                 validateEvidenceReuseStrictly: () => evidence,
               });
+              return { ...validated, evidence };
             }
             return authenticateFullReleaseValidationEvidence(validationOptions, client);
           },
+        );
+        if (authenticated && fullManifest.evidenceReuse) {
+          classificationRoot = requirePreflightRecord(
+            authenticated.evidence.root,
+            "authenticated root",
+          ).manifest;
+        }
+      }
+      for (const consumer of [
+        "publisher",
+        ...(options.publishOpenclawNpm === false ? [] : ["core-npm"]),
+        ...(!options.tag.includes("-beta.") && options.publishOpenclawNpm !== false
+          ? ["stable-closeout"]
+          : []),
+      ] as const) {
+        rows.push(
+          ...evaluateReleasePublishGates({
+            manifest,
+            rootManifest: classificationRoot,
+            consumer: consumer as "publisher" | "core-npm" | "stable-closeout",
+            releaseTag: options.tag,
+            npmDistTag: options.npmDistTag,
+            expectedSha: sourceSha,
+            expectedReleaseProfile: options.releaseProfile,
+          }),
         );
       }
     }

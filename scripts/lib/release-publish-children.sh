@@ -733,6 +733,19 @@ write_clawhub_runtime_state() {
     --bootstrap-completed "${plugin_clawhub_bootstrap_completed:-false}" > "${output_path}"
 }
 
+release_validation_execution_plan() {
+  local manifest="${FULL_RELEASE_VALIDATION_MANIFEST_DIR}/full-release-validation-manifest.json"
+  local plan="${FULL_RELEASE_VALIDATION_MANIFEST_DIR}/full-release-execution-plan.json"
+  if ! jq -e ' .evidenceReuse != null and any(.childEvidence[]?; (.flakeClassifications // []) | length > 0)' "$manifest" >/dev/null; then
+    return 0
+  fi
+  if [[ ! -f "$plan" ]]; then
+    gh run download "$FULL_RELEASE_VALIDATION_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+      --name "full-release-execution-plan-${FULL_RELEASE_VALIDATION_RUN_ID}" --dir "$FULL_RELEASE_VALIDATION_MANIFEST_DIR" >&2
+  fi
+  printf '%s\n' "$plan"
+}
+
 render_github_release_notes() {
   local output_file="$1"
   local verification_file="${2:-}"
@@ -748,6 +761,14 @@ render_github_release_notes() {
 
   if [[ -n "${verification_file}" ]]; then
     render_args+=(--verification-file "${verification_file}")
+    if [[ "${RELEASE_EVIDENCE_MODE}" != "authorized-beta-focused-v1" && -f "${FULL_RELEASE_VALIDATION_MANIFEST_DIR:-}/full-release-validation-manifest.json" ]]; then
+      render_args+=(--validation-manifest "${FULL_RELEASE_VALIDATION_MANIFEST_DIR}/full-release-validation-manifest.json")
+      local validation_plan
+      validation_plan="$(release_validation_execution_plan)" || return 1
+      if [[ -n "$validation_plan" ]]; then
+        render_args+=(--validation-execution-plan "$validation_plan")
+      fi
+    fi
   fi
   if [[ -n "${metadata_file}" ]]; then
     render_args+=(--metadata-output "${metadata_file}")
@@ -781,9 +802,20 @@ verify_release_tag_target() {
 
 canonical_release_body_matches() {
   local body_file="$1"
-  node --import tsx "${GITHUB_WORKSPACE}/.release-harness/scripts/render-github-release-notes.mts" \
-    --root "$GITHUB_WORKSPACE" --ref "$TARGET_SHA" \
+  local -a verify_args=(
+    --root "$GITHUB_WORKSPACE" --ref "$TARGET_SHA"
     --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --verify-body "$body_file"
+  )
+  if [[ "${RELEASE_EVIDENCE_MODE}" != "authorized-beta-focused-v1" && -f "${FULL_RELEASE_VALIDATION_MANIFEST_DIR:-}/full-release-validation-manifest.json" ]] && grep -q '^### Release verification$' "$body_file"; then
+    verify_args+=(--validation-manifest "${FULL_RELEASE_VALIDATION_MANIFEST_DIR}/full-release-validation-manifest.json")
+    local validation_plan
+    validation_plan="$(release_validation_execution_plan)" || return 1
+    if [[ -n "$validation_plan" ]]; then
+      verify_args+=(--validation-execution-plan "$validation_plan")
+    fi
+  fi
+  node --import tsx "${GITHUB_WORKSPACE}/.release-harness/scripts/render-github-release-notes.mts" \
+    "${verify_args[@]}"
 }
 
 assert_initial_release_body() {

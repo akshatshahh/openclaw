@@ -27,6 +27,7 @@ import {
   isReleaseGhArtifactMissingError,
   MAX_RELEASE_ARTIFACT_BYTES,
   validateReleaseStateArtifact,
+  validateReleaseExecutionPlanArtifact,
 } from "./full-release-validation-policy.mjs";
 import { inspectActionsArtifactZipWithPolicy } from "./lib/actions-artifact-archive.mjs";
 import { requireOptionArgument } from "./lib/arg-utils.mts";
@@ -1258,11 +1259,21 @@ export function validateReleaseDecisionPayload(
     parentRunAttempt: number;
     parentRunId: string;
     workflowSha: string;
+    executionPlan?: unknown;
   },
 ) {
+  const executionPlan =
+    expected.executionPlan === undefined
+      ? undefined
+      : validateReleaseExecutionPlanArtifact(expected.executionPlan, {
+          parentRunId: expected.parentRunId,
+          workflowSha: expected.workflowSha,
+          maxParentRunAttempt: expected.parentRunAttempt,
+        });
   return validateReleaseStateArtifact(
     payload,
     {
+      executionPlan,
       parentRunAttempt: expected.parentRunAttempt,
       parentRunId: expected.parentRunId,
       workflowSha: expected.workflowSha,
@@ -1280,17 +1291,16 @@ export function releaseDecisionStopsForeground(state: unknown) {
   ].includes(stringValue(state));
 }
 
-export function tryReadReleaseDecision(
+function readReleaseDecisionArtifact(
   parentRunId: string,
-  parentRunAttempt: number,
-  workflowSha: string,
+  artifactName: string,
+  entryName: string,
   runStatusImpl: (command: string, args: string[], options?: CommandOptions) => CommandStatus = (
     _command,
     args,
     options,
   ) => runGhStatus(args, options),
 ) {
-  const artifactName = `full-release-decision-${parentRunId}-${parentRunAttempt}`;
   const downloadDir = mkdtempSync(join(tmpdir(), "openclaw-release-decision-"));
   try {
     const result = runStatusImpl(
@@ -1340,23 +1350,62 @@ export function tryReadReleaseDecision(
         { cause: downloadError },
       );
     }
-    const decisionPath = join(downloadDir, RELEASE_DECISION_FILE);
+    const decisionPath = join(downloadDir, entryName);
     if (!existsSync(decisionPath)) {
-      throw new Error(
-        `Release Decision artifact ${artifactName} omitted ${RELEASE_DECISION_FILE}.`,
-      );
+      throw new Error(`Release Decision artifact ${artifactName} omitted ${entryName}.`);
     }
     if (statSync(decisionPath).size > MAX_RELEASE_ARTIFACT_BYTES) {
       throw new Error(`Release Decision artifact ${artifactName} exceeds the size limit.`);
     }
-    return validateReleaseDecisionPayload(JSON.parse(readFileSync(decisionPath, "utf8")), {
-      parentRunAttempt,
-      parentRunId,
-      workflowSha,
-    });
+    const payload: unknown = JSON.parse(readFileSync(decisionPath, "utf8"));
+    return payload;
   } finally {
     rmSync(downloadDir, { force: true, recursive: true });
   }
+}
+
+export function tryReadReleaseDecision(
+  parentRunId: string,
+  parentRunAttempt: number,
+  workflowSha: string,
+  runStatusImpl?: (command: string, args: string[], options?: CommandOptions) => CommandStatus,
+) {
+  const payload = readReleaseDecisionArtifact(
+    parentRunId,
+    `full-release-decision-${parentRunId}-${parentRunAttempt}`,
+    RELEASE_DECISION_FILE,
+    runStatusImpl,
+  );
+  if (payload === undefined) {
+    return undefined;
+  }
+  let executionPlan;
+  if (
+    isJsonRecord(payload) &&
+    isJsonRecord(payload.children) &&
+    Object.values(payload.children).some(
+      (child) =>
+        isJsonRecord(child) &&
+        Array.isArray(child.flakeClassifications) &&
+        child.flakeClassifications.length > 0,
+    )
+  ) {
+    executionPlan = readReleaseDecisionArtifact(
+      parentRunId,
+      `full-release-execution-plan-${parentRunId}`,
+      "full-release-execution-plan.json",
+      runStatusImpl,
+    );
+    if (executionPlan === undefined) {
+      return undefined;
+    }
+  }
+  return validateReleaseDecisionPayload(payload, {
+    parentRunAttempt,
+    parentRunId,
+    workflowSha,
+    executionPlan,
+  });
 }
 
 function releaseDecisionAvailable(parentRunId: string, parentRunAttempt: number) {

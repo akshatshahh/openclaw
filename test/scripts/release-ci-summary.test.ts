@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -18,6 +19,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 import { continueFailed, preflightContinuation } from "../../scripts/frv.mjs";
 import { buildFullReleaseCandidateRequest } from "../../scripts/full-release-candidate-contract.mjs";
+import {
+  loadFlakeClassifications,
+  type FlakeClassification,
+} from "../../scripts/full-release-flake-classification.mjs";
 import {
   createPublicationAdmission,
   createPublicationObservations,
@@ -69,10 +74,14 @@ import {
   validateRequestedEvidenceReuse,
   validateTrustedProducerIdentity,
 } from "../../scripts/release-ci-summary.mjs";
-import { authenticateFullReleaseValidationEvidence } from "../../scripts/validate-full-release-validation-evidence.mjs";
+import {
+  authenticateFullReleaseValidationEvidence,
+  validateFullReleaseValidationEvidence,
+} from "../../scripts/validate-full-release-validation-evidence.mjs";
 import { fullReleaseCandidateBindingFixture } from "../helpers/full-release-candidate.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 import { makeStoredZip } from "./actions-artifact-zip.test-support.js";
+import { candidatePublicationFixture } from "./candidate-publication.test-support.js";
 import {
   rawManifest,
   trustedMainPackageFixture,
@@ -371,6 +380,7 @@ describe("original publication admission reader", () => {
         observed.sha256 = releaseExecutionPlanSha256(observed);
       }
       const continuationClient = {
+        loadFlakeClassifications: async () => ({}),
         getReleaseEvidenceClient: () => client,
         getRun: client.getRun,
         getAttemptJobs: vi.fn(async () => {
@@ -556,11 +566,11 @@ describe("original publication admission reader", () => {
       writeFileSync(
         pendingGh,
         `#!${process.execPath}
-require("node:fs").writeFileSync(${JSON.stringify(ready)}, String(process.pid));
 const parent = process.ppid;
 process.once("exit", () => require("node:fs").writeFileSync(${JSON.stringify(settled)}, "settled"));
 setInterval(() => { if (process.ppid !== parent) process.exit(0); }, 10);
 setTimeout(() => {}, 30000);
+require("node:fs").writeFileSync(${JSON.stringify(ready)}, String(process.pid));
 `,
         { mode: 0o755 },
       );
@@ -1474,7 +1484,7 @@ type ReleaseCiWatchState = {
   url?: string;
 };
 
-function trustedMainChildReuseFixture() {
+function trustedMainChildReuseFixture(workflowSha?: string) {
   const fixture = trustedMainNpmFixture();
   const child = expectDefined(
     fixture.executionPlan.children.find((entry) => entry.key === "normalCi"),
@@ -1487,7 +1497,7 @@ function trustedMainChildReuseFixture() {
   const repository = { id: 1, full_name: "openclaw/openclaw" };
   Object.assign(run, {
     display_title: "CI full-release-validation-77-1-ci",
-    head_sha: "b".repeat(40),
+    head_sha: workflowSha ?? fixture.manifest.workflowSha,
     repository,
     head_repository: repository,
     html_url: `https://github.com/openclaw/openclaw/actions/runs/${run.id}`,
@@ -1560,7 +1570,7 @@ function trustedMainChildReuseFixture() {
     sourceParentRunId: "77",
     sourceParentAttempt: 1,
     workloadConclusion: "success",
-    inputs,
+    inputs: Object.fromEntries(Object.entries(inputs).filter(([, value]) => value !== "")),
     publisher: { jobId: "502", jobName: FULL_RELEASE_CHILD_EVIDENCE_JOB },
   };
   const receiptSha256 = createHash("sha256")
@@ -2216,6 +2226,7 @@ describe("release CI summary child correlation", () => {
     );
     await expect(
       continueFailed(fixture.executionPlan, fixture.runId, {
+        loadFlakeClassifications: async () => ({}),
         repository,
         getRun,
         getRunAttempt: async (id: string) => (id === fixture.runId ? originalParent : getRun(id)),
@@ -2375,7 +2386,7 @@ describe("release CI summary child correlation", () => {
         evidence.children.find((child: { role: string }) => child.role === "normalCi"),
       ).toMatchObject({
         runId: String(fixture.run.id),
-        workflowSha: "b".repeat(40),
+        workflowSha: fixture.manifest.workflowSha,
         parentJobId: "201",
         sourceParentRunId: "77",
         sourceParentAttempt: 1,
@@ -2393,13 +2404,16 @@ describe("release CI summary child correlation", () => {
   );
 
   it.each([
+    ["different-tooling", "same tooling is required"],
     ["expired-artifact", "artifact identity, digest, or expiry is invalid"],
     ["newer-attempt", "not the current successful attempt"],
     ["missing-adoption-witness", "reuse adoption witness mismatch"],
     ["changed-composite", "manifest child composite evidence mismatch"],
     ["unsealed-selection", "execution plan artifact digest"],
   ])("rejects independently reused final evidence with %s", async (fault, message) => {
-    const fixture = trustedMainChildReuseFixture();
+    const fixture = trustedMainChildReuseFixture(
+      fault === "different-tooling" ? "b".repeat(40) : undefined,
+    );
     if (fault === "expired-artifact") {
       fixture.artifact.expired = true;
     }
@@ -3141,6 +3155,566 @@ describe("release CI summary child correlation", () => {
     ).rejects.toThrow("does not pass release policy");
   });
 
+  it.each(["valid", "macos-failure", "cancelled-run", "forged-advisory", "omitted-advisory"])(
+    "authenticates Windows Node CI advisory evidence: %s",
+    async (scenario) => {
+      const fixture = trustedMainNpmFixture();
+      const selected = expectDefined(
+        fixture.executionPlan.children.find((child) => child.key === "normalCi"),
+        "normal CI child",
+      );
+      const run = expectDefined(
+        fixture.runs.find((candidate) => String(candidate.id) === selected.runId),
+        "normal CI run",
+      );
+      run.conclusion = scenario === "cancelled-run" ? "cancelled" : "failure";
+      const windowsJob = {
+        ...fixture.parentJob,
+        name: "checks-windows-node-test-2",
+        conclusion: "failure",
+        html_url: `https://github.com/openclaw/openclaw/actions/runs/${selected.runId}/job/501`,
+      };
+      const jobs = [
+        windowsJob,
+        { ...fixture.parentJob, name: "openclaw/ci-gate" },
+        ...(scenario === "macos-failure"
+          ? [{ ...fixture.parentJob, name: "macos-node-2", conclusion: "failure" }]
+          : []),
+      ];
+      const composite = composeReleaseAttemptJobs([{ jobs, runAttempt: 1 }], {
+        effectiveRunAttempt: 1,
+        plannedRunAttempt: 1,
+      });
+      Object.assign(expectDefined(fixture.manifest.childEvidence.normalCi, "normal CI evidence"), {
+        jobs: composite.jobs,
+        compositeJobsSha256: composite.sha256,
+      });
+      const originalJobs = expectDefined(
+        fixture.client.getRunAttemptJobs.getMockImplementation(),
+        "live job reader",
+      );
+      fixture.client.getRunAttemptJobs.mockImplementation((runId) =>
+        runId === selected.runId ? jobs : originalJobs(runId),
+      );
+      const advisory = {
+        class: "windows-node-ci",
+        child: "normalCi",
+        job: windowsJob.name,
+        conclusion: "failure",
+        runId: selected.runId,
+        url: windowsJob.html_url,
+      };
+      if (scenario !== "omitted-advisory") {
+        Object.assign(fixture.manifest, {
+          advisoryJobs: [
+            scenario === "forged-advisory"
+              ? { ...advisory, child: "releaseChecksCandidate" }
+              : advisory,
+          ],
+        });
+      }
+      const validation = validateReleaseRunEvidence(
+        {
+          repository: "openclaw/openclaw",
+          runId: fixture.runId,
+          verifierSourceContent: readFileSync(SCRIPT),
+          verifierSourceSha: "c".repeat(40),
+        },
+        fixture.client,
+      );
+      if (scenario === "valid") {
+        const evidence = await validation;
+        expect(evidence.valid).toBe(true);
+        expect(evidence.conclusions.allRequiredSucceeded).toBe(true);
+        expect(evidence.children).toContainEqual(
+          expect.objectContaining({
+            role: "normalCi",
+            conclusion: "failure",
+            policyPassed: true,
+            advisoryJobs: [advisory],
+          }),
+        );
+        expect(evidence.current.manifest).toMatchObject({
+          advisoryJobs: [advisory],
+          childEvidence: {
+            normalCi: {
+              jobs: expect.arrayContaining([
+                expect.objectContaining({ name: windowsJob.name, conclusion: "failure" }),
+              ]),
+            },
+          },
+        });
+      } else {
+        await expect(validation).rejects.toThrow(
+          scenario === "forged-advisory" || scenario === "omitted-advisory"
+            ? /advisory jobs differ/u
+            : /does not pass release policy/u,
+        );
+      }
+    },
+  );
+
+  it.each(
+    [
+      "valid",
+      "changed-receipt",
+      "foreign-parent",
+      "wrong-target",
+      "wrong-dispatch-attempt",
+      "wrong-job-attempt",
+      "changed-consumer",
+      "failed-producer",
+      "tag-revision",
+      "changed-gate",
+    ].flatMap((scenario) =>
+      (scenario === "changed-consumer"
+        ? ["exact", "changelog"]
+        : ["direct", "exact", "changelog"]
+      ).map((reuse) => ({ scenario, reuse })),
+    ),
+  )(
+    "rederives recorded flakes from authenticated receipt artifacts and the live CI gate: $scenario/$reuse",
+    async ({ scenario, reuse }) => {
+      const fixture = trustedMainNpmFixture();
+      const selected = expectDefined(
+        fixture.executionPlan.children.find((child) => child.key === "normalCi"),
+        "normal CI child",
+      );
+      const run = expectDefined(
+        fixture.runs.find((candidate) => String(candidate.id) === selected.runId),
+        "normal CI run",
+      );
+      run.conclusion = "failure";
+      const receipt = {
+        schema: "openclaw.frv-flake-classification.v1",
+        parentRunId: fixture.runId,
+        parentRunAttempt: 1,
+        child: "normalCi",
+        childRunId: selected.runId,
+        childRunAttempt: 1,
+        targetSha: fixture.targetSha,
+        jobId: "501",
+        jobName: "checks-node-test-2",
+        jobUrl: `https://github.com/openclaw/openclaw/actions/runs/${selected.runId}/job/501`,
+        conclusion: "failure",
+        trackingUrl: "https://github.com/openclaw/openclaw/issues/789",
+        reason: "Shared test fixture races during cleanup; repair tracked on main.",
+        classifiedBy: "release-operator",
+        receiptRunId: "890",
+        receiptRunAttempt: 1,
+      };
+      const jobs = [
+        { ...fixture.parentJob, id: 501, name: receipt.jobName, html_url: receipt.jobUrl },
+        {
+          ...fixture.parentJob,
+          id: 502,
+          name: "openclaw/ci-gate",
+          html_url: `https://github.com/openclaw/openclaw/actions/runs/${selected.runId}/job/502`,
+        },
+      ].map((job) => Object.assign(job, { conclusion: "failure" }));
+      const composite = composeReleaseAttemptJobs([{ jobs, runAttempt: 1 }], {
+        effectiveRunAttempt: 1,
+        plannedRunAttempt: 1,
+      });
+      const gateEntries = [
+        { name: "preflight", result: "success", selected: true },
+        { name: "checks-node", result: "failure", selected: true },
+        { name: "pr-fail-fast", result: "skipped", selected: false },
+      ];
+      Object.assign(expectDefined(fixture.manifest.childEvidence.normalCi, "CI evidence"), {
+        status: "completed",
+        conclusion: "failure",
+        jobs: composite.jobs,
+        compositeJobsSha256: composite.sha256,
+        flakeClassifications: [receipt],
+        gateEntries,
+      });
+      const advisory = {
+        class: "recorded-flake",
+        child: "normalCi",
+        job: receipt.jobName,
+        conclusion: "failure",
+        runId: selected.runId,
+        url: receipt.jobUrl,
+        jobId: "501",
+        trackingUrl: receipt.trackingUrl,
+        reason: receipt.reason,
+        receiptRunId: "890",
+      };
+      Object.assign(fixture.manifest, { advisoryJobs: [advisory] });
+      const liveReceipt = {
+        ...receipt,
+        ...(scenario === "changed-receipt"
+          ? { reason: "A different classification was recorded." }
+          : {}),
+        ...(scenario === "foreign-parent" ? { parentRunId: "999" } : {}),
+        ...(scenario === "wrong-target" ? { targetSha: "6".repeat(40) } : {}),
+        ...(scenario === "wrong-dispatch-attempt" ? { parentRunAttempt: 2 } : {}),
+        ...(scenario === "wrong-job-attempt" ? { childRunAttempt: 2 } : {}),
+      };
+      const zip = makeStoredZip({ "frv-flake-classification.json": JSON.stringify(liveReceipt) });
+      const producer = {
+        id: 890,
+        run_attempt: 1,
+        repository: { full_name: "openclaw/openclaw" },
+        path: ".github/workflows/full-release-flake-classification.yml",
+        event: "workflow_dispatch",
+        head_branch: "main",
+        status: "completed",
+        conclusion: scenario === "failed-producer" ? "failure" : "success",
+        head_sha: "d".repeat(40),
+        display_title: `FRV flake classification ${receipt.jobUrl}`,
+        triggering_actor: { login: receipt.classifiedBy },
+      };
+      const api = vi.fn(async (path: string) => {
+        if (path === `actions/runs/${selected.runId}`) {
+          return { id: Number(selected.runId), created_at: "2026-09-29T10:00:00Z" };
+        }
+        if (
+          path.startsWith("actions/workflows/full-release-flake-classification.yml/runs?") &&
+          path.includes("&created=%3E%3D2026-09-29T10:00:00Z&")
+        ) {
+          return { total_count: 1, workflow_runs: [producer] };
+        }
+        if (path === "actions/runs/890") {
+          return producer;
+        }
+        if (path === `compare/${"d".repeat(40)}...main?per_page=1`) {
+          return scenario === "tag-revision"
+            ? { status: "diverged", merge_base_commit: { sha: "e".repeat(40) } }
+            : { status: "ahead", merge_base_commit: { sha: "d".repeat(40) } };
+        }
+        if (path === "actions/runs/890/artifacts?per_page=100") {
+          return {
+            total_count: 1,
+            artifacts: [
+              {
+                id: 891,
+                name: `frv-flake-classification-${selected.runId}-501`,
+                expired: false,
+                workflow_run: { id: 890 },
+                size_in_bytes: zip.length,
+                digest: artifactDigest(zip),
+              },
+            ],
+          };
+        }
+        if (path === "actions/artifacts/891/zip") {
+          return zip;
+        }
+        if (path === "actions/jobs/502/logs") {
+          return gateEntries
+            .map(
+              (entry) =>
+                `2026-09-29T12:00:00.000Z ${entry.name}: ${scenario === "changed-gate" && entry.name === "checks-node" ? "skipped" : entry.result} (selected=${entry.selected})`,
+            )
+            .join("\n");
+        }
+        throw new Error(`unexpected classification API request: ${path}`);
+      });
+      const originalJobs = expectDefined(
+        fixture.client.getRunAttemptJobs.getMockImplementation(),
+        "job reader",
+      );
+      const client = {
+        ...fixture.client,
+        getRunAttemptJobs: (runId: string) =>
+          runId === selected.runId ? jobs : originalJobs(runId),
+        loadFlakeClassifications: (request: Parameters<typeof loadFlakeClassifications>[0]) =>
+          loadFlakeClassifications({ ...request, api }),
+      };
+      const consumerId = reuse === "direct" ? fixture.runId : "990";
+      const consumerTarget = reuse === "changelog" ? "7".repeat(40) : fixture.targetSha;
+      const consumerManifest =
+        reuse === "direct"
+          ? fixture.manifest
+          : {
+              ...structuredClone(fixture.manifest),
+              runId: consumerId,
+              runAttempt: "3",
+              sourceParentRunAttempt: 2,
+              targetSha: consumerTarget,
+              evidenceReuse: {
+                policy:
+                  reuse === "exact"
+                    ? "exact-target-full-validation-v1"
+                    : "changelog-only-release-v1",
+                changedPaths: reuse === "exact" ? [] : ["CHANGELOG.md"],
+                runId: fixture.runId,
+                selectedRunId: fixture.runId,
+                evidenceSha: fixture.targetSha,
+              },
+            };
+      if (scenario === "changed-consumer") {
+        const reason = "A different classification was recorded by the consumer.";
+        Object.assign(
+          expectDefined(consumerManifest.childEvidence.normalCi, "consumer CI evidence"),
+          {
+            flakeClassifications: [{ ...receipt, reason }],
+          },
+        );
+        Object.assign(consumerManifest, { advisoryJobs: [{ ...advisory, reason }] });
+      }
+      const consumerRun =
+        reuse === "direct"
+          ? fixture.parentRun
+          : {
+              ...fixture.parentRun,
+              id: Number(consumerId),
+              run_attempt: 3,
+            };
+      const validationClient = {
+        ...client,
+        getRun: (id: string) => (id === consumerId ? consumerRun : client.getRun(id)),
+        getRunView: (id: string) =>
+          id === consumerId
+            ? { ...fixture.parentView, attempt: consumerRun.run_attempt }
+            : client.getRunView(id),
+        loadManifest: (id: string) =>
+          id === consumerId
+            ? {
+                manifest: consumerManifest,
+                artifact: {
+                  ...fixture.artifact,
+                  name: "full-release-validation-" + consumerId + "-" + consumerRun.run_attempt,
+                  workflow_run: { ...fixture.artifact.workflow_run, id: Number(consumerId) },
+                },
+              }
+            : client.loadManifest(),
+        compareCommits: (base: string, head: string) =>
+          base === fixture.targetSha && head === consumerTarget
+            ? {
+                status: "ahead",
+                merge_base_commit: { sha: base },
+                files: [{ filename: "CHANGELOG.md", status: "modified" }],
+              }
+            : client.compareCommits(base, head),
+      };
+      const before = JSON.stringify(consumerManifest);
+      const validation = validateReleaseRunEvidence(
+        {
+          repository: "openclaw/openclaw",
+          runId: consumerId,
+          verifierSourceContent: readFileSync(SCRIPT),
+          verifierSourceSha: "c".repeat(40),
+        },
+        validationClient,
+      );
+      if (scenario === "valid") {
+        const evidence = await validation;
+        expect(evidence.valid).toBe(true);
+        expect(evidence.current).toMatchObject({ runId: consumerId, targetSha: consumerTarget });
+        expect(evidence.root).toMatchObject({ runId: fixture.runId, targetSha: fixture.targetSha });
+        expect(evidence.children).toContainEqual(
+          expect.objectContaining({
+            role: "normalCi",
+            conclusion: "failure",
+            policyPassed: true,
+            advisoryJobs: [advisory],
+          }),
+        );
+        const { candidateBinding, evidenceReuse, ...publicationManifest } = consumerManifest;
+        assert(candidateBinding === undefined);
+        assert(
+          evidenceReuse === undefined ||
+            (evidenceReuse !== null &&
+              typeof evidenceReuse === "object" &&
+              !Array.isArray(evidenceReuse)),
+        );
+        expect(
+          validateFullReleaseValidationEvidence({
+            run: { ...consumerRun, name: "Full Release Validation" },
+            manifest: {
+              ...publicationManifest,
+              ...(evidenceReuse === undefined ? {} : { evidenceReuse }),
+            },
+            expectedRepository: "openclaw/openclaw",
+            expectedRunId: consumerId,
+            expectedTargetSha: consumerTarget,
+            expectedReleaseTag: "v2026.8.28-beta.1",
+            getWorkflowSource: () => "name: Full Release Validation\n",
+            isTrustedMainAncestor: () => true,
+            validateEvidenceReuseStrictly: () => evidence,
+          }),
+        ).toMatchObject({ source: "direct" });
+        expect(JSON.stringify(consumerManifest)).toBe(before);
+        expect(api.mock.calls.filter(([path]) => path === "actions/jobs/502/logs")).toHaveLength(1);
+      } else {
+        await expect(validation).rejects.toThrow(
+          [
+            "foreign-parent",
+            "wrong-target",
+            "wrong-dispatch-attempt",
+            "wrong-job-attempt",
+            "failed-producer",
+            "tag-revision",
+          ].includes(scenario)
+            ? /FRV flake classification/u
+            : scenario === "changed-consumer"
+              ? /classification differs from the root evidence/u
+              : /classification evidence mismatch/u,
+        );
+      }
+    },
+  );
+
+  it.each([
+    "recorded-flake",
+    "windows-node",
+    "unrelated-failure",
+    "missing-gate",
+    "cancelled-gate",
+  ])("preserves frozen candidate qualification and advisory coverage: %s", async (scenario) => {
+    const f = candidatePublicationFixture();
+    const selected = expectDefined(
+      f.plan.children.find((child) => child.key === "normalCi"),
+      "frozen normal CI child",
+    );
+    const originalJobs = await f.client.getRunAttemptJobs(selected.runId);
+    const gate = expectDefined(
+      originalJobs.find((job) => job.name === "openclaw/ci-gate"),
+      "CI gate",
+    );
+    const failed = {
+      ...gate,
+      id: 1501,
+      name: scenario === "windows-node" ? "checks-windows-node-test-2" : "checks-node-test-2",
+      conclusion: "failure",
+      html_url: `https://github.com/openclaw/openclaw/actions/runs/${selected.runId}/job/1501`,
+    };
+    const receipt: FlakeClassification = {
+      schema: "openclaw.frv-flake-classification.v1",
+      parentRunId: f.runId,
+      parentRunAttempt: 1,
+      child: "normalCi",
+      childRunId: selected.runId,
+      childRunAttempt: 1,
+      targetSha: f.q,
+      jobId: "1501",
+      jobName: failed.name,
+      jobUrl: failed.html_url,
+      conclusion: "failure",
+      trackingUrl: "https://github.com/openclaw/openclaw/issues/789",
+      reason: "Shared test fixture races during cleanup; repair tracked on main.",
+      classifiedBy: "release-operator",
+      receiptRunId: "890",
+      receiptRunAttempt: 1,
+    };
+    const jobs = [
+      ...originalJobs.filter((job) => job.name !== gate.name),
+      failed,
+      ...(scenario === "missing-gate"
+        ? []
+        : [
+            {
+              ...gate,
+              conclusion:
+                scenario === "windows-node"
+                  ? "success"
+                  : scenario === "cancelled-gate"
+                    ? "cancelled"
+                    : "failure",
+            },
+          ]),
+      ...(scenario === "unrelated-failure"
+        ? [
+            {
+              ...failed,
+              id: 1502,
+              name: "Build Artifacts",
+              html_url: "https://example.invalid/jobs/1502",
+            },
+          ]
+        : []),
+    ];
+    const classifications =
+      scenario === "windows-node"
+        ? {}
+        : {
+            flakeClassifications: [receipt],
+            gateEntries: [
+              { name: "preflight", result: "success", selected: true },
+              { name: "checks-node", result: "failure", selected: true },
+              { name: "pr-fail-fast", result: "skipped", selected: false },
+            ],
+            status: "completed",
+            conclusion: "failure",
+          };
+    const composite = composeReleaseAttemptJobs([{ jobs, runAttempt: 1 }], {
+      effectiveRunAttempt: 1,
+      plannedRunAttempt: 1,
+    });
+    Object.assign(expectDefined(f.manifest.childEvidence.normalCi, "frozen CI evidence"), {
+      jobs: composite.jobs,
+      compositeJobsSha256: composite.sha256,
+      ...classifications,
+    });
+    const advisory = {
+      class: scenario === "windows-node" ? "windows-node-ci" : "recorded-flake",
+      child: "normalCi",
+      job: failed.name,
+      conclusion: "failure",
+      runId: selected.runId,
+      url: failed.html_url,
+      ...(scenario === "windows-node"
+        ? {}
+        : {
+            jobId: receipt.jobId,
+            trackingUrl: receipt.trackingUrl,
+            reason: receipt.reason,
+            receiptRunId: receipt.receiptRunId,
+          }),
+    };
+    Object.assign(f.manifest, { advisoryJobs: [advisory] });
+    const before = JSON.stringify(f.manifest);
+    const client = {
+      ...f.client,
+      getRun: async (id: string) => {
+        const run = await f.client.getRun(id);
+        return id === selected.runId ? { ...run, conclusion: "failure" } : run;
+      },
+      getRunAttemptJobs: async (id: string) =>
+        id === selected.runId ? jobs : f.client.getRunAttemptJobs(id),
+      loadFlakeClassifications: async (request: Parameters<typeof loadFlakeClassifications>[0]) => {
+        expect(request).toMatchObject({
+          parentRunId: f.runId,
+          parentRunAttempt: 1,
+          targetSha: f.q,
+        });
+        return classifications;
+      },
+    };
+    const validation = validateReleaseRunEvidence(
+      {
+        repository: f.repository,
+        runId: f.runId,
+        trustedWorkflowRef: f.publisherFullRef.slice("refs/tags/".length),
+        trustedWorkflowFullRef: f.publisherFullRef,
+        trustedWorkflowSha: f.p,
+        verifierSourceSha: f.p,
+        verifierSourceContent: readFileSync(SCRIPT),
+      },
+      client,
+    );
+    if (scenario === "recorded-flake" || scenario === "windows-node") {
+      const evidence = await validation;
+      expect(evidence.current.workflowRefProof).toBe("candidate-owned-admission-v1");
+      expect(evidence.children).toContainEqual(
+        expect.objectContaining({
+          role: "normalCi",
+          conclusion: "failure",
+          policyPassed: true,
+          advisoryJobs: [advisory],
+        }),
+      );
+    } else {
+      await expect(validation).rejects.toThrow(
+        /does not pass terminal policy|does not pass release policy/u,
+      );
+    }
+    expect(JSON.stringify(f.manifest)).toBe(before);
+  });
+
   it.each(["", "ship"])(
     "reads published empty retry metadata without granting a waiver (%s)",
     async (laneWaiver) => {
@@ -3208,7 +3782,7 @@ describe("release CI summary child correlation", () => {
       });
       const before = JSON.stringify(manifest);
       expect(() => validateParentManifest(manifest, { runId: fixture.runId })).toThrow(
-        "no longer accepted",
+        laneWaiver ? "no longer accepted" : "advisory jobs differ",
       );
       await expect(
         validateReleaseRunEvidence(

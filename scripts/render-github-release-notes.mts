@@ -2,6 +2,10 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import {
+  releaseManifestClassificationRoot,
+  validateReleaseManifestAdvisoryJobs,
+} from "./full-release-validation-policy.mjs";
 import { changelogFormat, findReleaseChangelog } from "./lib/release-changelog.mjs";
 import {
   compactReleaseNotes,
@@ -36,9 +40,12 @@ type ReleaseNotesTarget = {
   repository: unknown;
   regularStableVersion?: unknown;
   contributionRecordPath?: string;
+  validationManifest?: unknown;
+  validationRootManifest?: unknown;
 };
 
 const RELEASE_VERIFICATION_HEADING = "### Release verification";
+const ADVISORY_LINE_PREFIX = "- Advisory job (";
 const SHIPPED_BASELINE_EXCLUSIONS_PREFIX = "Shipped baseline exclusions:";
 const MONTH_NAMES = [
   "January",
@@ -78,6 +85,28 @@ function joinBody(notes: string, tail: string | undefined) {
     return normalizedTail;
   }
   return normalizedTail ? `${normalizedNotes}\n\n${normalizedTail}` : normalizedNotes;
+}
+
+function verificationWithAdvisories(
+  verification: string,
+  manifest: unknown,
+  rootManifest?: unknown,
+) {
+  if (manifest === undefined) {
+    return normalizeTail(verification);
+  }
+  const escape = (value: string) => value.replace(/[\\`*_{}[\]()<>!#|]/gu, "\\$&");
+  const lines = validateReleaseManifestAdvisoryJobs(manifest, rootManifest).map((job) => {
+    const detail =
+      job.class === "recorded-flake" ? `; ${escape(job.reason)}; tracking: ${job.trackingUrl}` : "";
+    return `${ADVISORY_LINE_PREFIX}${job.class}): ${escape(job.child)} / ${escape(job.job)} (${job.conclusion}): ${job.url}${detail}`;
+  });
+  const proof = normalizeTail(verification)
+    .split("\n")
+    .filter((line) => !line.startsWith(ADVISORY_LINE_PREFIX))
+    .join("\n")
+    .trimEnd();
+  return lines.length > 0 ? [proof || RELEASE_VERIFICATION_HEADING, ...lines].join("\n") : proof;
 }
 
 function extendedStableReleaseNotice({
@@ -386,6 +415,8 @@ export function renderGithubReleaseNotes({
   repository,
   regularStableVersion,
   contributionRecordPath,
+  validationManifest,
+  validationRootManifest,
   verification = "",
 }: ReleaseNotesTarget & { verification?: string }) {
   assertString(repository, "repository");
@@ -421,10 +452,21 @@ export function renderGithubReleaseNotes({
       `compacted release notes are still too large for GitHub: ${size.characters} characters, ${size.bytes} bytes`,
     );
   }
-  const normalizedVerification = normalizeTail(verification);
+  const normalizedVerification = verificationWithAdvisories(
+    verification,
+    validationManifest,
+    validationRootManifest,
+  );
   const bodyWithVerification = joinBody(baseBody, normalizedVerification);
   const verificationIncluded =
     normalizedVerification !== "" && fitsGithubReleaseBody(bodyWithVerification);
+  if (
+    !verificationIncluded &&
+    validationManifest !== undefined &&
+    validateReleaseManifestAdvisoryJobs(validationManifest, validationRootManifest).length > 0
+  ) {
+    fail("release notes exceed GitHub's body limit with required advisory evidence");
+  }
   const body = verificationIncluded ? bodyWithVerification : baseBody;
   return {
     body,
@@ -441,19 +483,12 @@ export function verifyGithubReleaseNotes({
 }: ReleaseNotesTarget & { body: unknown }) {
   assertString(body, "release body");
   const normalizedBody = body.trimEnd();
-  const base = renderGithubReleaseNotes(target);
-  if (normalizedBody === base.body) {
-    return {
-      ...base,
-      matches: true,
-      actualSize: githubReleaseBodySize(normalizedBody),
-    };
-  }
+  const base = renderGithubReleaseNotes({ ...target, validationManifest: undefined });
   const verificationPrefix = `${base.body}\n\n${RELEASE_VERIFICATION_HEADING}`;
   const verification = normalizedBody.startsWith(verificationPrefix)
     ? normalizedBody.slice(base.body.length + 2)
     : "";
-  const expected = verification ? renderGithubReleaseNotes({ ...target, verification }) : base;
+  const expected = renderGithubReleaseNotes({ ...target, verification });
   return {
     ...expected,
     matches: normalizedBody === expected.body,
@@ -467,7 +502,7 @@ function usage() {
     (--root <repository-path> [--ref <ref>] | --changelog <legacy-file>) \\
     --tag <tag> --repository <owner/repo> \\
     [--version <version>] [--regular-stable-version <version>] \\
-    [--verification-file <path>] [--output <path>] \\
+    [--verification-file <path>] [--validation-manifest <path>] [--validation-execution-plan <path>] [--output <path>] \\
     [--metadata-output <path>]
   Verification uses the same target arguments with --verify-body <path>.
 `;
@@ -483,6 +518,8 @@ function parseArgs(argv: string[]) {
     ["--repository", "repository"],
     ["--regular-stable-version", "regularStableVersion"],
     ["--verification-file", "verificationFile"],
+    ["--validation-manifest", "validationManifest"],
+    ["--validation-execution-plan", "validationExecutionPlan"],
     ["--output", "output"],
     ["--metadata-output", "metadataOutput"],
     ["--verify-body", "verifyBody"],
@@ -551,6 +588,9 @@ function main() {
     : changelogPath
       ? readFileSync(changelogPath, "utf8")
       : fail("release notes source was not validated");
+  const validationManifest: unknown = options.validationManifest
+    ? JSON.parse(readFileSync(options.validationManifest, "utf8"))
+    : undefined;
   const target = {
     changelog,
     version,
@@ -558,6 +598,13 @@ function main() {
     repository,
     regularStableVersion: options.regularStableVersion,
     contributionRecordPath: source?.recordPath ?? undefined,
+    validationManifest,
+    validationRootManifest: releaseManifestClassificationRoot(
+      validationManifest,
+      options.validationExecutionPlan
+        ? JSON.parse(readFileSync(options.validationExecutionPlan, "utf8"))
+        : undefined,
+    ),
   };
   if (options.verifyBody) {
     const result = verifyGithubReleaseNotes({

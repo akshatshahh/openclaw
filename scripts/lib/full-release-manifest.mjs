@@ -3,6 +3,10 @@ import {
   publicationIntentInputs,
   validatePublicationAdmissionBinding,
 } from "../full-release-publication-contract.mjs";
+import {
+  releaseAdvisoryJobs,
+  releaseChildClassificationEvidence,
+} from "../full-release-validation-policy.mjs";
 import { serializeReleaseArtifact } from "./full-release-evidence.mjs";
 
 export function buildReleaseValidationManifest({ plan, drain, context }) {
@@ -10,6 +14,7 @@ export function buildReleaseValidationManifest({ plan, drain, context }) {
     Object.entries(drain?.children ?? {}).map(([key, child]) => [
       key,
       {
+        ...releaseChildClassificationEvidence(child),
         runId: child.runId,
         plannedRunAttempt: child.plannedRunAttempt,
         effectiveRunAttempt: child.runAttempt,
@@ -45,6 +50,9 @@ export function buildReleaseValidationManifest({ plan, drain, context }) {
     candidateBinding: plan.candidate,
     publicationArtifacts: context.publicationArtifacts ?? { npmPreflight: null, docker: null },
     publishInputs: context.publishInputs,
+    advisoryJobs: releaseAdvisoryJobs(
+      Object.entries(childEvidence).map(([key, child]) => Object.assign({}, child, { key })),
+    ),
     childEvidence,
     ...(plan.qualificationCoverage
       ? {

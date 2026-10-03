@@ -20,6 +20,10 @@ import {
   validateRecordedFullReleaseCandidateRequest,
 } from "./full-release-candidate-contract.mjs";
 import {
+  isClassifiableFlakeJob,
+  loadFlakeClassifications,
+} from "./full-release-flake-classification.mjs";
+import {
   createPublicationAdmission,
   publicationObservationJson,
   publicationSourceReuseIdentity,
@@ -37,6 +41,8 @@ import {
   composeReleaseChildAttemptEvidence,
   formatReleaseStateOutcome,
   releasePlanGateFailures,
+  releaseChildClassificationEvidence,
+  releasePlanClassificationBinding,
   MAX_RELEASE_ARTIFACT_BYTES,
   serializeReleaseArtifact,
   selectReleaseStateArtifacts,
@@ -279,11 +285,36 @@ export async function readChild(child, previous, signal, options = {}) {
       },
       run,
     });
-    return validateChildBinding(child, run, {
+    const snapshot = validateChildBinding(child, run, {
       jobs: evidence.jobs,
       observedRunAttempts: evidence.observedRunAttempts,
       sha256: evidence.compositeJobsSha256,
     });
+    if (snapshot.status === "completed" && snapshot.errors.length === 0) {
+      const binding =
+        options.executionPlan &&
+        snapshot.key === "normalCi" &&
+        snapshot.jobs.some(
+          (job) =>
+            job.status === "completed" &&
+            ["failure", "timed_out"].includes(job.conclusion) &&
+            isClassifiableFlakeJob(job.name),
+        )
+          ? releasePlanClassificationBinding(options.executionPlan)
+          : options;
+      Object.assign(
+        snapshot,
+        await (options.loadFlakeClassifications ?? loadFlakeClassifications)({
+          repo: process.env.GITHUB_REPOSITORY,
+          child: snapshot,
+          parentRunId: binding.parentRunId,
+          parentRunAttempt: binding.parentRunAttempt,
+          targetSha: binding.targetSha,
+          signal,
+        }),
+      );
+    }
+    return snapshot;
   } catch (error) {
     const degraded = classifyReleaseGhTransportError(error) === "transient";
     const provenanceMismatch =
@@ -425,6 +456,7 @@ async function validateReuse(executionPlan, signal) {
         validateReusableReleaseChild(selection, {
           repository: executionPlan.repository,
           targetSha: executionPlan.targetSha,
+          workflowSha: executionPlan.workflowSha,
           role,
           inputs: selection.inputs,
         }),
@@ -1296,7 +1328,11 @@ async function collectMode(mode) {
     snapshots = await Promise.all(
       plan.map((child, index) =>
         readChild(child, snapshots[index], abortController.signal, {
+          executionPlan,
           reuseSelection: executionPlan.childReuse?.[child.key],
+          parentRunId: executionPlan.parentRunId,
+          parentRunAttempt: executionPlan.parentRunAttempt,
+          targetSha: executionPlan.targetSha,
         }),
       ),
     );
@@ -1418,6 +1454,7 @@ async function validateManifestMode() {
   const rawManifest = readArtifact(manifestPath, "release validation manifest");
   const { validateParentManifest } = await import("./release-ci-summary.mjs");
   const manifest = validateParentManifest(rawManifest, {
+    rootManifest: executionPlan.evidenceReuse.sourceManifest,
     sourceAdmissionContract: expected.sourceAdmissionContract,
     candidateBinding: executionPlan.candidate ?? null,
     repository: expected.repository,
@@ -1464,6 +1501,7 @@ async function validateManifestMode() {
         Object.entries(drain.children).map(([key, child]) => [
           key,
           {
+            ...releaseChildClassificationEvidence(child),
             compositeJobsSha256: child.compositeJobsSha256,
             dispatchActor: child.dispatchActor,
             effectiveRunAttempt: child.runAttempt,
@@ -1501,7 +1539,7 @@ async function validateManifestMode() {
   ) {
     throw new Error("release validation manifest differs from the immutable execution plan");
   }
-  rawManifest.advisoryJobs = [];
+  rawManifest.advisoryJobs = manifest.advisoryJobs;
   writeArtifact(manifestPath, rawManifest);
 }
 

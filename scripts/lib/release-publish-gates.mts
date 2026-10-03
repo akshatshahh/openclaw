@@ -2,6 +2,10 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  releaseManifestClassificationRoot,
+  validateReleaseManifestAdvisoryJobs,
+} from "../full-release-validation-policy.mjs";
 import { isRecord } from "./record-shared.mjs";
 import { resolveReleasePublishInputs } from "./release-publish-inputs.mjs";
 import { parseReleaseVersion } from "./release-version.mjs";
@@ -29,6 +33,7 @@ function scalar(value: unknown): string {
 
 export function evaluateReleasePublishGates(input: {
   manifest: unknown;
+  rootManifest?: unknown;
   releaseTag: string;
   npmDistTag: string;
   consumer: ReleasePublishConsumer;
@@ -133,12 +138,21 @@ export function evaluateReleasePublishGates(input: {
   const waived =
     field(field(manifest, "validationInputs"), "laneWaiver") ||
     field(field(manifest, "publishInputs"), "stableSoakWaiver");
-  const advisory = field(manifest, "advisoryJobs");
+  const knownFlakyJobs = field(field(manifest, "validationInputs"), "knownFlakyJobsJson");
+  let selectedLanesError =
+    waived || (knownFlakyJobs !== undefined && knownFlakyJobs !== "[]")
+      ? "Release waiver and known-flaky inputs are no longer accepted."
+      : "";
+  try {
+    validateReleaseManifestAdvisoryJobs(manifest, input.rootManifest);
+  } catch (error) {
+    selectedLanesError ||= error instanceof Error ? error.message : String(error);
+  }
   add(
     "selected-lanes",
-    !waived && (advisory === undefined || (Array.isArray(advisory) && advisory.length === 0)),
-    "Waived or advisory release evidence is no longer accepted.",
-    "Fix failed selected lanes and rerun Full Release Validation without waivers.",
+    selectedLanesError === "",
+    selectedLanesError,
+    "Use authenticated Full Release Validation evidence with policy-derived Windows Node CI advisories or exact-job recorded flakes and no waivers.",
   );
   if (consumer === "stable-closeout") {
     for (const gate of gates) {
@@ -224,7 +238,11 @@ export function evaluateStableRollbackDrill(input: {
 
 function main() {
   const { values } = parseArgs({
-    options: { consumer: { type: "string" }, manifest: { type: "string" } },
+    options: {
+      consumer: { type: "string" },
+      manifest: { type: "string" },
+      "execution-plan": { type: "string" },
+    },
   });
   const consumer = values.consumer;
   if (consumer !== "publisher" && consumer !== "core-npm" && consumer !== "stable-closeout") {
@@ -242,6 +260,12 @@ function main() {
   });
   const gates = evaluateReleasePublishGates({
     manifest,
+    rootManifest: releaseManifestClassificationRoot(
+      manifest,
+      values["execution-plan"]
+        ? JSON.parse(readFileSync(values["execution-plan"], "utf8"))
+        : undefined,
+    ),
     consumer,
     releaseTag: env.RELEASE_TAG ?? "",
     npmDistTag: env.RELEASE_NPM_DIST_TAG ?? "",

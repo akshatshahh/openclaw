@@ -510,8 +510,14 @@ jobs:
             echo "Full Release Validation manifest does not contain the required stable release controls." >&2
             exit 1
           }
+          plan_args=()
+          if jq -e ' .evidenceReuse != null and any(.childEvidence[]?; (.flakeClassifications // []) | length > 0)' "$manifest_dir/$manifest_asset" >/dev/null; then
+            gh_with_retry run download "$FULL_RELEASE_VALIDATION_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "full-release-execution-plan-${FULL_RELEASE_VALIDATION_RUN_ID}" --dir "$(dirname "$manifest_dir/$manifest_asset")"
+            plan_args+=(--execution-plan "$(dirname "$manifest_dir/$manifest_asset")/full-release-execution-plan.json")
+          fi
           node .closeout-tooling/scripts/lib/release-publish-gates.mts \
-            --consumer stable-closeout --manifest "$manifest_dir/$manifest_asset"
+            --consumer stable-closeout --manifest "$manifest_dir/$manifest_asset" "${plan_args[@]}"
 
           recovery_evidence="$manifest_dir/openclaw-${evidence_version}-postpublish-evidence.json"
           if [[ "$ALLOW_FAILED_PUBLISH_RECOVERY" == "true" ]]; then

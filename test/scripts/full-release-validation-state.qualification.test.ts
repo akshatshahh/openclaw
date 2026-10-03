@@ -77,6 +77,9 @@ describe("candidate-owned frozen qualification coverage", () => {
   it.each<Record<string, string>>([
     { rerun_group: "ci" },
     { live_suite_filter: "one-suite" },
+    { release_package_spec: "openclaw@2026.9.1" },
+    { npm_telegram_package_spec: "openclaw@2026.9.1" },
+    { skip_package_telegram_e2e: "true" },
     { allow_frozen_target_scenario_omissions: "true" },
     {
       trusted_workflow_json: JSON.stringify({
