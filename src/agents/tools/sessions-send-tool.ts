@@ -403,10 +403,7 @@ export function createSessionsSendTool(opts?: SessionsSendToolOptions): AnyAgent
           entry: requesterSessionEntry,
         }),
       );
-      const timeoutMs =
-        finiteSecondsToTimerSafeMilliseconds(timeoutSeconds, {
-          floorSeconds: true,
-        }) ?? 0;
+      const timeoutMs = finiteSecondsToTimerSafeMilliseconds(timeoutSeconds) ?? 0;
       const replyTimeoutMs = timeoutSeconds === 0 ? 30_000 : timeoutMs;
       const idempotencyKey = opts?.idempotencyKey ?? crypto.randomUUID();
       let runId: string = idempotencyKey;
@@ -435,6 +432,7 @@ export function createSessionsSendTool(opts?: SessionsSendToolOptions): AnyAgent
           : resolvedKey;
       const access = await resolveSessionToolAccess({
         action: "send",
+        watch: params.watch === true,
         requesterAgentId,
         requesterSessionKey: effectiveRequesterKey,
         mainSessionKey,

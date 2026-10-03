@@ -188,6 +188,7 @@ export async function runSessionToolActionWithConflictReceipt<T>(params: {
 /** Check one prepared target without re-listing the requester's spawned sessions. */
 export async function resolveSessionToolAccess(params: {
   action: Exclude<SessionAccessAction, "list">;
+  watch?: boolean;
   displayAction?: SessionAccessAction | "search";
   requesterAgentId: string;
   requesterSessionKey: string;
@@ -251,6 +252,7 @@ export async function resolveSessionToolAccess(params: {
     requesterSessionKey: params.requesterSessionKey,
     mainSessionKey: params.mainSessionKey,
     explicitTargetAgentOwnership: !parseAgentSessionKey(authorizationTargetSessionKey),
+    watch: params.watch,
     visibility: params.visibility,
     a2aPolicy: params.a2aPolicy,
   });
