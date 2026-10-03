@@ -53,6 +53,8 @@ function expectedHarnessSparseCheckoutArgs(linux: boolean) {
           "/scripts/lib/release-upgrade-baseline.mjs",
           "/scripts/lib/release-version.mjs",
           "/scripts/lib/canonical-json.mjs",
+          "/scripts/lib/upgrade-survivor-policy.mjs",
+          "/scripts/lib/upgrade-survivor-scenarios.json",
           "/scripts/ci-npm-lock-admission.mjs",
           "/scripts/generate-npm-package-lock.mjs",
           "/scripts/generate-npm-package-lock.mts",
@@ -427,6 +429,8 @@ it.concurrent.for([
         "scripts/lib/release-version.mjs",
         "scripts/lib/release-upgrade-baseline.mjs",
         "scripts/lib/canonical-json.mjs",
+        "scripts/lib/upgrade-survivor-policy.mjs",
+        "scripts/lib/upgrade-survivor-scenarios.json",
       ].map((name) => [name, readFileSync(name, "utf8")]),
     );
     const candidateFiles = {
@@ -699,6 +703,8 @@ it.concurrent.for([
             ? ![
                 "scripts/lib/release-upgrade-baseline.mjs",
                 "scripts/lib/canonical-json.mjs",
+                "scripts/lib/upgrade-survivor-policy.mjs",
+                "scripts/lib/upgrade-survivor-scenarios.json",
               ].includes(name)
             : kind === "linux-node" && name !== "scripts/lib/release-context.mjs";
           expect(existsSync(path.join(harness, name))).toBe(ownsPolicy);
