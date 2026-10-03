@@ -7,7 +7,6 @@ interface ReleaseAdvisoryJobBase {
   url: string;
 }
 export type ReleaseAdvisoryJob = ReleaseAdvisoryJobBase & { class: string };
-export function releaseAdvisoryJobs(): ReleaseAdvisoryJob[];
 export function validateReleaseManifestAdvisoryJobs(manifest: unknown): ReleaseAdvisoryJob[];
 export const SPLIT_CHANGELOG_EVIDENCE_REUSE_POLICY: "split-changelog-release-v1";
 export function isSplitChangelogEvidenceDelta(paths: unknown, version: unknown): boolean;

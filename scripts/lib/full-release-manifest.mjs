@@ -3,7 +3,6 @@ import {
   publicationIntentInputs,
   validatePublicationAdmissionBinding,
 } from "../full-release-publication-contract.mjs";
-import { releaseAdvisoryJobs } from "../full-release-validation-policy.mjs";
 import { serializeReleaseArtifact } from "./full-release-evidence.mjs";
 
 export function buildReleaseValidationManifest({ plan, drain, context }) {
@@ -46,7 +45,8 @@ export function buildReleaseValidationManifest({ plan, drain, context }) {
     candidateBinding: plan.candidate,
     publicationArtifacts: context.publicationArtifacts ?? { npmPreflight: null, docker: null },
     publishInputs: context.publishInputs,
-    advisoryJobs: releaseAdvisoryJobs(),
+    // Keep the wire field; current release policy admits no advisory jobs.
+    advisoryJobs: [],
     childEvidence,
     ...(plan.qualificationCoverage
       ? {

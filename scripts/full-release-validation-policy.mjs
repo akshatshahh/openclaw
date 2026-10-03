@@ -26,10 +26,6 @@ import { validateQualificationCoverage } from "./release-qualification-coverage.
 
 export { MAX_RELEASE_ARTIFACT_BYTES, serializeReleaseArtifact, buildReleaseValidationManifest };
 
-export function releaseAdvisoryJobs() {
-  return [];
-}
-
 function validateReleaseAdvisoryJobs(value) {
   const expected = [];
   const recorded = value === undefined ? [] : value;
@@ -1640,7 +1636,7 @@ export function classifyReleaseSnapshot({
     .toSorted((left, right) => String(left.primaryAt).localeCompare(String(right.primaryAt), "en"));
   return {
     activeRunIds,
-    advisoryJobs: releaseAdvisoryJobs(),
+    advisoryJobs: [],
     blockerCount: rawBlockers.length,
     blockerIndex: blockerIndex(rawBlockers),
     blockers,
