@@ -27,7 +27,6 @@ import {
   isReleaseGhArtifactMissingError,
   MAX_RELEASE_ARTIFACT_BYTES,
   validateReleaseStateArtifact,
-  validateReleaseExecutionPlanArtifact,
 } from "./full-release-validation-policy.mjs";
 import { inspectActionsArtifactZipWithPolicy } from "./lib/actions-artifact-archive.mjs";
 import { requireOptionArgument } from "./lib/arg-utils.mts";
@@ -66,7 +65,7 @@ const RELEASE_EVIDENCE_VERIFIER_PATHS = [
 ];
 const GH_READ_TIMEOUT_MS = 60_000;
 export const FULL_RELEASE_WAIT_TIMEOUT_MINUTES = 720;
-export const FULL_RELEASE_GITHUB_POLL_INTERVAL_MS = 2 * 60_000;
+const FULL_RELEASE_GITHUB_POLL_INTERVAL_MS = 2 * 60_000;
 const FULL_RELEASE_PROGRESS_INTERVAL_MS = 15 * 60_000;
 const FULL_RELEASE_RUN_DISCOVERY_DELAYS_MS = [30_000, 60_000, 120_000];
 // A run can wait in the runner queue before its first job uploads the witness.
@@ -1259,21 +1258,11 @@ export function validateReleaseDecisionPayload(
     parentRunAttempt: number;
     parentRunId: string;
     workflowSha: string;
-    executionPlan?: unknown;
   },
 ) {
-  const executionPlan =
-    expected.executionPlan === undefined
-      ? undefined
-      : validateReleaseExecutionPlanArtifact(expected.executionPlan, {
-          parentRunId: expected.parentRunId,
-          workflowSha: expected.workflowSha,
-          maxParentRunAttempt: expected.parentRunAttempt,
-        });
   return validateReleaseStateArtifact(
     payload,
     {
-      executionPlan,
       parentRunAttempt: expected.parentRunAttempt,
       parentRunId: expected.parentRunId,
       workflowSha: expected.workflowSha,
@@ -1379,32 +1368,10 @@ export function tryReadReleaseDecision(
   if (payload === undefined) {
     return undefined;
   }
-  let executionPlan;
-  if (
-    isJsonRecord(payload) &&
-    isJsonRecord(payload.children) &&
-    Object.values(payload.children).some(
-      (child) =>
-        isJsonRecord(child) &&
-        Array.isArray(child.flakeClassifications) &&
-        child.flakeClassifications.length > 0,
-    )
-  ) {
-    executionPlan = readReleaseDecisionArtifact(
-      parentRunId,
-      `full-release-execution-plan-${parentRunId}`,
-      "full-release-execution-plan.json",
-      runStatusImpl,
-    );
-    if (executionPlan === undefined) {
-      return undefined;
-    }
-  }
   return validateReleaseDecisionPayload(payload, {
     parentRunAttempt,
     parentRunId,
     workflowSha,
-    executionPlan,
   });
 }
 

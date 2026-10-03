@@ -3,12 +3,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
+import { createDeferred, withinTest } from "../../test/helpers/promise.js";
 import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
-import { loadExecApprovals, saveExecApprovals } from "../infra/exec-approvals.js";
+import { saveExecApprovals } from "../infra/exec-approvals-store.test-support.js";
+import { loadExecApprovals } from "../infra/exec-approvals.js";
 import * as logger from "../logger.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
 import type { ProcessExtinctionResult } from "../process/supervisor/types.js";
@@ -16,7 +17,6 @@ import { withEnvAsync } from "../test-utils/env.js";
 import type { NodeHostClient } from "./client.js";
 import { decodeClaudeCliNodeRunParams } from "./invoke-agent-cli-claude-params.js";
 import { runClaudeCliNodeCommand } from "./invoke-agent-cli-claude.js";
-import { handleSystemRunInvoke } from "./invoke-system-run.js";
 import type { RunResult } from "./invoke-types.js";
 import { handleInvoke, type NodeInvokeRequestPayload } from "./invoke.js";
 
@@ -105,7 +105,7 @@ describe("Claude CLI node command", () => {
       let staged = 0;
       let stagedPrompt: string | undefined;
       const writeFile = fs.writeFile.bind(fs);
-      await withEnvAsync({ OPENCLAW_HOME: cwd }, async () => {
+      await withEnvAsync({ OPENCLAW_HOME: cwd, PATH: "/usr/bin:/bin", HOME: cwd }, async () => {
         saveExecApprovals({ version: 1, defaults: { security: "full", ask: "off" }, agents: {} });
         setRuntimeConfigSnapshot({ tools: { exec: { mode: "full" } } });
         const staging = vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
@@ -135,11 +135,6 @@ describe("Claude CLI node command", () => {
             undefined,
             {
               claudePath: executable,
-              handleSystemRun: (options) =>
-                handleSystemRunInvoke({
-                  ...options,
-                  sanitizeEnv: () => ({ PATH: "/usr/bin:/bin", HOME: cwd }),
-                }),
             },
           );
         } finally {
@@ -158,6 +153,7 @@ describe("Claude CLI node command", () => {
       expect(existsSync(marker)).toBe(!revoke);
       expect(reply?.ok).toBe(!revoke);
       expect(progress).toBe(revoke ? "" : "approved\n");
+      expect(calls.some((call) => call.method === "node.event")).toBe(false);
       if (revoke) {
         expect(reply?.error?.code).toBe("SYSTEM_RUN_DENIED");
         expect(reply?.error?.message).toContain("exec approval changed before execution");
@@ -326,13 +322,9 @@ describe("Claude CLI node command", () => {
       const handleSystemRun = vi.fn(
         async (options: {
           params: { command: string[] };
-          sendNodeEvent: (client: NodeHostClient, event: string, payload: unknown) => Promise<void>;
-          sendExecFinishedEvent: (params: unknown) => Promise<void>;
           sendInvokeResult: (result: unknown) => Promise<void>;
         }) => {
           expect(options.params.command).toEqual([executable, "-p", "--resume", "session-1"]);
-          await options.sendNodeEvent(client(calls), "exec.denied", {});
-          await options.sendExecFinishedEvent({});
           await options.sendInvokeResult({
             ok: false,
             error: { code: "UNAVAILABLE", message: "SYSTEM_RUN_DENIED: approval required" },
@@ -699,7 +691,7 @@ process.stdin.on("end", () => {
 
   it.runIf(process.platform !== "win32")(
     "retains the prompt for an authoritative descendant without delaying the root result",
-    async () => {
+    async ({ signal }) => {
       const markerDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-node-claude-prompt-"));
       tempDirs.push(markerDir);
       const marker = path.join(markerDir, "descendant-read");
@@ -721,19 +713,34 @@ process.stdout.write(JSON.stringify({ type: "result", result: prompt }) + "\\n")
           idleTimeoutMs: 2_000,
           timeoutMs: 5_000,
         };
-        const result = await runCommand(executable, request, { client: client(calls) });
-        const output = calls
-          .filter((call) => call.method === "node.invoke.progress")
-          .map((call) => (call.params as { chunk: string }).chunk)
-          .join("");
-        const promptPath = (JSON.parse(output) as { result: string }).result;
+        const removed = createDeferred();
+        const remove = fs.rm.bind(fs);
+        const removal = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+          try {
+            await remove(target, options);
+          } finally {
+            if (String(target).includes("openclaw-node-claude-prompt-")) {
+              removed.resolve();
+            }
+          }
+        });
+        try {
+          const result = await runCommand(executable, request, { client: client(calls) });
+          const output = calls
+            .filter((call) => call.method === "node.invoke.progress")
+            .map((call) => (call.params as { chunk: string }).chunk)
+            .join("");
+          const promptPath = (JSON.parse(output) as { result: string }).result;
 
-        expect(result).toMatchObject({ exitCode: 0, success: true });
-        await expect(fs.readFile(promptPath, "utf8")).resolves.toBe("descendant-owned prompt");
-        await vi.waitFor(async () => {
+          expect(result).toMatchObject({ exitCode: 0, success: true });
+          await expect(fs.readFile(promptPath, "utf8")).resolves.toBe("descendant-owned prompt");
+          // Removal follows certified descendant extinction, after its synchronous marker write.
+          await withinTest(removed.promise, signal);
           expect(await fs.readFile(marker, "utf8")).toBe("descendant-owned prompt");
           await expect(fs.stat(promptPath)).rejects.toThrow();
-        });
+        } finally {
+          removal.mockRestore();
+        }
       });
     },
   );

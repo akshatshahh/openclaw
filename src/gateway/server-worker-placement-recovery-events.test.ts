@@ -187,9 +187,9 @@ async function withRecoveryRuntime(
         retireSessionPlacement: ({ sessionId }: { sessionId: string }) => {
           placements.delete(sessionId);
         },
-        pruneOrphanedWorkspaceReconciliations: () => [],
-        listWorkspaceReconciliationOwners: () => [],
-        listPendingWorkspaceResults: () => [],
+        pruneOrphanedWorkspaceReconciliations: async () => [],
+        listWorkspaceReconciliationOwners: async () => [],
+        listPendingWorkspaceResultsAsync: async () => [],
       } as never,
       environments: environments as never,
       gatewayNamespace: "gateway-test",

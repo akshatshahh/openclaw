@@ -1,4 +1,4 @@
-import { clearSessionQueues } from "../auto-reply/reply/queue/cleanup.js";
+import { clearSessionLifecycleQueues } from "../auto-reply/reply/queue/cleanup.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { runExclusiveSessionStoreWrite } from "../config/sessions/store-writer.js";
 import {
@@ -38,6 +38,7 @@ export function createGatewayWorkerPlacementMoveBarrier(params: {
       cfg: getRuntimeConfig(),
       key: sessionKey,
       agentId,
+      preserveQualifiedAddress: true,
       clone: false,
       exactRead: true,
     });
@@ -67,7 +68,14 @@ export function createGatewayWorkerPlacementMoveBarrier(params: {
             authorize?.();
           }
         });
-        clearSessionQueues(lifecycleIdentities);
+        clearSessionLifecycleQueues({
+          keys: lifecycleIdentities,
+          agentId: resolved.target.agentId,
+          sessionKey: resolved.target.canonicalKey,
+          sessionId,
+          // The move committed; settling its source queues must survive authority changes.
+          assertCurrent: () => {},
+        });
         params.revokeSessionAuthority({ sessionId, sessionKeys: lifecycleIdentities });
         if (sourceDisposition === "abandon") {
           // Explicit abandonment revokes the old owner locally; its unreachable

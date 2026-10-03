@@ -17,7 +17,6 @@ import {
 import type { CodexCatalogHome } from "./session-catalog-homes.js";
 import {
   createCodexSessionCatalogListOperation,
-  listCodexSessionCatalog,
   runCatalogListInline,
 } from "./session-catalog-list-operation.js";
 import { readCodexSessionTranscript } from "./session-catalog-listing.js";
@@ -52,11 +51,6 @@ import {
 
 export { createCodexSessionCatalogControl } from "./session-catalog-control.js";
 export { createCodexSessionCatalogNodeHostCommands } from "./session-catalog-listing.js";
-export {
-  CODEX_LOCAL_SESSION_HOST_ID,
-  CODEX_SESSION_CATALOG_MAX_PAGE_LIMIT,
-} from "./session-catalog-parsing.js";
-
 /** Allows read-only catalog and transcript commands on supported paired-node platforms. */
 export function createCodexSessionCatalogNodeInvokePolicies(): OpenClawPluginNodeInvokePolicy[] {
   return [
@@ -149,12 +143,12 @@ function resolveLocalCatalogHomeForThread(params: {
     throw new CatalogParamsError("local Codex sessions are unavailable in isolated state");
   }
   const exact = params.sourceHomeId
-    ? params.homes.filter((home) => home.sourceHomeId === params.sourceHomeId)
-    : params.homes.filter((home) => home.hostId === params.hostId);
-  if (exact.length === 0 || (params.sourceHomeId && exact[0]?.hostId !== params.hostId)) {
+    ? params.homes.find((home) => home.sourceHomeId === params.sourceHomeId)
+    : params.homes.find((home) => home.hostId === params.hostId);
+  if (!exact || (params.sourceHomeId && exact.hostId !== params.hostId)) {
     throw new CatalogParamsError("Codex session source home is unavailable");
   }
-  return exact[0]!;
+  return exact;
 }
 
 type CatalogListOperation = ReturnType<NonNullable<SessionCatalogProvider["createListOperation"]>>;
@@ -255,7 +249,7 @@ function mapCatalogListOperation(
   };
 }
 
-function registerCodexSessionCatalog(params: {
+export function registerCodexSessionCatalog(params: {
   api: OpenClawPluginApi;
   bindingStore: CodexAppServerBindingStore;
   control: CodexSessionCatalogControlFactory;
@@ -375,6 +369,7 @@ function registerCodexSessionCatalog(params: {
       }
       if (request.hostId.startsWith("node:")) {
         const agentId = resolveRequestAgentId(request.agentId);
+        const { continueNodeCodexSession } = await import("./session-catalog-node-continue.js");
         return await continueNodeCodexSession({
           agentId,
           api: params.api,
@@ -391,6 +386,7 @@ function registerCodexSessionCatalog(params: {
       const { agentId, source, control } = await bindLocalRequest(request);
       source.assertCurrent();
       let upstreamBaseline: (CodexUpstreamBaseline & { connectionFingerprint: string }) | undefined;
+      const { continueLocalCodexSession } = await import("./session-catalog-adoption.js");
       const continued = await continueLocalCodexSession({
         agentId,
         api: params.api,
@@ -436,6 +432,7 @@ function registerCodexSessionCatalog(params: {
       }
       const { agentId, source, control } = await bindLocalRequest(request);
       source.assertCurrent();
+      const { archiveLocalCodexSession } = await import("./session-catalog-archive.js");
       await archiveLocalCodexSession({
         agentId,
         bindingStore: params.bindingStore,
@@ -487,34 +484,4 @@ function registerCodexSessionCatalog(params: {
     },
   };
   params.api.registerSessionCatalog(provider);
-}
-
-export const codexSessionCatalogRuntime = {
-  register: registerCodexSessionCatalog,
-  list: listCodexSessionCatalog,
-  readTranscript: readCodexSessionTranscript,
-  continueLocal: continueLocalCodexSession,
-  continueNode: continueNodeCodexSession,
-  archiveLocal: archiveLocalCodexSession,
-};
-
-async function continueLocalCodexSession(
-  ...args: Parameters<typeof import("./session-catalog-adoption.js").continueLocalCodexSession>
-) {
-  const { continueLocalCodexSession: run } = await import("./session-catalog-adoption.js");
-  return run(...args);
-}
-
-async function archiveLocalCodexSession(
-  ...args: Parameters<typeof import("./session-catalog-archive.js").archiveLocalCodexSession>
-) {
-  const { archiveLocalCodexSession: run } = await import("./session-catalog-archive.js");
-  return run(...args);
-}
-
-async function continueNodeCodexSession(
-  ...args: Parameters<typeof import("./session-catalog-node-continue.js").continueNodeCodexSession>
-) {
-  const { continueNodeCodexSession: run } = await import("./session-catalog-node-continue.js");
-  return run(...args);
 }

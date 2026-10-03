@@ -685,25 +685,25 @@ describe("worker session placement store", () => {
       runId: "worker-ack-current-run",
     });
 
-    expect(() => store.updateAckCursors({ claim: firstClaim, transcript: 4 })).toThrow(
+    await expect(store.updateAckCursors({ claim: firstClaim, transcript: 4 })).rejects.toThrow(
       "Cannot ACK stale worker turn",
     );
     expect(store.get(SESSION.sessionId)?.lastTranscriptAckCursor).toBeNull();
     expect(
-      store.updateAckCursors({
+      await store.updateAckCursors({
         claim: currentClaim,
         transcript: 4,
         liveEvent: 9,
       }),
     ).toMatchObject({ lastTranscriptAckCursor: 4, lastLiveEventAckCursor: 9 });
     expect(
-      store.updateAckCursors({
+      await store.updateAckCursors({
         claim: currentClaim,
         transcript: 3,
         liveEvent: 8,
       }),
     ).toMatchObject({ lastTranscriptAckCursor: 4, lastLiveEventAckCursor: 9 });
-    expect(store.listPendingWorkspaceResults()).toMatchObject([
+    expect(await store.listPendingWorkspaceResultsAsync()).toMatchObject([
       { sessionId: SESSION.sessionId, claimId: currentClaim.claimId },
     ]);
   });
@@ -722,12 +722,12 @@ describe("worker session placement store", () => {
     });
     const manifestRef = `sha256:${"d".repeat(64)}`;
 
-    expect(store.updateWorkspaceBaseManifest({ claim, manifestRef })).toMatchObject({
+    expect(await store.updateWorkspaceBaseManifest({ claim, manifestRef })).toMatchObject({
       state: "active",
       workspaceBaseManifestRef: manifestRef,
     });
     await store.releaseTurn(claim);
-    expect(() => store.updateWorkspaceBaseManifest({ claim, manifestRef })).toThrow(
+    await expect(store.updateWorkspaceBaseManifest({ claim, manifestRef })).rejects.toThrow(
       "Cannot advance stale worker workspace",
     );
   });
@@ -744,9 +744,20 @@ describe("worker session placement store", () => {
       claimId: "pending-workspace-claim",
       runId: "pending-workspace-run",
     });
-    store.markWorkspaceResultPending(claim);
+    await store.markWorkspaceResultPending(claim);
 
-    expect(store.listPendingWorkspaceResults()).toEqual([
+    expect(store.listPendingWorkspaceResults(SESSION.sessionId)).toMatchObject([
+      { sessionId: SESSION.sessionId, claimId: claim.claimId, workspaceAcceptedAtMs: null },
+    ]);
+    expect(store.listPendingWorkspaceResults("other-session")).toEqual([]);
+    expect(store.getWorkspaceResultReconcilingSessionIds([SESSION.sessionId])).toEqual(
+      new Set([SESSION.sessionId]),
+    );
+    expect(await store.getWorkspaceResultReconcilingSessionIdsAsync([SESSION.sessionId])).toEqual(
+      new Set([SESSION.sessionId]),
+    );
+
+    expect(await store.listPendingWorkspaceResultsAsync()).toEqual([
       {
         sessionId: active.sessionId,
         environmentId: active.environmentId,
@@ -777,18 +788,20 @@ describe("worker session placement store", () => {
       stagedResultRef,
       totalCount: 2,
     });
-    expect(store.listPendingWorkspaceResults()).toMatchObject([
+    expect(await store.listPendingWorkspaceResultsAsync()).toMatchObject([
       { sessionId: active.sessionId, stagedResultRef },
     ]);
-    store.updateWorkspaceBaseManifest({ claim, manifestRef });
-    expect(store.listPendingWorkspaceResults()).toMatchObject([
+    await store.updateWorkspaceBaseManifest({ claim, manifestRef });
+    expect(await store.listPendingWorkspaceResultsAsync()).toMatchObject([
       { sessionId: active.sessionId, workspaceAcceptedAtMs: null },
     ]);
-    store.acceptWorkspaceResult(claim);
-    expect(store.listPendingWorkspaceResults()).toMatchObject([
+    await store.acceptWorkspaceResult(claim);
+    expect(await store.listPendingWorkspaceResultsAsync()).toMatchObject([
       { sessionId: active.sessionId, workspaceAcceptedAtMs: nowMs },
     ]);
-    expect(store.completeWorkspaceResultAndReleaseTurn(claim)).toMatchObject({ turnClaim: null });
+    expect(await store.completeWorkspaceResultAndReleaseTurn(claim)).toMatchObject({
+      turnClaim: null,
+    });
     expect(store.get(SESSION.sessionId)?.workspaceResultConflict).toEqual({
       paths: [" z.txt ", "a.txt"],
       stagedResultRef,
@@ -800,6 +813,7 @@ describe("worker session placement store", () => {
       claimId: "later-clean-claim",
       runId: "later-clean-run",
     });
+    await store.markWorkspaceResultPending(laterClaim);
     store.recordWorkspaceResultConflict(laterClaim, {
       paths: Array.from(
         { length: 300 },
@@ -814,11 +828,17 @@ describe("worker session placement store", () => {
     expect(store.get(SESSION.sessionId)?.workspaceResultConflict?.paths).toHaveLength(256);
     store.recordWorkspaceResultConflict(laterClaim, undefined);
     expect(store.get(SESSION.sessionId)).not.toHaveProperty("workspaceResultConflict");
-    await store.releaseTurn(laterClaim);
+    await store.acceptWorkspaceResult(laterClaim);
+    await store.completeWorkspaceResultAndReleaseTurn(laterClaim);
+    expect(store.listPendingWorkspaceResults(SESSION.sessionId)).toEqual([]);
+    expect(store.getWorkspaceResultReconcilingSessionIds([SESSION.sessionId])).toEqual(new Set());
+    expect(await store.getWorkspaceResultReconcilingSessionIdsAsync([SESSION.sessionId])).toEqual(
+      new Set(),
+    );
     expect(
       createWorkerSessionPlacementStore({ database, now: () => nowMs }).get(SESSION.sessionId),
     ).not.toHaveProperty("workspaceResultConflict");
-    expect(store.listPendingWorkspaceResults()).toEqual([]);
+    expect(await store.listPendingWorkspaceResultsAsync()).toEqual([]);
   });
 
   it("preserves an admitted worker result while its placement is draining", async () => {
@@ -843,7 +863,7 @@ describe("worker session placement store", () => {
       throw new Error("expected draining workspace placement");
     }
 
-    store.markWorkspaceResultPending(claim);
+    await store.markWorkspaceResultPending(claim);
     expect(() =>
       store.startReconcile({
         sessionId: draining.sessionId,
@@ -861,7 +881,7 @@ describe("worker session placement store", () => {
       ownerEpoch: draining.activeOwnerEpoch,
       placementGeneration: draining.generation,
     };
-    store.beginWorkspaceReconciliation(owner, {
+    await store.beginWorkspaceReconciliation(owner, {
       version: 1,
       temporaryNonce: "a".repeat(32),
       baseManifestRef: draining.workspaceBaseManifestRef,
@@ -872,19 +892,19 @@ describe("worker session placement store", () => {
       basePackSha256: createHash("sha256").update(basePack).digest("hex"),
       basePack,
     });
-    expect(store.loadWorkspaceReconciliation(owner)).toMatchObject({
+    expect(await store.loadWorkspaceReconciliation(owner)).toMatchObject({
       currentManifestRef: manifestRef,
     });
-    expect(store.updateWorkspaceBaseManifest({ claim, manifestRef })).toMatchObject({
+    expect(await store.updateWorkspaceBaseManifest({ claim, manifestRef })).toMatchObject({
       state: "draining",
       workspaceBaseManifestRef: manifestRef,
     });
-    store.acceptWorkspaceResult(claim);
-    expect(store.completeWorkspaceResultAndReleaseTurn(claim)).toMatchObject({
+    await store.acceptWorkspaceResult(claim);
+    expect(await store.completeWorkspaceResultAndReleaseTurn(claim)).toMatchObject({
       state: "draining",
       turnClaim: null,
     });
-    expect(store.listPendingWorkspaceResults()).toEqual([]);
+    expect(await store.listPendingWorkspaceResultsAsync()).toEqual([]);
   });
 
   it("does not begin draining after a completed result owns recovery", async () => {
@@ -899,7 +919,7 @@ describe("worker session placement store", () => {
       claimId: "pre-drain-workspace-claim",
       runId: "pre-drain-workspace-run",
     });
-    store.markWorkspaceResultPending(claim);
+    await store.markWorkspaceResultPending(claim);
 
     expect(() =>
       store.startDrain({
@@ -924,7 +944,7 @@ describe("worker session placement store", () => {
     const basePack = Buffer.from("workspace base pack");
     // JavaScript UTF-16 and SQLite UTF-8 order these paths differently.
     const unicodePaths = ["\u{10000}.txt", "\uE000.txt"];
-    store.beginWorkspaceReconciliation(owner, {
+    await store.beginWorkspaceReconciliation(owner, {
       version: 1,
       temporaryNonce: "b".repeat(32),
       baseManifestRef: active.workspaceBaseManifestRef,
@@ -951,8 +971,8 @@ describe("worker session placement store", () => {
     await closeStateDatabaseForTest();
     database = openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: root } });
     store = createWorkerSessionPlacementStore({ database, now: () => nowMs });
-    expect(store.listWorkspaceReconciliationOwners()).toEqual([owner]);
-    const loaded = store.loadWorkspaceReconciliation(owner);
+    expect(await store.listWorkspaceReconciliationOwners()).toEqual([owner]);
+    const loaded = await store.loadWorkspaceReconciliation(owner);
     expect(loaded).toMatchObject({
       baseManifestRef: active.workspaceBaseManifestRef,
       currentManifestRef,
@@ -969,17 +989,17 @@ describe("worker session placement store", () => {
       claimId: "journal-claim",
       runId: "journal-run",
     });
-    store.markWorkspaceResultPending(claim);
+    await store.markWorkspaceResultPending(claim);
     const appliedManifestRef = active.workspaceBaseManifestRef;
-    store.updateWorkspaceBaseManifest({ claim, manifestRef: appliedManifestRef });
-    expect(store.loadWorkspaceReconciliation(owner)).toMatchObject({
+    await store.updateWorkspaceBaseManifest({ claim, manifestRef: appliedManifestRef });
+    expect(await store.loadWorkspaceReconciliation(owner)).toMatchObject({
       appliedManifestRef,
     });
-    store.updateWorkspaceBaseManifest({ claim, manifestRef: currentManifestRef });
-    expect(store.loadWorkspaceReconciliation(owner)).toMatchObject({
+    await store.updateWorkspaceBaseManifest({ claim, manifestRef: currentManifestRef });
+    expect(await store.loadWorkspaceReconciliation(owner)).toMatchObject({
       appliedManifestRef: currentManifestRef,
     });
-    store.acceptWorkspaceResult(claim);
-    expect(store.loadWorkspaceReconciliation(owner)).toBeUndefined();
+    await store.acceptWorkspaceResult(claim);
+    expect(await store.loadWorkspaceReconciliation(owner)).toBeUndefined();
   });
 });

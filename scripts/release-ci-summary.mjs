@@ -12,7 +12,6 @@ import process from "node:process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { validateFullReleaseCandidateBinding } from "./full-release-candidate-contract.mjs";
-import { loadFlakeClassifications } from "./full-release-flake-classification.mjs";
 import {
   decodePublicationDispatchEnvelope,
   publicationAdmissionContract,
@@ -38,7 +37,6 @@ import {
   normalizeReleaseTelegramWaiver,
   releaseCompositeJobsSha256,
   releaseAdvisoryJobs,
-  releaseChildClassificationEvidence,
   terminalPolicyPass,
   validateReleaseManifestAdvisoryJobs,
   validateReleaseChildDispatchBinding,
@@ -1175,7 +1173,6 @@ function normalizeManifestChildEvidence(value) {
           key,
           {
             ...composite,
-            ...releaseChildClassificationEvidence(child),
             compositeJobsSha256,
             dispatchActor,
             observedRunAttempts,
@@ -1196,14 +1193,6 @@ function manifestEvidenceIdentity(manifest) {
       : {}),
     childRunIds: manifest.childRunIds,
     advisoryJobs: manifest.advisoryJobs,
-    childClassifications: Object.fromEntries(
-      Object.entries(manifest.childEvidence ?? {})
-        .filter(
-          ([, child]) =>
-            child.flakeClassifications !== undefined || child.gateEntries !== undefined,
-        )
-        .map(([key, child]) => [key, releaseChildClassificationEvidence(child)]),
-    ),
     controls: manifest.controls,
     releaseProfile: manifest.releaseProfile,
     rerunGroup: manifest.rerunGroup,
@@ -1361,7 +1350,7 @@ export function validateParentManifest(value, expected) {
       "Waived release evidence is no longer accepted; rerun Full Release Validation without waivers.",
     );
   }
-  const advisoryJobs = validateReleaseManifestAdvisoryJobs(value, expected.rootManifest);
+  const advisoryJobs = validateReleaseManifestAdvisoryJobs(value);
   const childRuns = value.childRuns;
   if (!childRuns || typeof childRuns !== "object" || Array.isArray(childRuns)) {
     throw new Error("release validation manifest childRuns is invalid");
@@ -2179,9 +2168,6 @@ function validateCompletedParentRun(parentView, parentRest, repository, runId) {
 export function createReleaseEvidenceClient(repository = DEFAULT_REPO) {
   const normalizedRepository = normalizeRepository(repository);
   return {
-    loadFlakeClassifications(request) {
-      return loadFlakeClassifications({ ...request, repo: normalizedRepository });
-    },
     validateChildReuse(selection, request) {
       return validateReusableReleaseChild(selection, request);
     },
@@ -2280,7 +2266,6 @@ async function loadValidatedParentEvidence({
   manifestPath,
   repository,
   runId,
-  allowReuse = true,
 }) {
   const parentView = client.getRunView(runId);
   const parentRun = await client.getRun(runId);
@@ -2297,29 +2282,7 @@ async function loadValidatedParentEvidence({
       `successful parent run is missing its release validation manifest: ${runId}`,
     );
   }
-  if (!allowReuse && manifestEvidence.manifest.evidenceReuse) {
-    throw new Error("evidence reuse must select a root execution manifest");
-  }
-  // Authenticate the direct root artifact before interpreting its original
-  // classification bindings in the consumer. Do not take them from a receipt.
-  const rootEvidence =
-    manifestEvidence.manifest.evidenceReuse &&
-    Object.values(manifestEvidence.manifest.childEvidence ?? {}).some(
-      (child) => child.flakeClassifications?.length,
-    )
-      ? await loadValidatedParentEvidence({
-          client,
-          expectedRunAttempts,
-          repository,
-          runId: normalizeRequiredRunId(
-            manifestEvidence.manifest.evidenceReuse.runId,
-            "evidence root run ID",
-          ),
-          allowReuse: false,
-        })
-      : undefined;
   const manifest = validateParentManifest(manifestEvidence.manifest, {
-    rootManifest: rootEvidence?.manifestJson,
     runAttempt: parentRun.run_attempt,
     runId,
     workflowRef: parentRun.head_branch,
@@ -2333,7 +2296,6 @@ async function loadValidatedParentEvidence({
     manifestJson: sortReleaseJsonValueKeys(manifestEvidence.manifest),
     parentRun,
     parentView,
-    rootEvidence,
   };
 }
 
@@ -2471,12 +2433,7 @@ async function validateStrictChildRun({
     });
     if (
       JSON.stringify(sortReleaseJsonValueKeys(childEvidence)) !==
-      JSON.stringify(
-        sortReleaseJsonValueKeys({
-          ...evidence,
-          ...releaseChildClassificationEvidence(childEvidence),
-        }),
-      )
+      JSON.stringify(sortReleaseJsonValueKeys(evidence))
     ) {
       throw new Error(`manifest child composite evidence mismatch: ${child.name}`);
     }
@@ -2505,23 +2462,6 @@ async function validateStrictChildRun({
     runId,
     status: run.status,
   };
-  const classifications =
-    child.manifestKey === "normalCi" && run.conclusion !== "success"
-      ? await client.loadFlakeClassifications({
-          child: policyChild,
-          parentRunId: parentEvidence.manifest.runId,
-          parentRunAttempt: originAttempt,
-          targetSha: parentEvidence.manifest.targetSha,
-        })
-      : {};
-  Object.assign(policyChild, classifications);
-  if (
-    childEvidence &&
-    JSON.stringify(sortReleaseJsonValueKeys(releaseChildClassificationEvidence(childEvidence))) !==
-      JSON.stringify(sortReleaseJsonValueKeys(releaseChildClassificationEvidence(policyChild)))
-  ) {
-    throw new Error(`manifest child classification evidence mismatch: ${child.name}`);
-  }
   if (
     run.repository?.full_name !== repository ||
     run.head_sha !== (plannedChild?.workflowSha ?? parentEvidence.manifest.workflowSha) ||
@@ -2530,20 +2470,7 @@ async function validateStrictChildRun({
     throw new Error(`manifest child run does not pass release policy: ${child.name}`);
   }
   if (child.requiredJobs) {
-    // Terminal policy already authenticated this exact failed CI gate from its
-    // complete log and recorded-flake receipts. Retain its failure in evidence;
-    // the frozen inventory still requires every other named job to succeed.
-    const requiredSuccesses = child.requiredJobs.filter(
-      (name) =>
-        !(
-          child.manifestKey === "normalCi" &&
-          name === "openclaw/ci-gate" &&
-          jobs.some((job) => job.name === name && job.conclusion === "failure")
-        ),
-    );
-    if (requiredSuccesses.length) {
-      validateQualificationJobs(jobs, requiredSuccesses, child.name);
-    }
+    validateQualificationJobs(jobs, child.requiredJobs, child.name);
   }
   if (child.manifestKey === "productPerformance") {
     // The authenticated composite selects the newest executed attempt per job,
@@ -2554,7 +2481,7 @@ async function validateStrictChildRun({
   }
 
   return {
-    advisoryJobs: releaseAdvisoryJobs([policyChild]),
+    advisoryJobs: releaseAdvisoryJobs(),
     conclusion: run.conclusion,
     dispatchNonce: `full-release-validation-${reused ? childReuse.sourceParentRunId : parentEvidence.manifest.runId}-${originAttempt}${child.suffix}`,
     displayTitle: run.display_title,
@@ -2778,14 +2705,12 @@ export async function validateReleaseRunEvidence(
   let selectedEvidence = currentEvidence;
   const reuse = currentEvidence.manifest.evidenceReuse;
   if (reuse) {
-    rootEvidence =
-      currentEvidence.rootEvidence ??
-      (await loadValidatedParentEvidence({
-        client: evidenceClient,
-        expectedRunAttempts: remainingExpectedRunAttempts,
-        repository: normalizedRepository,
-        runId: reuse.runId,
-      }));
+    rootEvidence = await loadValidatedParentEvidence({
+      client: evidenceClient,
+      expectedRunAttempts: remainingExpectedRunAttempts,
+      repository: normalizedRepository,
+      runId: reuse.runId,
+    });
     selectedEvidence =
       reuse.selectedRunId === reuse.runId
         ? rootEvidence
@@ -3289,33 +3214,9 @@ export function tryReadReleaseDecisionArtifact(
   if (decision === undefined) {
     return undefined;
   }
-  let executionPlan;
-  if (Object.values(decision.children ?? {}).some((child) => child?.flakeClassifications?.length)) {
-    const plan = downloadReleaseJsonArtifact(
-      runId,
-      repository,
-      {
-        artifactName: `full-release-execution-plan-${runId}`,
-        entryName: "full-release-execution-plan.json",
-        directoryPrefix: "openclaw-release-decision-plan-",
-        label: "release execution plan",
-        retryTransient: true,
-      },
-      runReleaseCiGhImpl,
-    );
-    if (plan === undefined) {
-      return undefined;
-    }
-    executionPlan = validateReleaseExecutionPlanArtifact(plan, {
-      parentRunId: String(runId),
-      workflowSha: parent.headSha,
-      maxParentRunAttempt: parent.attempt,
-    });
-  }
   return validateReleaseStateArtifact(
     decision,
     {
-      executionPlan,
       parentRunAttempt: parent.attempt,
       parentRunId: String(runId),
       workflowSha: parent.headSha,
@@ -3474,23 +3375,7 @@ async function main() {
   const currentManifestRaw = tryDownloadParentManifest(runId, parent.attempt, repository);
   let children;
   if (currentManifestRaw) {
-    const retainedRoot =
-      currentManifestRaw.evidenceReuse &&
-      Object.values(currentManifestRaw.childEvidence ?? {}).some(
-        (child) => child.flakeClassifications?.length,
-      )
-        ? await loadValidatedParentEvidence({
-            client: createReleaseEvidenceClient(repository),
-            repository,
-            runId: normalizeRequiredRunId(
-              currentManifestRaw.evidenceReuse.runId,
-              "evidence root run ID",
-            ),
-            allowReuse: false,
-          })
-        : undefined;
     const currentManifest = validateParentManifest(currentManifestRaw, {
-      rootManifest: retainedRoot?.manifestJson,
       runAttempt: parent.attempt,
       runId,
       workflowRef: parent.headBranch,
@@ -3503,17 +3388,15 @@ async function main() {
     let sourceParent = parent;
     if (currentManifest.evidenceReuse) {
       const rootRunId = currentManifest.evidenceReuse.runId;
-      const rootParent =
-        retainedRoot?.parentView ??
-        jsonGh([
-          "run",
-          "view",
-          rootRunId,
-          "--repo",
-          repository,
-          "--json",
-          "status,conclusion,attempt,headBranch,headSha,url,jobs",
-        ]);
+      const rootParent = jsonGh([
+        "run",
+        "view",
+        rootRunId,
+        "--repo",
+        repository,
+        "--json",
+        "status,conclusion,attempt,headBranch,headSha,url,jobs",
+      ]);
       validateParentRunBinding(
         rootParent,
         githubRestJson(`actions/runs/${rootRunId}`, repository),
@@ -3522,9 +3405,7 @@ async function main() {
       if (rootParent.status !== "completed" || rootParent.conclusion !== "success") {
         throw new Error(`evidence root run is not completed/success: ${rootRunId}`);
       }
-      const rootManifestRaw =
-        retainedRoot?.manifestJson ??
-        tryDownloadParentManifest(rootRunId, rootParent.attempt, repository);
+      const rootManifestRaw = tryDownloadParentManifest(rootRunId, rootParent.attempt, repository);
       if (!rootManifestRaw) {
         throw new Error(`evidence root manifest is unavailable: ${rootRunId}`);
       }
@@ -3564,7 +3445,6 @@ async function main() {
           throw new Error(`selected evidence manifest is unavailable: ${selectedRunId}`);
         }
         selectedManifest = validateParentManifest(selectedManifestRaw, {
-          rootManifest: rootManifestRaw,
           runAttempt: selectedParent.attempt,
           runId: selectedRunId,
           workflowRef: selectedParent.headBranch,

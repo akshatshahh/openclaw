@@ -12,7 +12,6 @@ import {
 import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
 import {
   assertOkOrThrowHttpError,
-  normalizeBaseUrl,
   readProviderBinaryResponse,
   readProviderJsonResponse,
   redactProviderResponseErrorText,
@@ -195,30 +194,19 @@ function getRequiredConfigString(config: ComfyProviderConfig, key: string): stri
   return value;
 }
 
-function resolveComfyWorkflowSource(config: ComfyProviderConfig): {
-  workflow?: ComfyWorkflow;
-  workflowPath?: string;
-} {
+async function loadComfyWorkflow(config: ComfyProviderConfig): Promise<ComfyWorkflow> {
   const workflow = config.workflow;
   if (isRecord(workflow)) {
-    return { workflow: structuredClone(workflow) };
+    return structuredClone(workflow);
   }
   const workflowPath = normalizeOptionalString(config.workflowPath);
-  return { workflowPath };
-}
-
-async function loadComfyWorkflow(config: ComfyProviderConfig): Promise<ComfyWorkflow> {
-  const source = resolveComfyWorkflowSource(config);
-  if (source.workflow) {
-    return source.workflow;
-  }
-  if (!source.workflowPath) {
+  if (!workflowPath) {
     throw new Error(
       "plugins.entries.comfy.config.<capability>.workflow or workflowPath is required",
     );
   }
 
-  const resolvedPath = resolveUserPath(source.workflowPath);
+  const resolvedPath = resolveUserPath(workflowPath);
   const raw = await fs.readFile(resolvedPath, "utf8");
   const parsed = JSON.parse(raw) as unknown;
   if (!isRecord(parsed)) {
@@ -278,10 +266,8 @@ function resolveComfyNetworkPolicy(params: {
   explicitAllowPrivateNetwork: boolean;
   mode: ComfyMode;
 }): SsrFPolicy | undefined {
-  let parsed: URL;
-  try {
-    parsed = new URL(params.baseUrl);
-  } catch {
+  const parsed = URL.parse(params.baseUrl);
+  if (!parsed) {
     return undefined;
   }
 
@@ -626,8 +612,7 @@ export function isComfyCapabilityConfigured(params: {
   const { config } = getComfyConfig(params.cfg);
   const capabilityConfig = getComfyCapabilityConfig(config, params.capability);
   const hasWorkflow = Boolean(
-    resolveComfyWorkflowSource(capabilityConfig).workflow ||
-    normalizeOptionalString(capabilityConfig.workflowPath),
+    isRecord(capabilityConfig.workflow) || normalizeOptionalString(capabilityConfig.workflowPath),
   );
   const hasPromptNode = Boolean(normalizeOptionalString(capabilityConfig.promptNodeId));
   if (!hasWorkflow || !hasPromptNode) {
@@ -745,11 +730,8 @@ export async function runComfyWorkflow(params: {
       capability: params.capability === "music" ? "audio" : params.capability,
       transport: "http",
     });
-  const normalizedBaseUrl =
-    normalizeBaseUrl(baseUrl) ||
-    (mode === "cloud" ? DEFAULT_COMFY_CLOUD_BASE_URL : DEFAULT_COMFY_LOCAL_BASE_URL);
   const networkPolicy = resolveComfyNetworkPolicy({
-    baseUrl: normalizedBaseUrl,
+    baseUrl,
     allowPrivateNetwork,
     explicitAllowPrivateNetwork,
     mode,
@@ -762,7 +744,7 @@ export async function runComfyWorkflow(params: {
       );
     }
     const uploadedName = await uploadInputImage({
-      baseUrl: normalizedBaseUrl,
+      baseUrl,
       headers: new Headers(headers),
       timeoutMs,
       policy: networkPolicy,
@@ -785,7 +767,7 @@ export async function runComfyWorkflow(params: {
   };
 
   const promptResponse = await readJsonResponse<ComfyPromptResponse>({
-    url: `${normalizedBaseUrl}${mode === "cloud" ? "/api/prompt" : "/prompt"}`,
+    url: `${baseUrl}${mode === "cloud" ? "/api/prompt" : "/prompt"}`,
     init: {
       method: "POST",
       headers,
@@ -804,7 +786,7 @@ export async function runComfyWorkflow(params: {
   }
 
   const history = await waitForComfyHistory({
-    baseUrl: normalizedBaseUrl,
+    baseUrl,
     promptId,
     headers: new Headers(headers),
     timeoutMs,
@@ -834,7 +816,7 @@ export async function runComfyWorkflow(params: {
   const maxOutputBytes = resolveGeneratedMediaMaxBytes(params.cfg, outputKind);
   for (const output of outputFiles) {
     const downloaded = await downloadOutputFile({
-      baseUrl: normalizedBaseUrl,
+      baseUrl,
       headers: new Headers(headers),
       timeoutMs,
       policy: networkPolicy,

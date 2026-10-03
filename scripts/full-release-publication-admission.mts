@@ -36,9 +36,6 @@ const executionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const metadataPath =
   /^(?:package\.json|apps\/android\/version\.json|extensions\/[^/]+\/(?:package\.json|README\.md)|packages\/[^/]+\/package\.json)$/u;
 const platformHelperPath = "scripts/lib/release-publish-children.sh";
-// Acquisition includes the producer's committed runtime and policy inputs. The producer
-// remains responsible for verifying its executing bootstrap, fixed imports and YAML bytes.
-
 type Request = ReturnType<
   typeof import("./full-release-publication-contract.mjs").publicationSourceRequest
 >;

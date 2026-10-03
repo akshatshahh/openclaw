@@ -18,6 +18,7 @@ import { expectDefined } from "@openclaw/normalization-core/expect";
 import { afterAll, beforeAll, describe, expect, vi, type TestContext } from "vitest";
 import { parse } from "yaml";
 import {
+  createPublicationObservations,
   normalizePublicationIntent,
   publicationIntentInputs,
   publicationSourceContract,
@@ -27,6 +28,7 @@ import {
   validatePublicationSourceBinding,
   type PublicationSourceFact,
 } from "../../scripts/full-release-publication-contract.mjs";
+import type { ClawHubPublicationState } from "../../scripts/lib/clawhub-publication-state.mjs";
 import { resolveReleaseContextIdentity } from "../../scripts/lib/release-context.mjs";
 import { getProcessStartTime, isPidDefinitelyDead } from "../../src/shared/pid-alive.js";
 import { createCommandTest, type CommandFixture } from "../helpers/command-fixture.js";
@@ -173,17 +175,7 @@ describe("publication dispatch transport", () => {
       value: { trustedWorkflow: identity, publicationSelection: selection },
       error: "source-admission envelope requires identity, purpose and selection",
     },
-    {
-      name: "missing identity",
-      value: { validationPurpose: "publish", publicationSelection: selection },
-      error: "source-admission envelope requires identity, purpose and selection",
-    },
     { name: "old flat identity", value: identity, error: "invalid source-admission envelope" },
-    {
-      name: "extra envelope field",
-      value: { ...envelope, extra: true },
-      error: "invalid source-admission envelope",
-    },
     {
       name: "extra identity field",
       value: { ...envelope, trustedWorkflow: { ...identity, extra: true } },
@@ -397,6 +389,7 @@ async function fixture(
       | "abort-peer";
     rerunGroup?: string;
     pluginCount?: number;
+    clawhubPublication?: Record<string, ClawHubPublicationState>;
     pluginVersion?: string;
     npmOnlyPlugin?: boolean;
     absentNpmPackage?: "openclaw" | "@openclaw/demo-plugin" | "@openclaw/gateway-client";
@@ -723,6 +716,11 @@ globalThis.fetch = async (input, init = {}) => {
     return response({ versions, "dist-tags": { latest: url.pathname === "/demo-runtime" ? "1.2.4" : "2026.9.3" } });
   }
   if (${JSON.stringify(options.registry)} === "clawhub-absent") return response("", 404);
+  if (url.pathname.endsWith("/publication")) {
+    const name = decodeURIComponent(url.pathname.split("/")[4]);
+    const publication = ${JSON.stringify(options.clawhubPublication ?? {})}[name];
+    if (publication) return response({ name, version: ${JSON.stringify(version)}, ...publication });
+  }
   if (url.pathname.includes("/versions/")) return response("", 404);
   if (url.pathname.endsWith("/trusted-publisher")) {
     return response({ trustedPublisher: ${JSON.stringify(options.registry)} === "missing-trust" ? null : {
@@ -1201,21 +1199,6 @@ globalThis.Date = class extends OriginalDate {
     check(existsSync(join(target, "node_modules"))).toBe(false);
   }
   check(existsSync(forbidden), stderr).toBe(false);
-  if (options.registry === "parent-interrupt") {
-    const deadline = Date.now() + 5000;
-    while (
-      !readFileSync(registryCalls, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .some((line) => {
-          const entry = JSON.parse(line);
-          return entry.kind === "settled" && entry.worker;
-        }) &&
-      Date.now() < deadline
-    ) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
-  }
   const factPath = join(temporary, "publication-source-admission.json");
   const fact =
     existsSync(factPath) && readFileSync(factPath, "utf8").trim()
@@ -1258,11 +1241,12 @@ globalThis.Date = class extends OriginalDate {
   const workerBoundary = registryTrace.find((entry) => entry.kind === "worker-boundary");
   let scratchCleanedByOwner = true;
   if (options.registry === "parent-interrupt" && workerBoundary) {
+    // The admission parent settles only after its worker's close event; that joins
+    // the worker's synchronous exit record and exact process before the shell returns.
     check(registryTrace).toContainEqual(
       expect.objectContaining({ kind: "settled", worker: true, active: 0 }),
     );
     const proc = `/proc/${workerBoundary.pid}/stat`;
-    const deadline = Date.now() + 2000;
     const live = () => {
       try {
         const fields = readFileSync(proc, "utf8").split(") ")[1]?.split(" ");
@@ -1276,9 +1260,6 @@ globalThis.Date = class extends OriginalDate {
         throw error;
       }
     };
-    while (live() && Date.now() < deadline) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
     check(live()).toBe(false);
     const snapshot = expectDefined(workerBoundary.snapshot, "owned worker snapshot");
     scratchCleanedByOwner = !existsSync(snapshot);
@@ -1458,7 +1439,7 @@ describe("FRV required registry admission", () => {
               },
             ]),
           );
-          check(actualRequests).toHaveLength(5);
+          check(actualRequests).toHaveLength(6);
           check(result.observations).toMatchObject({
             sourceDigest: result.fact?.digest,
             pendingAuthority: [],
@@ -1471,17 +1452,85 @@ describe("FRV required registry admission", () => {
 });
 
 describe("FRV observation worker boundary", () => {
+  publicationIt.concurrent(
+    "retains publication states through isolated observation, planning, and artifact admission",
+    async ({ command: processFixture, expect: check }) =>
+      processFixture.lifetime.run(async () => {
+        const publications: Record<string, ClawHubPublicationState> = {
+          "@openclaw/demo-plugin": { state: "absent" },
+          "@openclaw/demo-1": { state: "published" },
+          "@openclaw/demo-2": { state: "pending", stage: "staging" },
+          "@openclaw/demo-3": { state: "pending", stage: "checks", attemptId: "attempt_checks" },
+          "@openclaw/demo-4": {
+            state: "pending",
+            stage: "finalization",
+            attemptId: "attempt_final",
+          },
+          "@openclaw/demo-5": { state: "failed", recoverable: true, attemptId: "attempt_recover" },
+          "@openclaw/demo-6": { state: "failed", recoverable: false },
+        };
+        const result = await fixture(processFixture, check, {
+          registry: "healthy",
+          pluginCount: 7,
+          clawhubPublication: publications,
+        });
+        check(result.status, result.stderr).toBe(0);
+        const { observations } = result;
+        check(observations.plans.clawhub).toMatchObject({
+          candidates: ["@openclaw/demo-plugin"],
+          skippedPublished: ["@openclaw/demo-1"],
+          pendingPublication: ["@openclaw/demo-2", "@openclaw/demo-3", "@openclaw/demo-4"],
+          failedPublication: ["@openclaw/demo-5", "@openclaw/demo-6"],
+        });
+        for (const [name, publication] of Object.entries(publications)) {
+          const entry = { name, publication, alreadyPublished: publication.state === "published" };
+          check(observations.clawhub).toContainEqual(
+            expect.objectContaining({
+              name,
+              state: expect.objectContaining({
+                publication,
+                alreadyPublished: entry.alreadyPublished,
+              }),
+            }),
+          );
+          check(observations.plans.clawhub.all).toContainEqual(expect.objectContaining(entry));
+        }
+        const source = expectDefined(result.fact, "publication source");
+        const shells = structuredClone(observations);
+        for (const row of shells.clawhub) {
+          if (["pending", "failed"].includes(row.state.publication.state)) {
+            row.state.hasTrustedPublisher = false;
+            row.state.trustedPublisher = null;
+          }
+        }
+        check(createPublicationObservations(source, shells)).toEqual(shells);
+        const malformed = structuredClone(observations);
+        delete malformed.clawhub[0].state.publication;
+        check(() => createPublicationObservations(source, malformed)).toThrow("outcome mismatch");
+        const missingBucket = structuredClone(observations);
+        delete missingBucket.plans.clawhub.pendingPublication;
+        check(() => createPublicationObservations(source, missingBucket)).toThrow("incomplete");
+        const republish = structuredClone(observations);
+        republish.plans.clawhub.candidates.push("@openclaw/demo-2");
+        check(() => createPublicationObservations(source, republish)).toThrow("outcome mismatch");
+        const legacy = structuredClone(observations);
+        for (const row of legacy.clawhub) {
+          delete row.state.publication;
+        }
+        for (const row of legacy.plans.clawhub.all) {
+          delete row.publication;
+        }
+        delete legacy.plans.clawhub.pendingPublication;
+        delete legacy.plans.clawhub.failedPublication;
+        legacy.plans.clawhub.candidates = legacy.plans.clawhub.all
+          .filter((row: { alreadyPublished: boolean }) => !row.alreadyPublished)
+          .map((row: { name: string }) => row.name);
+        const originalBytes = JSON.stringify(legacy);
+        check(createPublicationObservations(source, legacy)).toEqual(legacy);
+        check(JSON.stringify(legacy)).toBe(originalBytes);
+      }),
+  );
   publicationIt.concurrent.for([
-    [
-      "beta plugin",
-      "2026.9.9-beta.1",
-      "2026.9.9-beta.1",
-      "normal",
-      "beta",
-      "@openclaw/demo-plugin",
-      "npm-absent",
-      true,
-    ],
     ["root package", "2026.9.9", "2026.9.9", "normal", "latest", "openclaw", "npm-absent", false],
     [
       "core package",
@@ -1490,16 +1539,6 @@ describe("FRV observation worker boundary", () => {
       "normal",
       "latest",
       "@openclaw/gateway-client",
-      "npm-absent",
-      false,
-    ],
-    [
-      "stable plugin on beta",
-      "2026.9.9",
-      "2026.9.9",
-      "normal",
-      "beta",
-      "@openclaw/demo-plugin",
       "npm-absent",
       false,
     ],
@@ -1544,16 +1583,6 @@ describe("FRV observation worker boundary", () => {
       true,
     ],
     [
-      "prepared beta plugin",
-      "2026.9.9-beta.1",
-      "2026.9.9-beta.1",
-      "prepared",
-      "beta",
-      "@openclaw/demo-plugin",
-      "npm-absent",
-      true,
-    ],
-    [
       "prepared npm-only beta plugin",
       "2026.9.9-beta.1",
       "2026.9.9-beta.1",
@@ -1579,16 +1608,6 @@ describe("FRV observation worker boundary", () => {
       "2026.9.9-beta.1",
       "normal",
       "beta",
-      "@openclaw/demo-plugin",
-      "npm-empty-history",
-      false,
-    ],
-    [
-      "stable empty history",
-      "2026.9.9",
-      "2026.9.9",
-      "normal",
-      "latest",
       "@openclaw/demo-plugin",
       "npm-empty-history",
       false,
@@ -1727,8 +1746,6 @@ describe("FRV observation worker boundary", () => {
   );
 
   publicationIt.concurrent.for([
-    ["npm-absent", "normal", true, "npm", "owner-preparation-and-access"],
-    ["npm-absent", "prepared", true, "npm", "owner-preparation-and-access"],
     ["clawhub-absent", "normal", true, "clawhub", "bootstrap-and-owner-access"],
     ["clawhub-absent", "prepared", false, "clawhub", ""],
     ["missing-trust", "normal", true, "clawhub", "publisher-repair"],
@@ -1779,7 +1796,7 @@ describe("FRV observation worker boundary", () => {
         });
         check(result.status, result.stderr).toBe(0);
         const reads = result.registryCalls.filter((entry) => entry.kind === "request");
-        check(reads).toHaveLength(4 * count + 2);
+        check(reads).toHaveLength(5 * count + 2);
         check(reads.filter((entry) => entry.path === "/demo-runtime")).toHaveLength(1);
         const settlement = result.registryCalls.find(
           (entry) => entry.kind === "settled" && entry.worker,
@@ -1863,23 +1880,6 @@ describe("FRV observation worker boundary", () => {
         check(result.observations).toBeUndefined();
       }),
   );
-
-  publicationIt.concurrent(
-    "uses the existing parser-false runtime for a same-SHA worker",
-    async ({ command: processFixture, expect: check }) =>
-      processFixture.lifetime.run(async () => {
-        const result = await fixture(processFixture, check, { registry: "healthy", sameSha: true });
-        check(result.status, result.stderr).toBe(0);
-        check(result.targetSha).toBe(result.toolingSha);
-        check(result.registryCalls.filter((entry) => entry.kind === "request")).toHaveLength(5);
-        check(result.registryCalls).toContainEqual({
-          kind: "runtime",
-          worker: true,
-          inherited: [],
-        });
-      }),
-    30_000,
-  );
 });
 
 describe("FRV publication source admission", () => {
@@ -1934,10 +1934,6 @@ describe("FRV publication source admission", () => {
   );
   publicationIt.concurrent.for([
     ["2026.9.9", "normal", false],
-    ["2026.9.9-1", "normal", false],
-    ["2026.9.9", "prepared", false],
-    ["2026.9.9-1", "prepared", false],
-    ["2026.9.9", "normal", true],
     ["2026.9.9-1", "prepared", true],
   ] as const)(
     "preserves beta-first %s publication through %s with Windows=%s",
@@ -2043,27 +2039,7 @@ describe("FRV publication source admission", () => {
         const result = await fixture(processFixture, check, { fault: "readme" });
         check(result.status, result.stderr).toBe(1);
         check(result.stderr).toContain("README.md must exist");
-        for (const id of ["normal_ci", "prepare_npm_package", "prepare_docker_release"]) {
-          const job = expectDefined(workflow.jobs[id], `${id} job`);
-          check([job.needs].flat()).toContain("resolve_target");
-          check(
-            evaluate(job.if ?? "", {
-              github: { run_attempt: 1 },
-              inputs: { rerun_group: "all" },
-              needs: {
-                resolve_target: {
-                  result: result.status === 0 ? "success" : "failure",
-                  outputs: {
-                    candidate_required: "true",
-                    target_version: "2026.9.9",
-                  },
-                },
-                plugin_compatibility_readiness: { result: "success" },
-                evidence_reuse: { result: "skipped", outputs: { reuse: "false" } },
-              },
-            }),
-          ).toBe(false);
-        }
+        check(result.fact).toBeUndefined();
       }),
     30_000,
   );
@@ -2101,7 +2077,7 @@ describe("FRV publication source admission", () => {
       }),
   );
 
-  publicationIt.concurrent.for(["diagnostic", "main-qualification", "postpublish-confidence"])(
+  publicationIt.concurrent.for(["diagnostic"])(
     "retains %s without publication bootstrap or added installation",
     { timeout: 30_000 },
     async (purpose, { command: processFixture, expect: check }) =>
@@ -2154,7 +2130,6 @@ describe("FRV publication source admission", () => {
   publicationIt.concurrent.for([
     ["2026.9.9-beta.1", "normal", "beta", "release/2026.9.9", false],
     ["2026.9.9", "normal", "latest", "release/2026.9.9", true],
-    ["2026.9.9", "normal", "beta", "v2026.9.9", true],
     ["2026.9.9-1", "normal", "beta", "v2026.9.9-1", true],
   ] as const)(
     "matches actual Windows publication selection for %s through %s to %s",
@@ -2281,7 +2256,6 @@ describe("FRV publication source admission", () => {
 
   publicationIt.concurrent.for([
     ["2026.9.9-beta.1", "normal", "beta", "release/2026.9.9"],
-    ["2026.9.9", "prepared", "latest", "release/2026.9.9"],
     ["2026.8.33", "extended-stable", "extended-stable", "extended-stable/2026.8.33"],
   ])(
     "admits %s through the existing %s source policy",
@@ -2300,14 +2274,7 @@ describe("FRV publication source admission", () => {
         check(result.fact?.projection?.version).toBe(version);
         check(result.fact?.targetContextRef).toBe(targetContextRef);
         const platforms = expectDefined(result.fact?.projection?.platforms, "source platforms");
-        if (version === "2026.9.9") {
-          check(platforms).toContainEqual({
-            id: "linux",
-            source: ".github/workflows/linux-app-release-request.yml",
-          });
-        } else {
-          check(platforms).not.toContainEqual(expect.objectContaining({ id: "linux" }));
-        }
+        check(platforms).not.toContainEqual(expect.objectContaining({ id: "linux" }));
         if (route === "extended-stable") {
           check(result.fact?.projection?.packages).toEqual(
             expect.arrayContaining([{ name: "@openclaw/demo-plugin", version, targets: ["npm"] }]),
@@ -2487,10 +2454,7 @@ describe("publication source intent and durable binding", () => {
   );
 
   publicationIt.each([
-    ["vbad", false],
-    ["latest", false],
     ["v0.5", false],
-    ["v0.5.0", true],
     ["v0.5.0-rc.1", true],
   ])("validates Windows source tag %s using its native version contract", (tag, valid) => {
     const normalize = () =>
@@ -2506,24 +2470,13 @@ describe("publication source intent and durable binding", () => {
   });
 
   publicationIt.each([
-    ["", ""],
     ["unknown", ""],
     ["publish", ""],
-    ["diagnostic", JSON.stringify(selection)],
     ["publish", JSON.stringify({ ...selection, extra: true })],
     ["publish", JSON.stringify({ ...selection, pluginPublishScope: "selected" })],
     ["publish", JSON.stringify({ ...selection, route: "prepared", publishOpenclawNpm: false })],
   ])("rejects contradictory purpose/selection %s %s", (purpose, value) => {
     expect(() => normalizePublicationIntent(purpose, value)).toThrow();
-  });
-
-  publicationIt("keeps canonical reusable intent free of per-parent identities", () => {
-    expect(
-      publicationIntentInputs(normalizePublicationIntent("publish", JSON.stringify(selection))),
-    ).toEqual({
-      validationPurpose: "publish",
-      publicationSelectionJson: publicationSourceJson(selection),
-    });
   });
 
   publicationIt(

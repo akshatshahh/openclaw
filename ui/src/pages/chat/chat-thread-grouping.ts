@@ -24,6 +24,7 @@ import {
   chatItemStartsDisplayTurn,
   chatItemStartsUserTurn,
   hasForwardedSource,
+  isInterSessionMessage,
 } from "./chat-turn-boundary.ts";
 import { indexTurnContinuations, persistedSteerTargetRunId } from "./stream-causal-boundary.ts";
 
@@ -272,8 +273,11 @@ function groupChatItems(
     if (
       !currentGroup ||
       startsProjectedTurn ||
+      (isInterSessionMessage(item.message) && !normalized.senderSession?.sessionKey) ||
       currentGroup.role !== role ||
       currentGroup.runId !== runId ||
+      isInterSessionMessage(currentGroup.messages[0]?.message) !==
+        isInterSessionMessage(item.message) ||
       currentUserTurnIdentity !== userTurnIdentity ||
       (role === "assistant" && currentReplyTargetKey !== replyTargetKey) ||
       splitsAssistantKind ||
@@ -283,6 +287,7 @@ function groupChatItems(
         ((!sender?.identity && currentGroup.senderLabel !== senderLabel) ||
           currentGroup.senderSession?.sessionKey !== normalized.senderSession?.sessionKey ||
           currentGroup.senderSession?.label !== normalized.senderSession?.label ||
+          currentGroup.senderSession?.agentId !== normalized.senderSession?.agentId ||
           senderIdentityKey(currentGroup.sender) !== senderIdentityKey(sender)))
     ) {
       if (currentGroup) {
@@ -370,6 +375,8 @@ export type WorkGroupRenderItem = {
   kind: "work-group";
   key: string;
   groups: MessageGroup[];
+  /** Terminal reply owning this rollup’s presentation, not its nested execution identities. */
+  replyRunId?: string;
   /** Hidden group -> preceding preserved output; absent entries stay under the summary. */
   previewAfterGroup?: ReadonlyMap<string, string>;
   durationMs: number | null;
@@ -601,6 +608,22 @@ export function collapseCompletedTurnWork(
         ? runtimeMs
         : null;
     const continuationBoundary = turns[continuationTurnIndexes.get(turnIndex) ?? -1]?.[0];
+    // A completed rollup may span automatic resumptions. Its reply owns the
+    // display only when reaching it crosses neither another answer’s run nor a steer.
+    const replyRunId =
+      finalReplyIndex >= 0 &&
+      !hasForwardedSource(terminalReply) &&
+      !groups.some(hasForwardedSource) &&
+      answers
+        .slice(0, answers.indexOf(terminalReply))
+        .every(
+          (answer) =>
+            answer.kind === "group" &&
+            !hasForwardedSource(answer) &&
+            answer.runId === terminalReply.runId,
+        )
+        ? terminalReply.runId
+        : undefined;
     result.push(...turn.slice(0, segmentStart));
     result.push({
       kind: "work-group",
@@ -609,6 +632,7 @@ export function collapseCompletedTurnWork(
         finalReplyIndex >= 0 || !continuationBoundary ? terminalReply.key : continuationBoundary.key
       }`,
       groups,
+      ...(replyRunId ? { replyRunId } : {}),
       ...(previewAfterGroup.size > 0 ? { previewAfterGroup } : {}),
       durationMs,
     });

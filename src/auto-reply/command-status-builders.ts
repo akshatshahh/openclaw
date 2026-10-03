@@ -55,7 +55,7 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
   const optionParts = [
     "/think <level|default>",
     "/model <id>",
-    "/fast status|auto|on|off|default",
+    "/fast status|auto|on|off|ultrafast|default",
     "/verbose on|off|full",
     "/trace on|off|raw",
   ];
@@ -141,9 +141,11 @@ function buildCommandItems(
 
   for (const command of pluginCommands) {
     const pluginLabel = command.pluginId ? ` (${command.pluginId})` : "";
+    // Preserve the canonical spelling without auto-linking only its prefix or guessing an alias.
+    const commandName = command.name.includes("-") ? `\`/${command.name}\`` : `/${command.name}`;
     items.push({
       label: "Plugins",
-      text: `/${command.name}${pluginLabel} - ${command.description}`,
+      text: `${commandName}${pluginLabel} - ${command.description}`,
     });
   }
 

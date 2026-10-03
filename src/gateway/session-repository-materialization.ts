@@ -115,7 +115,11 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
     throw error;
   });
   assertCurrent();
-  const { step, require: command, run } = createGitHubPublicationCommandRunner(assertCurrent);
+  const {
+    step,
+    require: command,
+    run,
+  } = createGitHubPublicationCommandRunner(assertCurrent, "session.materialize");
   const cloneOptions = { signal: params.signal, token: github?.token };
   const source = { url: repository.url, target: project.repoRoot };
   const remoteHead = await step(() =>
@@ -219,10 +223,10 @@ export async function materializeSessionRepositoryWorkspaceOnGateway(params: {
             // The checkout is unbound until verification. Failed preparation rolls it
             // back; a crash leaves the immutable checkpoint available for a fresh retry.
             journal: {
-              load: () => undefined,
-              begin: assertCurrent,
-              commit: assertCurrent,
-              abort: () => {},
+              load: async () => undefined,
+              begin: async () => assertCurrent(),
+              commit: async () => assertCurrent(),
+              abort: async () => {},
             },
           });
           if (applied.conflictPaths.length || applied.manifestRef !== repository.manifestHash) {

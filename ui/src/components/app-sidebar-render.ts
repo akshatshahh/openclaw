@@ -48,6 +48,7 @@ import { renderSidebarReorderMenu } from "./sidebar-reorder.ts";
 export type AppSidebarRenderHost = AppSidebarSessionNavigationElement & {
   activePluginTabId: string;
   teamOnlineExpanded: boolean;
+  readonly people: import("./sidebar-people-controller.ts").SidebarPeopleController;
   getRouteSessionKey(): string;
   renderPinnedSidebarSession(session: SidebarRecentSession): unknown;
   toggleSection(sectionId: string): void;
@@ -72,6 +73,9 @@ function renderSidebarAgentCard(host: AppSidebarRenderHost) {
     agents: cardAgents,
     identity: cardIdentity,
   } = host.activeChipAgent();
+  if (!cardAgent) {
+    return renderSidebarWorkspaceHeader(host);
+  }
   const menuUnread = cardAgents.some((entry) => {
     const agentId = normalizeAgentId(entry.id);
     return agentId !== cardAgentId && host.agentUnreadCount(agentId) > 0;

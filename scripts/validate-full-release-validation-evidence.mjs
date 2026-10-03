@@ -336,25 +336,7 @@ export function validateFullReleaseValidationEvidence({
     }
     return strictEvidence;
   };
-  let classificationRoot;
-  if (
-    manifest.evidenceReuse &&
-    Object.values(manifest.childEvidence ?? {}).some((child) => child.flakeClassifications?.length)
-  ) {
-    const authenticated = strict();
-    if (
-      authenticated.valid !== true ||
-      authenticated.current?.runId !== String(expectedRunId) ||
-      authenticated.current?.runAttempt !== run.runAttempt ||
-      authenticated.conclusions?.allRequiredSucceeded !== true ||
-      publicationObservationJson(authenticated.current?.manifest) !==
-        publicationObservationJson(manifest)
-    ) {
-      throw new Error("Release classification evidence differs from its authenticated manifest.");
-    }
-    classificationRoot = authenticated.root?.manifest;
-  }
-  validateReleaseManifestAdvisoryJobs(manifest, classificationRoot);
+  validateReleaseManifestAdvisoryJobs(manifest);
   if (sourceAdmission) {
     // Historical recovery must not acquire a new publication-selection contract.
     const selected =

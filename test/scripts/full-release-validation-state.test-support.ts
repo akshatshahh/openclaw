@@ -132,6 +132,26 @@ export function child(key: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+export function githubRun(
+  planned: ReturnType<typeof child>,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    actor: { login: "github-actions[bot]" },
+    display_title: planned.displayTitle,
+    event: "workflow_dispatch",
+    head_branch: planned.workflowRef,
+    head_sha: planned.workflowSha,
+    id: 101,
+    path: ".github/workflows/ci.yml",
+    repository: { full_name: "openclaw/openclaw" },
+    run_attempt: 1,
+    status: "completed",
+    triggering_actor: { login: "github-actions[bot]" },
+    ...overrides,
+  };
+}
+
 export function plan(overrides: Record<string, unknown> = {}) {
   return buildReleaseExecutionPlan({
     children: {

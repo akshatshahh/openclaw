@@ -46,7 +46,11 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { isMissingOperatorReadScopeError } from "../../lib/gateway-errors.ts";
 import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { loadModelCatalog } from "../../lib/model-catalog-store.ts";
-import { readSystemInfo, SYSTEM_INFO_POLL_INTERVAL_MS } from "../../lib/system-info.ts";
+import {
+  canReadSystemInfo,
+  readSystemInfo,
+  SYSTEM_INFO_POLL_INTERVAL_MS,
+} from "../../lib/system-info.ts";
 import {
   GatewayPageController,
   type GatewayPageChange,
@@ -62,7 +66,7 @@ import {
   type RealtimeTalkInputDevice,
 } from "../chat/talk/input.ts";
 import { switchActiveRealtimeTalkCameras } from "../chat/talk/session.ts";
-import { isUnknownSystemInfoMethodError, supportsSystemInfo } from "../connection/system-info.ts";
+import { isUnknownSystemInfoMethodError } from "../connection/system-info.ts";
 import { renderBrowserLinkPreferencesRow } from "./browser-link-preferences.ts";
 import { ConfigRouteScrollController } from "./config-route-scroll-controller.ts";
 import {
@@ -400,38 +404,18 @@ export class ConfigPage extends OpenClawLightDomElement {
     onPageActivation: () => this.syncSystemInfoPolling(),
   });
   private readonly subscriptions = new SubscriptionsController(this)
-    .watch(
+    .watchStore(
       () => this.context?.runtimeConfig,
-      (runtimeConfig, notify) => runtimeConfig.subscribe(notify),
       (runtimeConfig) => this.synchronizeRuntimeConfig(runtimeConfig),
     )
-    .watch(
-      () => this.context?.overlays,
-      (overlays, notify) => overlays.subscribe(notify),
-    )
-    .watch(
-      () => this.context?.config,
-      (config, notify) => config.subscribe(notify),
-    )
-    .watch(
-      () => this.context?.settingsAgentSelection,
-      (selection, notify) => selection.subscribe(notify),
-    )
-    .watch(
-      () => this.context?.nativeDeviceSettings ?? undefined,
-      (nativeDeviceSettings, notify) => nativeDeviceSettings.subscribe(notify),
-    )
-    .watch(
-      () => this.context?.nativeNotifications ?? undefined,
-      (nativeNotifications, notify) => nativeNotifications.subscribe(notify),
-    )
-    .watch(
-      () => this.context?.webPush,
-      (webPush, notify) => webPush.subscribe(notify),
-    )
-    .watch(
+    .watchStore(() => this.context?.overlays)
+    .watchStore(() => this.context?.config)
+    .watchStore(() => this.context?.settingsAgentSelection)
+    .watchStore(() => this.context?.nativeDeviceSettings ?? undefined)
+    .watchStore(() => this.context?.nativeNotifications ?? undefined)
+    .watchStore(() => this.context?.webPush)
+    .watchStore(
       () => this.context?.theme,
-      (theme, notify) => theme.subscribe(notify),
       () => {
         this.settings = this.customThemeImportOwner.adoptSettings(
           this.settings,
@@ -645,7 +629,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       this.systemInfo = null;
     }
     if (snapshot.phase === "connected" && snapshot.hello) {
-      this.systemInfoUnavailable = !supportsSystemInfo(snapshot.hello);
+      this.systemInfoUnavailable = !canReadSystemInfo(snapshot);
       if (this.systemInfoUnavailable) {
         this.invalidateSystemInfoRequest();
         this.systemInfo = null;
@@ -675,22 +659,18 @@ export class ConfigPage extends OpenClawLightDomElement {
   }
 
   private systemInfoRequestClient(): GatewayBrowserClient | null {
-    const gatewaySource = this.gateway.gateway;
-    const gateway = gatewaySource?.snapshot;
+    const gateway = this.gateway.gateway;
     if (
-      !gatewaySource ||
-      !gateway ||
       !this.isConnected ||
       document.visibilityState === "hidden" ||
       this.pageId !== "appearance" ||
-      this.context.gateway !== gatewaySource ||
-      gateway.phase !== "connected" ||
-      !supportsSystemInfo(gateway.hello) ||
+      this.context.gateway !== gateway ||
+      !canReadSystemInfo(gateway?.snapshot) ||
       this.systemInfoUnavailable
     ) {
       return null;
     }
-    return gateway.client;
+    return gateway?.snapshot.client ?? null;
   }
 
   private resetSessionObserverModels(unavailable = false) {

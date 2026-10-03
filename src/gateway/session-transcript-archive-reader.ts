@@ -47,6 +47,7 @@ export type ReadSessionMessagesAsyncOptions =
   | {
       mode: "full";
       reason: string;
+      includeOffPathMessages?: boolean;
     }
   | ({
       mode: "recent";
@@ -71,6 +72,7 @@ const RECENT_SESSION_MESSAGES_DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 
 type ArchivedTranscriptReadScope = {
   agentId?: string | undefined;
+  exactArchivePath?: string | undefined;
   sessionFile?: string | undefined;
   sessionId: string;
   storePath?: string | undefined;
@@ -157,6 +159,13 @@ export class ArchivedTranscriptReader {
   constructor(private readonly scope: ArchivedTranscriptReadScope) {}
 
   private async resolvePath(): Promise<string | null> {
+    if (this.scope.exactArchivePath) {
+      const exactPath = this.scope.exactArchivePath;
+      if ((await fs.promises.stat(exactPath).catch(() => null))?.isFile()) {
+        return materializeSessionArchiveForRead(exactPath);
+      }
+      return null;
+    }
     const archives = await resolveSessionTranscriptResetArchiveCandidatesAsync(
       this.scope.sessionId,
       this.scope.storePath,

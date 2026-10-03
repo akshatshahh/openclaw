@@ -23,7 +23,10 @@ import { candidatePublicationFixture } from "./candidate-publication.test-suppor
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-function consumers(f: ReturnType<typeof candidatePublicationFixture>) {
+function consumers(
+  f: ReturnType<typeof candidatePublicationFixture>,
+  evidenceClient: Parameters<typeof validateReleaseRunEvidence>[1] = f.client,
+) {
   return {
     npm: () =>
       verifyNpmPreflightPublicationLineage({
@@ -36,7 +39,7 @@ function consumers(f: ReturnType<typeof candidatePublicationFixture>) {
         producerRunId: f.runId,
         producerRunAttempt: "1",
         runGh: f.runGh,
-        evidenceClient: f.client,
+        evidenceClient,
       }),
     docker: () =>
       verifyDockerReleaseProducer(f.docker, {
@@ -44,7 +47,7 @@ function consumers(f: ReturnType<typeof candidatePublicationFixture>) {
         publisherFullRef: f.publisherFullRef,
         fullReleaseManifest: f.manifest,
         readApi: f.readApi,
-        evidenceClient: f.client,
+        evidenceClient,
       }),
   };
 }
@@ -164,6 +167,18 @@ describe("candidate-owned publish consumer chain", () => {
         result.children.every((child) => child.workflowSha === root.q && child.runAttempt === 1),
       ).toBe(true);
       expect(result.conclusions.allRequiredSucceeded).toBe(true);
+      const publication = consumers(current, client);
+      await expect(publication.npm()).resolves.toEqual(current.npmQualified);
+      await expect(publication.docker()).resolves.toBeDefined();
+      if (mode === "changelog") {
+        const staleArtifacts = consumers({ ...root, manifest: current.manifest }, client);
+        await expect(staleArtifacts.npm()).rejects.toThrow(
+          "Candidate-owned artifact source and qualification SHA differ",
+        );
+        await expect(staleArtifacts.docker()).rejects.toThrow(
+          "Candidate-owned artifact source and qualification SHA differ",
+        );
+      }
     },
   );
 

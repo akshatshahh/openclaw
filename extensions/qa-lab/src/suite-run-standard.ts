@@ -164,6 +164,7 @@ export async function runQaFlowSuiteStandard(
       runtimeEnvPatch: mergeQaRuntimeEnvPatches(
         transport.createRuntimeEnvPatch?.(),
         buildQaGatewayHeapCheckpointRuntimeEnvPatch(),
+        gatewayRuntimeOptions?.env,
       ),
       ...(runtimePreloads ? { runtimePreloads } : {}),
     });
@@ -263,6 +264,13 @@ export async function runQaFlowSuiteStandard(
       let previousAttempt = recording.invocation.previousFailure(index);
       const recorded: { selected?: QaSuiteScenarioResult } = {};
       let roundTripStartCursor: number | undefined;
+      const recordFailure = (id: string, error: unknown, selectedId?: string) =>
+        recording.record(
+          index,
+          id,
+          { name: scenario.title, status: "fail", details: String(error), steps: [] },
+          { diagnostic: true, env: activeEnv, selectedId },
+        );
       const runObservedScenario = async () => {
         // Retry backoff and unsuccessful attempts are not part of the final
         // runtime turn, and they must not be relabeled as gateway bootstrap.
@@ -275,17 +283,7 @@ export async function runQaFlowSuiteStandard(
         try {
           result = await runScenarioDefinition(activeEnv, scenario);
         } catch (error) {
-          await recording.record(
-            index,
-            id,
-            {
-              name: scenario.title,
-              status: "fail",
-              details: String(error),
-              steps: [],
-            },
-            { diagnostic: true, env: activeEnv, selectedId: previousAttempt ?? id },
-          );
+          await recordFailure(id, error, previousAttempt ?? id);
           throw error;
         } finally {
           scenarioExecutionFinishedAt = new Date();
@@ -329,17 +327,7 @@ export async function runQaFlowSuiteStandard(
             scenarioStartCursor: roundTripStartCursor,
           });
         } catch (error) {
-          await recording.record(
-            index,
-            probeOccurrenceId,
-            {
-              name: scenario.title,
-              status: "fail",
-              details: String(error),
-              steps: [],
-            },
-            { diagnostic: true, env: activeEnv },
-          );
+          await recordFailure(probeOccurrenceId, error);
           throw error;
         }
         const probePassed = probeResult.passed >= params.roundTripProbe.count;
@@ -411,10 +399,7 @@ export async function runQaFlowSuiteStandard(
     });
     const failedCount = scenarios.filter((scenario) => scenario.status === "fail").length;
     const skippedCount = scenarios.filter((scenario) => scenario.status === "skip").length;
-    if (
-      scenarios.some((scenario) => scenario.status === "fail") ||
-      gatewayRuntimeOptions?.preserveDebugArtifacts === true
-    ) {
+    if (failedCount > 0 || gatewayRuntimeOptions?.preserveDebugArtifacts === true) {
       preserveGatewayRuntimeDir = path.join(outputDir, "artifacts", "gateway-runtime");
     }
     if (!isQaSuiteNestedRun(params)) {
@@ -426,14 +411,11 @@ export async function runQaFlowSuiteStandard(
       const finishedAt = new Date();
       const result = await completeQaSuiteRun(
         {
-          repoRoot,
           outputDir,
           startedAt,
           finishedAt,
           scenarios,
           metrics,
-          scenarioDefinitions: selectedScenarios,
-          evidenceMode: params?.evidenceMode,
           recordedEvidence: recording.snapshot(),
           transport,
           providerMode,
@@ -446,8 +428,6 @@ export async function runQaFlowSuiteStandard(
           transportArtifacts,
           isolatedWorkers: false,
           writeEvidenceFile: params?.writeEvidenceFile,
-          // Same "filtered → executed list, unfiltered → null" convention as
-          // the concurrent-path writeQaSuiteArtifacts call above.
           scenarioIds:
             params?.scenarioIds && params.scenarioIds.length > 0
               ? selectedScenarios.map((scenario) => scenario.id)

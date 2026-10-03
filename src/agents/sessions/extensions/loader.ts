@@ -28,12 +28,14 @@ import { createEventBus, type EventBus } from "../event-bus.js";
 import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
 import * as bundledAgentSessions from "../extension-sdk.js";
+import { warnSessionPersistenceDeprecation } from "../session-persistence-deprecation.js";
 import { createSyntheticSourceInfo } from "../source-info.js";
 import type {
   Extension,
   ExtensionAPI,
   ExtensionFactory,
   ExtensionRuntime,
+  ExtensionRuntimeV2,
   ExtensionShortcut,
   LoadExtensionsResult,
   MessageRenderer,
@@ -92,12 +94,8 @@ async function loadCreateJitiLoaderFactory(): Promise<typeof createJiti> {
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
-function normalizeUnicodeSpaces(str: string): string {
-  return str.replace(UNICODE_SPACES, " ");
-}
-
 function expandPath(p: string): string {
-  const normalized = normalizeUnicodeSpaces(p);
+  const normalized = p.replace(UNICODE_SPACES, " ");
   if (normalized.startsWith("~/")) {
     return path.join(os.homedir(), normalized.slice(2));
   }
@@ -160,20 +158,23 @@ export function createExtensionRuntime(): ExtensionRuntime {
       "Extension runtime not initialized. Action methods cannot be called during extension loading.",
     );
   };
-  const state: { staleMessage?: string } = {};
+  let staleMessage: string | undefined;
   const assertActive = () => {
-    if (state.staleMessage) {
-      throw new Error(state.staleMessage);
+    if (staleMessage) {
+      throw new Error(staleMessage);
     }
   };
 
-  const runtime: ExtensionRuntime = {
+  const runtime: ExtensionRuntimeV2 = {
     sendMessage: notInitialized,
     sendUserMessage: notInitialized,
     appendEntry: notInitialized,
+    appendEntryAsync: notInitialized,
     setSessionName: notInitialized,
+    setSessionNameAsync: notInitialized,
     getSessionName: notInitialized,
     setLabel: notInitialized,
+    setLabelAsync: notInitialized,
     getActiveTools: notInitialized,
     getAllTools: notInitialized,
     setActiveTools: notInitialized,
@@ -187,7 +188,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
     pendingProviderRegistrations: [],
     assertActive,
     invalidate: (message) => {
-      state.staleMessage ??=
+      staleMessage ??=
         message ??
         "This extension ctx is stale after session replacement or reload. Do not use a captured api or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
     },
@@ -221,7 +222,7 @@ function createExtensionAPI(
     runtime.assertActive();
     return runtime;
   };
-  const api = {
+  return {
     // Registration methods - write to extension
     on(event: string, handler: HandlerFn): void {
       runtime.assertActive();
@@ -290,15 +291,44 @@ function createExtensionAPI(
     sendUserMessage: (content, options) => {
       activeRuntime().sendUserMessage(content, options);
     },
+    // Retained synchronous adapters for third-party extensions until the next SDK major.
     appendEntry: (customType, data) => {
+      warnSessionPersistenceDeprecation("ExtensionAPI.appendEntry", "appendEntryAsync");
       activeRuntime().appendEntry(customType, data);
     },
+    appendEntryAsync: async (customType, data) => {
+      const owner = activeRuntime();
+      if (!owner.appendEntryAsync) {
+        throw new Error("Extension host must bind worker persistence with bindCoreAsync");
+      }
+      const id = await owner.appendEntryAsync(customType, data);
+      owner.assertActive();
+      return id;
+    },
     setSessionName: (name) => {
+      warnSessionPersistenceDeprecation("ExtensionAPI.setSessionName", "setSessionNameAsync");
       activeRuntime().setSessionName(name);
+    },
+    setSessionNameAsync: async (name) => {
+      const owner = activeRuntime();
+      if (!owner.setSessionNameAsync) {
+        throw new Error("Extension host must bind worker persistence with bindCoreAsync");
+      }
+      await owner.setSessionNameAsync(name);
+      owner.assertActive();
     },
     getSessionName: () => activeRuntime().getSessionName(),
     setLabel: (entryId, label) => {
+      warnSessionPersistenceDeprecation("ExtensionAPI.setLabel", "setLabelAsync");
       activeRuntime().setLabel(entryId, label);
+    },
+    setLabelAsync: async (entryId, label) => {
+      const owner = activeRuntime();
+      if (!owner.setLabelAsync) {
+        throw new Error("Extension host must bind worker persistence with bindCoreAsync");
+      }
+      await owner.setLabelAsync(entryId, label);
+      owner.assertActive();
     },
     exec(command: string, args: string[], options?: ExecOptions) {
       runtime.assertActive();
@@ -322,8 +352,6 @@ function createExtensionAPI(
 
     events: eventBus,
   } as ExtensionAPI;
-
-  return api;
 }
 
 function resolveExtensionFactory(module: unknown): ExtensionFactory | undefined {

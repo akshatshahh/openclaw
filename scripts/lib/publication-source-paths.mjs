@@ -1,3 +1,5 @@
+// Acquisition includes the producer's committed runtime and policy inputs. The producer
+// remains responsible for verifying its executing bootstrap, fixed imports and YAML bytes.
 export const publicationSourceToolingPaths = new Set([
   "scripts/lib/publication-source-paths.mjs",
   "package.json",
@@ -8,6 +10,7 @@ export const publicationSourceToolingPaths = new Set([
   "packages/plugin-package-contract/src/index.ts",
   "scripts/lib/bounded-response.mjs",
   "scripts/lib/canonical-json.mjs",
+  "scripts/lib/clawhub-publication-state.mjs",
   "scripts/lib/npm-publish-plan.mjs",
   "scripts/lib/npm-core-release-packages.json",
   "scripts/lib/plugin-publication-candidates.ts",

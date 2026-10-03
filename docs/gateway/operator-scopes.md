@@ -49,6 +49,16 @@ reconnect, or disconnect only their own account. These methods do not expose
 team secrets, mutate shared configuration, or grant OpenClaw write/admin scopes. System
 and per-agent GitHub changes remain `operator.admin`.
 
+Session-scoped readers can read shared GitHub publication options and receipts
+for sessions they can view through `sessions.github.options` and
+`sessions.github.status`. For these narrow callers, the shared publication option
+is available only when the session has a current managed worktree or repository
+workspace with a supported GitHub remote. Unavailable targets do not hide existing
+shared receipts. Reopen the chat or reconnect after the managed workspace changes
+to refresh its options. Personal account discovery and personal receipts still
+require `operator.read` and the authenticated owner. Identity, role, access grant,
+connection, and session visibility are rechecked before returning awaited reads.
+
 With `operator.sessions.write`, a requester can publish ordinary changes from
 sessions they created through the shared GitHub account. Workflow definition
 changes require the original requester's current full `operator.write`
@@ -62,7 +72,8 @@ already holds `operator.admin`.
 `operator.sessions.write` includes `operator.sessions.read`. Broad
 `operator.read` also includes session reads, and `operator.write` includes both
 session scopes. The session scopes do not grant general diagnostics,
-configuration changes, Gateway-wide tool invocation, or publication.
+configuration changes, Gateway-wide tool invocation, or publication outside
+the own-session shared-account path described above.
 
 Session readers can browse visible conversations and receive their updates.
 The Control UI can copy visible history as Markdown. Session writers can rename,
@@ -71,6 +82,16 @@ sessions remain read-only under these grants, including shared sessions.
 Session grants never authorize deletion or changes to an existing session's
 sharing and visibility.
 Archiving a session does not grant permission to delete it.
+
+Session readers can use `sessions.files.list`, `sessions.files.get`, and
+`sessions.files.assets` for files within a visible session's workspace. Reads
+outside that root also require the session's file tools to allow Gateway-host
+access and the caller to have current permission to start a turn there, including
+ownership, sharing-role, agent, and sandbox checks. Such previews are read-only.
+`canvas.document.preview` also accepts session read access: it returns the
+caller's HTML and isolated sandbox location without reading session data.
+Stored Canvas documents still require broader read access through
+`canvas.document.view`.
 
 In the Control UI, session writers can use **New Session**, send messages in
 their own conversations, and stop their own active runs. Their model, effort,
@@ -85,6 +106,13 @@ do not require administrator access. Session ownership, current authority,
 agent access, and runtime and sandbox requirements still apply. The
 `artifacts.list`, `artifacts.get`, and `artifacts.download` APIs require
 the broader `operator.read` scope.
+
+Hidden native sub-agents started through `sessions_spawn` use the initiating
+person's session-write authority for the exact owned child and its private
+parent completion. The child retains that person's current authority, model
+policy, and required sandbox. Direct `agent` RPC calls keep their existing
+broader scope requirements; copying a child session or run identifier does not
+grant launch permission.
 
 RPCs, events, and background tools use the same scope rules. A continuation with
 `operator.write` can read its GitHub identity and session state without another
@@ -196,6 +224,13 @@ holding `operator.admin` retain their administrative session access.
 Set `agents: "*"` to allow session creation and agent runs on every agent, list
 agent IDs to allow only those agents, or use an empty array to disallow both.
 The allowlist also applies when a run targets an already-existing session.
+Agent discovery and the Control UI agent picker show only agents allowed by the
+caller's role. An empty allowlist returns an empty agent roster; the Gateway's
+session-routing ownership remains unchanged.
+Discovery does not grant or revoke access to existing sessions: the role's
+separate session-read policy still governs which sessions the caller can read.
+The Control UI waits for a live agent roster after loading or reconnecting, so
+an older browser roster cannot restore agents excluded by the current role.
 
 Set a role's optional `modelPolicy` to limit the models used by its requests:
 
@@ -300,9 +335,18 @@ A person whose role requires sandboxing cannot start a run in an existing
 host-execution session, even when explicitly invited. Required sessions
 fail if their sandbox backend is unavailable or provisioning fails. They never
 fall back to the Gateway or a node. `/elevated`, `exec` host overrides, and
-configured host targets cannot bypass this restriction. The agent's managed
-GitHub identity is not injected into sandboxed execution: `GH_CONFIG_DIR` is
-absent, and `GH_TOKEN` and `GITHUB_TOKEN` are blanked.
+configured host targets cannot bypass this restriction.
+
+By default, the agent's managed GitHub identity is not injected into sandboxed
+execution: `GH_CONFIG_DIR` is absent, and `GH_TOKEN` and `GITHUB_TOKEN` are blanked.
+An administrator can set `agents.entries.<id>.tools.github.allowInSandbox: true`
+to expose that agent's managed identity to its own Docker or Podman sandbox,
+including role-required sandboxes isolated per creator. The profile is mounted
+read-only at `/openclaw/github`; sandboxed commands receive the managed token and
+Git author. Effective `"shared"` scope refuses this injection and logs a warning
+naming the agent. `openclaw security audit` warns for each opted-in agent. See
+[GitHub identity](/gateway/config-tools/github-identity#sandbox-opt-in) for the
+credential boundary and backend requirements.
 
 The role's `scopes` list caps scopes granted through connection auth, identity
 grants, pairing, scope upgrades, and authenticated trusted-proxy HTTP requests.
@@ -447,6 +491,10 @@ dispatch so authorization failures have one canonical structured response:
 - `sessions.delete` requires `operator.write` for an archived-only request
   with the supported fields, and `operator.admin` otherwise. Neither session
   scope authorizes deletion.
+- `session.reactions.list` accepts `operator.sessions.read` or broader read
+  access and requires current session visibility. `session.reactions.set` requires `operator.write`, an identified
+  author, and permission to send to or suggest in the session. A view-only
+  operator role cannot react.
 
 Project RPCs use these scopes:
 

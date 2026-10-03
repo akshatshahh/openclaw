@@ -1,8 +1,5 @@
-import {
-  type ChannelId,
-  type ChannelPlugin,
-  listChannelPlugins,
-} from "../channels/plugins/index.js";
+import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
+import type { AnyChannelPlugin as ChannelPlugin } from "../channels/plugins/types.plugin.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginLifecycleReason } from "../plugins/lifecycle.js";
 import { getActivePluginRegistry, getActivePluginRegistryVersion } from "../plugins/runtime.js";
@@ -27,6 +24,8 @@ export type GatewayReloadPlan = {
   restartHeartbeat: boolean;
   reconcileSystemJobs?: boolean;
   reloadPlugins: boolean;
+  /** Canonical config/install deltas that require a plugin replacement. */
+  reloadPluginPaths?: string[];
   /** Plugin owners whose undeclared channel settings require fresh registration. */
   reloadPluginIds?: Set<string>;
   pluginLifecycle?: {
@@ -574,6 +573,9 @@ export function buildGatewayReloadPlan(
     plan.hotReasons.push(path);
     for (const action of rule?.actions ?? []) {
       plan[action] = true;
+      if (action === "reloadPlugins") {
+        (plan.reloadPluginPaths ??= []).push(path);
+      }
     }
     if (rule?.replaceChannelPlugins) {
       // Manifest channel IDs survive even when registration has no active channel.

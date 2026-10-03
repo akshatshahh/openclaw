@@ -11,15 +11,15 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { afterEach } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
   SCRIPT_PATH,
   testNodeExecPath,
   prepareDispatchRepository,
+  runGit,
 } from "./full-release-validation-at-sha.repository.test-support.js";
 export {
-  SCRIPT_PATH,
-  testNodeExecPath,
   CURRENT_WORKFLOW_SOURCE,
   CONTRACT_ONE_WORKFLOW_SOURCE,
   LEGACY_WORKFLOW_SOURCE,
@@ -28,6 +28,12 @@ export {
 
 type DispatchWorkflow = { on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } } };
 const dispatchWorkflows = new Map<string, DispatchWorkflow>();
+const fixtureCleanups = new Set<() => void>();
+afterEach(() => {
+  for (const cleanup of fixtureCleanups) {
+    cleanup();
+  }
+});
 
 export function createDispatchFixture(
   options: {
@@ -638,7 +644,7 @@ if (${JSON.stringify(options.candidateOwned ?? false)} && args[0] === "api" && a
         ...(!recoveryOnly &&
         !options.candidateOwned &&
         !extraArgs.includes("--trusted-workflow-ref")
-          ? ["--trusted-workflow-ref", "main"]
+          ? ["--trusted-workflow-ref", "main", "--workflow-sha", workflowSha]
           : []),
         ...(!recoveryOnly && options.candidateOwned
           ? [
@@ -714,6 +720,25 @@ if (${JSON.stringify(options.candidateOwned ?? false)} && args[0] === "api" && a
       .filter(Boolean)
       .map((line) => JSON.parse(line));
 
+  const requestPath = () => {
+    const directory = join(checkout, ".artifacts", "full-release-validation");
+    return join(
+      directory,
+      readdirSync(directory).find((name) => name.endsWith(".json"))!,
+    );
+  };
+  const calls = (method?: string) =>
+    readCalls(ghCallsPath).filter((args) => !method || ghApiMethod(args) === method);
+  const cleanup = () => {
+    if (!fixtureCleanups.delete(cleanup)) {
+      return;
+    }
+    for (const event of readPayloadEvents().filter((entry) => entry.stage === "created")) {
+      rmSync(event.path, { force: true, recursive: true });
+    }
+    rmSync(root, { force: true, recursive: true });
+  };
+  fixtureCleanups.add(cleanup);
   return {
     checkout,
     acceptedRunPath,
@@ -722,12 +747,21 @@ if (${JSON.stringify(options.candidateOwned ?? false)} && args[0] === "api" && a
     npmCallsPath,
     publishedVersionsPath,
     artifactTransportPath,
-    cleanup: () => {
-      for (const event of readPayloadEvents().filter((entry) => entry.stage === "created")) {
-        rmSync(event.path, { force: true, recursive: true });
-      }
-      rmSync(root, { force: true, recursive: true });
-    },
+    cleanup,
+    calls,
+    record: () => JSON.parse(readFileSync(requestPath(), "utf8")),
+    dispatches: () => calls().filter(isWorkflowDispatch),
+    gitCalls: () => readCalls(gitCallsPath),
+    refs: () =>
+      runGit(checkout, [
+        "--git-dir",
+        origin,
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads/release-ci/",
+      ])
+        .split("\n")
+        .filter(Boolean),
     ghCallsPath,
     fetchCallsPath,
     gitCallsPath,
@@ -747,13 +781,7 @@ if (${JSON.stringify(options.candidateOwned ?? false)} && args[0] === "api" && a
         fileMode: number;
         directoryMode: number;
       },
-    requestPath: () => {
-      const directory = join(checkout, ".artifacts", "full-release-validation");
-      return join(
-        directory,
-        readdirSync(directory).find((name) => name.endsWith(".json"))!,
-      );
-    },
+    requestPath,
     releaseRef,
     run,
     selectedGhPath,

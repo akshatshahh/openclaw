@@ -17,6 +17,12 @@ export const OLDEST_SUPPORTED_UPGRADE_SURVIVOR_BASELINE = catalog.oldestSupporte
 export const MINIMUM_UPGRADE_SURVIVOR_BASELINE = "2026.6.1";
 export const CUSTOM_PLUGIN_SIBLINGS_BASELINE = "openclaw@2026.9.4";
 
+// 2026.9.7 retired code mode; older baselines must still seed the migration specimen.
+export function usesStructuredToolSearchAtBaseline(baselineVersion) {
+  const comparison = compareReleaseVersions(baselineVersion ?? "", "2026.9.7");
+  return comparison !== null && comparison >= 0;
+}
+
 const scenarioMinimumBaselines = new Map([
   ["custom-plugin-siblings", CUSTOM_PLUGIN_SIBLINGS_BASELINE],
   ["legacy-operator-state", `openclaw@${OLDEST_SUPPORTED_UPGRADE_SURVIVOR_BASELINE}`],
@@ -35,6 +41,7 @@ const TRUSTED_HARNESS_OWNED_SCENARIOS = new Set([
   "workshop-doctor-recovery",
   "update-report-recovery",
   "dreaming-cron-doctor",
+  "cron-owner-doctor",
 ]);
 
 export function isTrustedHarnessOwnedUpgradeSurvivorScenario(scenario) {
@@ -48,6 +55,7 @@ export function isTrustedHarnessOwnedUpgradeSurvivorScenario(scenario) {
 const aggregateScenarios = UPGRADE_SURVIVOR_SCENARIOS.filter(
   (scenario) =>
     scenario !== "abandoned-update" &&
+    scenario !== "backup-schedule" &&
     scenario !== "missing-configured-plugin-migration" &&
     scenario !== "missing-load-path" &&
     scenario !== "projects-doctor" &&
@@ -56,6 +64,7 @@ const aggregateScenarios = UPGRADE_SURVIVOR_SCENARIOS.filter(
     scenario !== "workshop-doctor-recovery" &&
     scenario !== "update-report-recovery" &&
     scenario !== "dreaming-cron-doctor" &&
+    scenario !== "cron-owner-doctor" &&
     scenario !== "mobile-pairing-reconnect" &&
     scenario !== "watchos-direct-node" &&
     scenario !== "prerelease-plugin-registry" &&
@@ -69,7 +78,7 @@ const scenarioAliases = new Map([
 
 // Historical catalogs contain only scenarios. Candidate-owned qualification also
 // records its support floor; neither format can introduce executable policy.
-export function readUpgradeSurvivorScenarioCatalog(text) {
+export function readUpgradeSurvivorScenarioCatalog(text, { includeAssertionOnly = true } = {}) {
   let value;
   try {
     value = JSON.parse(text);
@@ -110,7 +119,7 @@ export function readUpgradeSurvivorScenarioCatalog(text) {
   ) {
     return undefined;
   }
-  return scenarios;
+  return includeAssertionOnly ? scenarios : value.scenarios;
 }
 
 export function normalizeUpgradeSurvivorBaselineSpec(raw) {
@@ -212,6 +221,9 @@ function comparePublishedReleaseVersion(a, b) {
 }
 
 export function supportsUpgradeSurvivorScenarioAtBaseline(scenario, baselineSpec) {
+  if (scenario === "backup-schedule") {
+    return baselineSpec === "openclaw@2026.9.7";
+  }
   if (scenario === "missing-load-path") {
     const release = parseReleaseVersion((baselineSpec ?? "").replace(/^openclaw@/u, ""));
     // Floating tags are checked again against the installed baseline before seeding.
@@ -230,6 +242,9 @@ export function supportsUpgradeSurvivorScenarioAtBaseline(scenario, baselineSpec
   const version = parsePublishedReleaseVersion(baselineSpec);
   if (scenario === "dreaming-cron-doctor") {
     return baselineSpec === "openclaw@2026.9.6";
+  }
+  if (scenario === "cron-owner-doctor") {
+    return baselineSpec === "openclaw@2026.9.4" || baselineSpec === "openclaw@2026.9.7";
   }
   if (
     scenario === "projects-doctor" ||

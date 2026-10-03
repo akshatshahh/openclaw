@@ -16,6 +16,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { deleteMediaBuffer } from "../../media/store.js";
 import {
+  annotateInterSessionPromptText,
   isCompletionReportInputProvenance,
   isSubagentCoordinationInputProvenance,
   normalizeInputProvenance,
@@ -34,6 +35,7 @@ import {
   type ChatImageContent,
   type OffloadedRef,
 } from "../chat-attachments.js";
+import { hasGatewayAdminScope } from "../operator-scopes.js";
 import type { AgentRunRequest } from "../server-methods/agent-request-types.js";
 import { resolveSessionRuntimeCwd } from "../server-methods/agent-session-reset.js";
 import { gatewayClientSenderFields } from "../server-methods/gateway-client-identity.js";
@@ -41,7 +43,6 @@ import { resolveGatewayInputParticipant } from "../session-input-participant.js"
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import {
-  clientHasAdminScope,
   shouldSuppressAgentPromptPersistence,
   type RestoredCronContinuation,
 } from "./agent-handler-helpers.js";
@@ -213,7 +214,7 @@ export async function prepareAgentRunUserTurn(params: {
 
     const senderIsOwner = params.restoredCronContinuation
       ? true
-      : clientHasAdminScope(params.client);
+      : hasGatewayAdminScope(params.client);
     const settleWakeReplay = params.settleWakeReplay;
     if (
       settleWakeReplay &&
@@ -407,6 +408,26 @@ export async function prepareAgentRunUserTurn(params: {
     await Promise.allSettled(durableMediaIds.map((id) => deleteMediaBuffer(id, "inbound")));
     throw error;
   }
+}
+
+export function annotateAgentRunUserTurnPrompt(params: {
+  message: string;
+  inputProvenance?: InputProvenance;
+  execApprovalContinuationPromptRange?: ExecApprovalContinuationPromptRange;
+}) {
+  const message = annotateInterSessionPromptText(params.message, params.inputProvenance);
+  let execApprovalContinuationPromptRange = params.execApprovalContinuationPromptRange;
+  if (execApprovalContinuationPromptRange) {
+    if (!message.endsWith(params.message)) {
+      throw new Error("exec approval continuation prompt range could not be annotated");
+    }
+    const offset = message.length - params.message.length;
+    execApprovalContinuationPromptRange = {
+      start: offset + execApprovalContinuationPromptRange.start,
+      end: offset + execApprovalContinuationPromptRange.end,
+    };
+  }
+  return { message, execApprovalContinuationPromptRange };
 }
 
 export function finalizePreparedAgentRunUserTurn(prepared: PreparedAgentRunUserTurn): void {

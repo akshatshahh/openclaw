@@ -40,7 +40,9 @@ When a session first needs the current worker build, the Gateway sends its seale
 worker artifact to the paired host. The node verifies the exact content hash,
 publishes the artifact atomically, and prewarms it when supported by the execution mode.
 The artifact contains its complete JavaScript dependency closure; the node does
-not install packages or execute lifecycle scripts. Installation belongs to the
+not install packages or execute lifecycle scripts. Runtime chunks are sealed and
+verified with the artifact, and cold workers complete admission before loading
+the turn runtime. Installation belongs to the
 session request and receives its cancellation signal. Reconnect maintenance does
 not install or prewarm a worker build.
 
@@ -110,8 +112,23 @@ hosting OpenClaw worker turns without those tools. Update OpenClaw on the node
 and restart it to enable them.
 
 This setting enables supervised session turns on the paired device, including
-Gateway-owned workspace transfer and result reconciliation. By default, each
-node has one worker slot per available CPU core. Configure the slot count with
+Gateway-owned workspace transfer and result reconciliation. The Gateway prepares
+the tool definitions and filesystem policy before the worker starts using tools.
+Hosted turns honor global and agent-specific `tools.fs.workspaceOnly`,
+`tools.exec.applyPatch.enabled`, and `tools.exec.applyPatch.allowModels`, with the
+same session permission-mode precedence as local turns. Workspace containment
+uses the assigned node workspace. Model read budgets and image sanitization also
+come from the Gateway; the worker does not reconstruct them from an empty config.
+The Gateway includes this tool catalog and policy in each turn's worker admission
+response, including when a warm worker process is reused. A retained process receives
+the current turn's catalog and generation, so a turn does not need a separate
+discovery request. This uses the existing
+build-bound worker tool capability: the worker and Gateway must run the same
+bundle. If the complete admission response exceeds the control-frame limit, the
+turn fails explicitly instead of receiving a truncated catalog. The catalog grants
+no execution authority; every Gateway tool call still checks the live turn claim.
+
+By default, each node has one worker slot per available CPU core. Configure the slot count with
 `nodeHost.workerRuns.capacity`. Launches beyond capacity wait up to 10 seconds
 for a durable slot. A slot occupied only by an idle worker can be reclaimed for
 new work; active turns and background commands keep their slots. When no free

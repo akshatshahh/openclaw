@@ -83,7 +83,6 @@ export const SOURCE_ADMISSION_PATHS = [
   "scripts/full-release-candidate-contract.mjs",
   "scripts/full-release-validation-state.mjs",
   "scripts/full-release-validation-policy.mjs",
-  "scripts/full-release-flake-classification.mjs",
   "scripts/release-ci-summary.mjs",
   "scripts/lib/full-release-candidate-reuse.mjs",
   "scripts/lib/full-release-child-request.mjs",
@@ -93,6 +92,7 @@ export const SOURCE_ADMISSION_PATHS = [
   "scripts/lib/release-publish-inputs.mjs",
   "scripts/npm-preflight-tooling-identity.mjs",
   "scripts/npm-prepared-bundle.mjs",
+  "scripts/lib/npm-core-release-packages.mjs",
   "scripts/plugin-sdk-api-release-evidence.mjs",
   "scripts/lib/plain-gh.mjs",
   "scripts/lib/release-context.mjs",
@@ -107,6 +107,7 @@ export const SOURCE_ADMISSION_PATHS = [
   "scripts/lib/local-check-runtime.mts",
   "scripts/full-release-publication-observations.mts",
   "scripts/lib/plugin-clawhub-release.ts",
+  "scripts/lib/clawhub-publication-state.mjs",
   "scripts/clawhub-prepared-artifact.mjs",
   "scripts/clawhub-parent-authorization.mjs",
   "scripts/plugin-publication-artifact.mjs",
@@ -137,6 +138,7 @@ export const SOURCE_ADMISSION_PATHS = [
 ];
 
 export const PUBLICATION_TRANSPORT_PATHS = [
+  "scripts/lib/clawhub-publication-state.mjs",
   "scripts/full-release-publication-contract.mjs",
   "scripts/clawhub-prepared-artifact.mjs",
   "scripts/clawhub-parent-authorization.mjs",

@@ -1,3 +1,4 @@
+import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { hasAgentRosterProperty } from "../agents/agent-scope-config.js";
 import {
   listAgentEntries,
@@ -23,7 +24,7 @@ import {
   type EnvSubstitutionWarning,
   resolveConfigEnvVars,
 } from "../config/env-substitution.js";
-import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
+import { applyImplicitAgentRosterDefaults } from "../config/implicit-agent-roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { formatConcreteConfigPath } from "../shared/dot-path.js";
@@ -481,7 +482,7 @@ function materializeValidationRoster(config: OpenClawConfig): OpenClawConfig {
   // empty or malformed rosters must remain visible to schema repair.
   return hasAgentRosterProperty(config)
     ? config
-    : (migratePersistedImplicitMainRoster(config).config as OpenClawConfig);
+    : (applyImplicitAgentRosterDefaults(config) as OpenClawConfig);
 }
 
 export async function checkTouchedTextModelRefs(params: {
@@ -538,7 +539,7 @@ export async function checkTouchedTextModelRefs(params: {
         }) as OpenClawConfig)
       : undefined;
   } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = coerceErrorMessage(cause);
     return {
       refsChecked: 0,
       refsTotal: authoredRefs.length,
@@ -657,9 +658,7 @@ export async function checkTouchedTextModelRefs(params: {
         modelEnvWasExpanded ||
         Boolean(params.redactDependencyValues && refs.some((ref) => ref.dependency))
           ? "model resolver setup failed"
-          : cause instanceof Error
-            ? cause.message
-            : String(cause);
+          : coerceErrorMessage(cause);
       return {
         refsChecked: syntaxFailures.length,
         refsTotal: refs.length,
@@ -677,7 +676,7 @@ export async function checkTouchedTextModelRefs(params: {
       error = await resolveModelRef({ config: validationConfig, ref });
       refsChecked += 1;
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : String(cause);
+      const detail = coerceErrorMessage(cause);
       errors.push(formatError(ref, `Unable to validate model reference: ${detail}`));
       continue;
     }

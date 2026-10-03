@@ -2,7 +2,6 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { STALE_WORKER_BUILD_REASON, supportsCurrentWorkerLaunch } from "./admission.js";
 import { DevicePlacementUnavailableError } from "./device-placement-eligibility.js";
-import { matchesWorkerPlacementTarget } from "./placement-reclaim-contract.js";
 import {
   FORCED_WORKER_ABANDONMENT_ERROR,
   placementTurnOwner,
@@ -12,12 +11,15 @@ import type {
   createWorkerSessionPlacementStore,
   WorkerSessionPlacementRecord,
 } from "./placement-store.js";
+import {
+  isFailedWorkerPlacementEnvironmentGone,
+  matchesWorkerPlacementTarget,
+} from "./placement-target.js";
 import type {
   WorkerEnvironmentServiceContract,
   WorkerPlacementAuthorization,
 } from "./service-contract.js";
 import type { WorkerEnvironmentService } from "./service.js";
-import { isFailedWorkerPlacementEnvironmentGone } from "./session-placement-lifecycle.js";
 import { isTerminalWorkerEnvironmentState } from "./state.js";
 import { boundedWorkerError as boundedError } from "./worker-error.js";
 
@@ -60,11 +62,14 @@ export type WorkerDispatchPlacementStore = Pick<
   | "abortWorkspaceReconciliation"
   | "listWorkspaceReconciliationOwners"
   | "list"
-  | "listPendingWorkspaceResults"
+  | "listPendingWorkspaceResultsAsync"
   | "markWorkspaceResultPending"
   | "handoffWorkspaceResultRecovery"
   | "workspaceResultInstanceId"
   | "validateWorkspaceResultClaim"
+  | "prepareWorkspaceResultClaim"
+  | "preparedWorkspaceResult"
+  | "preparedWorkspaceResultPlacement"
   | "recordStagedWorkspaceResult"
   | "recordWorkspaceResultConflict"
   | "acceptWorkspaceResult"
@@ -392,9 +397,9 @@ export function createPlacementFailureActions(deps: {
       environment?.state === "failed" &&
       environment.error === STALE_WORKER_BUILD_REASON &&
       environment.leaseId === null &&
-      !placements
-        .listPendingWorkspaceResults(placement.sessionId)
-        .some((result) => result.sessionId === placement.sessionId)
+      !(await placements.listPendingWorkspaceResultsAsync(placement.sessionId)).some(
+        (result) => result.sessionId === placement.sessionId,
+      )
     ) {
       // Retained conflict reports and staged refs survive redispatch; only pending results
       // block idle retirement. Reclaim and publication still consult retained conflicts.

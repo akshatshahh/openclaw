@@ -349,9 +349,8 @@ export async function runReleasePublishPreflight(
           pluginSdkApiAcknowledgement: sealedInputs.pluginSdkApiAcknowledgement,
         };
       }
-      let classificationRoot: unknown;
       if (run && sourceSha && SHA.test(toolingSha)) {
-        const authenticated = await check(
+        await check(
           "validation.provenance",
           "Full Release Validation provenance and publication selection authenticated.",
           "Use evidence admitted for this exact release source, tooling lineage, publication route and package selection.",
@@ -428,12 +427,6 @@ export async function runReleasePublishPreflight(
             return authenticateFullReleaseValidationEvidence(validationOptions, client);
           },
         );
-        if (authenticated && fullManifest.evidenceReuse) {
-          classificationRoot = requirePreflightRecord(
-            authenticated.evidence.root,
-            "authenticated root",
-          ).manifest;
-        }
       }
       for (const consumer of [
         "publisher",
@@ -445,7 +438,6 @@ export async function runReleasePublishPreflight(
         rows.push(
           ...evaluateReleasePublishGates({
             manifest,
-            rootManifest: classificationRoot,
             consumer: consumer as "publisher" | "core-npm" | "stable-closeout",
             releaseTag: options.tag,
             npmDistTag: options.npmDistTag,

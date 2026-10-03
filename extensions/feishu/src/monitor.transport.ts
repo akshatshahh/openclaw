@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type * as http from "node:http";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-outbound";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { channelBlockedPatch, channelReadyPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
@@ -215,39 +216,6 @@ function cleanupFeishuWsClient(params: {
   }
 }
 
-function waitForFeishuWsCycleEnd(params: {
-  abortSignal?: AbortSignal;
-  terminalError: Promise<Error>;
-}): Promise<"abort" | Error> {
-  if (params.abortSignal?.aborted) {
-    return Promise.resolve("abort");
-  }
-
-  return new Promise((resolve) => {
-    let settled = false;
-
-    const finish = (result: "abort" | Error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (handleAbort) {
-        params.abortSignal?.removeEventListener("abort", handleAbort);
-      }
-      resolve(result);
-    };
-
-    const handleAbort: (() => void) | undefined = () => finish("abort");
-    params.abortSignal?.addEventListener("abort", handleAbort, { once: true });
-    if (params.abortSignal?.aborted) {
-      finish("abort");
-      return;
-    }
-
-    void params.terminalError.then(finish);
-  });
-}
-
 export async function monitorWebSocket({
   account,
   accountId,
@@ -268,10 +236,7 @@ export async function monitorWebSocket({
 
     let wsClient: Lark.WSClient | undefined;
     try {
-      let reportTerminalError: (err: Error) => void = () => {};
-      const terminalError = new Promise<Error>((resolve) => {
-        reportTerminalError = resolve;
-      });
+      const { promise: terminalError, resolve: reportTerminalError } = createDeferred<Error>();
       const handleWsError = (err: Error) => {
         if (isFeishuWsTerminalError(err)) {
           reportTerminalError(err);
@@ -315,8 +280,8 @@ export async function monitorWebSocket({
       await wsClient.start({ eventDispatcher });
       attempt = 0;
       log(`feishu[${accountId}]: WebSocket client started`);
-      const cycleEnd = await waitForFeishuWsCycleEnd({ abortSignal, terminalError });
-      if (cycleEnd === "abort") {
+      const cycleEnd = await raceWithTimeoutAndAbort(terminalError, { abortSignal });
+      if (cycleEnd.status !== "resolved") {
         log(`feishu[${accountId}]: abort signal received, stopping`);
         cleanupFeishuWsClient({ accountId, wsClient, error, clearIdentity: true });
         setSocketTerminator?.(undefined);
@@ -333,7 +298,7 @@ export async function monitorWebSocket({
       // so the health monitor can flag the channel before the next reconnect.
       const disconnectedAt = Date.now();
       statusSink?.(
-        channelBlockedPatch(formatFeishuWsErrorForLog(cycleEnd), {
+        channelBlockedPatch(formatFeishuWsErrorForLog(cycleEnd.value), {
           connected: false,
           lastEventAt: disconnectedAt,
         }),
@@ -342,7 +307,7 @@ export async function monitorWebSocket({
       attempt += 1;
       const delayMs = getFeishuWsReconnectDelayMs(attempt);
       error(
-        `feishu[${accountId}]: WebSocket connection ended, recreating client in ${delayMs}ms: ${formatFeishuWsErrorForLog(cycleEnd)}`,
+        `feishu[${accountId}]: WebSocket connection ended, recreating client in ${delayMs}ms: ${formatFeishuWsErrorForLog(cycleEnd.value)}`,
       );
       const shouldRetry = await waitForAbortableDelay(delayMs, abortSignal);
       if (!shouldRetry) {

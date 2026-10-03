@@ -209,7 +209,6 @@ export function trustedMainPackageFixture({
     };
   };
   const client = {
-    loadFlakeClassifications: async () => ({}),
     verifyQualificationAdmission: () => {
       throw new Error("historical fixture must not request candidate qualification admission");
     },

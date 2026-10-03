@@ -44,7 +44,7 @@ import {
   SESSION_STATUS_TOOL_DISPLAY_SUMMARY,
 } from "../tool-description-presets.js";
 import type { AnyAgentTool } from "./common.js";
-import { readNonNegativeIntegerParam, readToolStringParam } from "./common.js";
+import { readNonNegativeIntegerParam, readToolStringParam, textResult } from "./common.js";
 import {
   resolveGatewayToolOperatorSelection,
   wrapGatewayPersonalToolExecution,
@@ -66,6 +66,10 @@ import {
   resolveStoreScopedRequesterKey,
 } from "./session-status-session-resolve.js";
 import {
+  compactSessionStateChanges,
+  formatSessionStateChanges,
+} from "./session-status-state-changes.js";
+import {
   SessionStatusOutputSchema,
   SessionStatusToolSchema,
   type SessionStatusDeliveryContextDetails,
@@ -81,49 +85,6 @@ import {
   resolveVisibleSessionReference,
   shouldResolveSessionIdInput,
 } from "./sessions-helpers.js";
-
-function compactSessionStateEventPayload(
-  payload: Record<string, unknown> | undefined,
-): { outcome?: "error" | "timeout" | "cancelled"; channel?: string; turns?: number } | undefined {
-  if (!payload) {
-    return undefined;
-  }
-  const outcome =
-    payload.outcome === "error" || payload.outcome === "timeout" || payload.outcome === "cancelled"
-      ? payload.outcome
-      : undefined;
-  const channel = readStringValue(payload.channel);
-  const turns =
-    typeof payload.turns === "number" && Number.isSafeInteger(payload.turns) && payload.turns > 0
-      ? payload.turns
-      : undefined;
-  return outcome || channel || turns !== undefined
-    ? {
-        ...(outcome ? { outcome } : {}),
-        ...(channel ? { channel } : {}),
-        ...(turns !== undefined ? { turns } : {}),
-      }
-    : undefined;
-}
-
-function compactSessionStateChanges(stateChanges: ReturnType<typeof listSessionStateEventsSince>) {
-  return {
-    ...stateChanges,
-    events: stateChanges.events.map((event) => {
-      const payload = compactSessionStateEventPayload(event.payload);
-      return {
-        sequence: event.sequence,
-        kind: event.kind,
-        actorType: event.actorType,
-        occurredAt: event.occurredAt,
-        summary: event.summary,
-        ...(event.actorId ? { actorId: event.actorId } : {}),
-        ...(event.runId ? { runId: event.runId } : {}),
-        ...(payload ? { payload } : {}),
-      };
-    }),
-  };
-}
 
 const loadCommandsStatusRuntime = createLazyPromise(() => import("../../status/status-text.js"));
 
@@ -225,16 +186,6 @@ function formatSessionStatusRouteContext(details: SessionStatusRouteDetails): st
     return undefined;
   }
   return `Route context:
-\`\`\`json
-${JSON.stringify(details, null, 2)}
-\`\`\``;
-}
-
-function formatSessionStateChanges(details: {
-  stateVersion: number;
-  stateChanges: ReturnType<typeof compactSessionStateChanges>;
-}): string {
-  return `Session state changes:
 \`\`\`json
 ${JSON.stringify(details, null, 2)}
 \`\`\``;
@@ -776,10 +727,10 @@ export function createSessionStatusTool(opts?: {
             isLiveRunSession: isLiveRouteSession,
           });
           const routeContextText = formatSessionStatusRouteContext(routeDetails);
-          const stateVersion = getSessionStateVersion(scopedResolved.key, agentId);
+          const stateVersion = await getSessionStateVersion(scopedResolved.key, agentId);
           const rawStateChanges =
             changesSince !== undefined
-              ? listSessionStateEventsSince(scopedResolved.key, agentId, changesSince, 200)
+              ? await listSessionStateEventsSince(scopedResolved.key, agentId, changesSince, 200)
               : undefined;
           const stateChanges = rawStateChanges
             ? compactSessionStateChanges(rawStateChanges)
@@ -799,28 +750,25 @@ export function createSessionStatusTool(opts?: {
                 : null;
 
           await assertStatusVisible();
-          return {
-            content: [{ type: "text", text: visibleStatusText }],
-            details: {
-              ok: true,
-              sessionKey: scopedResolved.key,
-              agentId,
-              changedModel,
-              stateVersion,
-              ...(stateChanges ? { stateChanges } : {}),
-              ...(modelRaw !== undefined
-                ? {
-                    model: resultOverrideModel ?? defaultModelForCard,
-                    ...((resultOverrideProvider ?? providerForCard)
-                      ? { modelProvider: resultOverrideProvider ?? providerForCard }
-                      : {}),
-                    modelOverride: modelOverrideForResult,
-                  }
-                : {}),
-              statusText: visibleStatusText,
-              ...routeDetails,
-            },
-          };
+          return textResult(visibleStatusText, {
+            ok: true,
+            sessionKey: scopedResolved.key,
+            agentId,
+            changedModel,
+            stateVersion,
+            ...(stateChanges ? { stateChanges } : {}),
+            ...(modelRaw !== undefined
+              ? {
+                  model: resultOverrideModel ?? defaultModelForCard,
+                  ...((resultOverrideProvider ?? providerForCard)
+                    ? { modelProvider: resultOverrideProvider ?? providerForCard }
+                    : {}),
+                  modelOverride: modelOverrideForResult,
+                }
+              : {}),
+            statusText: visibleStatusText,
+            ...routeDetails,
+          });
         },
       });
     }),

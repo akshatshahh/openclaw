@@ -50,6 +50,7 @@ export type ResolvedCliBackend = Pick<
   | "isolatesInstructionsWithExactTools"
   | "projectNativeToolAuthority"
   | "nativeToolMode"
+  | "hostOwnedTools"
   | "sideQuestionToolMode"
   | "runtimeArtifact"
 > & {
@@ -261,6 +262,12 @@ export function resolveCliBackendLiveTest(provider: string): ResolvedCliBackendL
   };
 }
 
+/** Whether the backend can branch a native session at a recorded checkpoint. */
+export function cliBackendSupportsSessionFork(provider: string, cfg?: OpenClawConfig): boolean {
+  const config = resolveCliBackendConfig(provider, cfg)?.config;
+  return Boolean(config?.forkArg && config.resumeAtArg);
+}
+
 /** Resolves the executable CLI backend registered by its owning plugin. */
 export function resolveCliBackendConfig(
   provider: string,
@@ -314,6 +321,7 @@ export function resolveCliBackendConfig(
     isolatesInstructionsWithExactTools: backend.isolatesInstructionsWithExactTools,
     projectNativeToolAuthority: backend.projectNativeToolAuthority,
     nativeToolMode: backend.nativeToolMode,
+    hostOwnedTools: backend.hostOwnedTools,
     sideQuestionToolMode: backend.sideQuestionToolMode,
     runtimeArtifact: backend.runtimeArtifact,
   };

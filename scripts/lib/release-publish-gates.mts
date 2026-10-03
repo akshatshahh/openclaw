@@ -2,10 +2,7 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import {
-  releaseManifestClassificationRoot,
-  validateReleaseManifestAdvisoryJobs,
-} from "../full-release-validation-policy.mjs";
+import { validateReleaseManifestAdvisoryJobs } from "../full-release-validation-policy.mjs";
 import { isRecord } from "./record-shared.mjs";
 import { resolveReleasePublishInputs } from "./release-publish-inputs.mjs";
 import { parseReleaseVersion } from "./release-version.mjs";
@@ -33,7 +30,6 @@ function scalar(value: unknown): string {
 
 export function evaluateReleasePublishGates(input: {
   manifest: unknown;
-  rootManifest?: unknown;
   releaseTag: string;
   npmDistTag: string;
   consumer: ReleasePublishConsumer;
@@ -144,7 +140,7 @@ export function evaluateReleasePublishGates(input: {
       ? "Release waiver and known-flaky inputs are no longer accepted."
       : "";
   try {
-    validateReleaseManifestAdvisoryJobs(manifest, input.rootManifest);
+    validateReleaseManifestAdvisoryJobs(manifest);
   } catch (error) {
     selectedLanesError ||= error instanceof Error ? error.message : String(error);
   }
@@ -152,7 +148,7 @@ export function evaluateReleasePublishGates(input: {
     "selected-lanes",
     selectedLanesError === "",
     selectedLanesError,
-    "Use authenticated Full Release Validation evidence with policy-derived Windows Node CI advisories or exact-job recorded flakes and no waivers.",
+    "Use authenticated Full Release Validation evidence with every selected lane passing and no waivers.",
   );
   if (consumer === "stable-closeout") {
     for (const gate of gates) {
@@ -241,7 +237,6 @@ function main() {
     options: {
       consumer: { type: "string" },
       manifest: { type: "string" },
-      "execution-plan": { type: "string" },
     },
   });
   const consumer = values.consumer;
@@ -260,12 +255,6 @@ function main() {
   });
   const gates = evaluateReleasePublishGates({
     manifest,
-    rootManifest: releaseManifestClassificationRoot(
-      manifest,
-      values["execution-plan"]
-        ? JSON.parse(readFileSync(values["execution-plan"], "utf8"))
-        : undefined,
-    ),
     consumer,
     releaseTag: env.RELEASE_TAG ?? "",
     npmDistTag: env.RELEASE_NPM_DIST_TAG ?? "",
