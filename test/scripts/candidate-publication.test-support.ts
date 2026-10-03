@@ -16,7 +16,10 @@ import {
   composeReleaseAttemptJobs,
   releaseExecutionPlanSha256,
 } from "../../scripts/full-release-validation-policy.mjs";
-import { verifyQualificationAdmission } from "../../scripts/release-qualification-admission.mjs";
+import {
+  revalidateQualificationAdmissionAuthority,
+  verifyQualificationAdmission,
+} from "../../scripts/release-qualification-admission.mjs";
 import { makeStoredZip } from "./actions-artifact-zip.test-support.js";
 import { trustedMainNpmFixture } from "./release-ci-summary.test-support.js";
 import {
@@ -322,6 +325,9 @@ export function candidatePublicationFixture(
         runGh: admission.runGh,
         downloadArchive: admission.archive,
       }),
+    revalidateQualificationAdmissionAuthority: (
+      authority: Parameters<typeof revalidateQualificationAdmissionAuthority>[0],
+    ) => revalidateQualificationAdmissionAuthority({ ...authority, runGh: admission.runGh }),
     getWorkflowSource: () => workflowSource,
     getRef: (ref: string) => ({ ref, object: { sha: admission.authority.tagSha } }),
     getRunView: (_id: string) => mapped(fixture.client.getRunView(legacyRunId)),

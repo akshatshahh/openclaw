@@ -572,20 +572,7 @@ export function resolveQualificationAdmissionDescriptor({
   return descriptor;
 }
 
-export function verifyQualificationAdmission({
-  descriptor,
-  repository,
-  candidateSha,
-  qualificationSha,
-  workflowRef,
-  inputs,
-  runGh = runQualificationAdmissionGh,
-  downloadArchive = runQualificationAdmissionGh,
-}) {
-  requireValue(
-    repository === REPOSITORY && SHA.test(candidateSha) && candidateSha === qualificationSha,
-    "Qualification admission requires the canonical C=Q identity",
-  );
+function admissionDescriptorProducer(descriptor, repository) {
   exactKeys(
     descriptor,
     [
@@ -617,6 +604,56 @@ export function verifyQualificationAdmission({
       artifactSizeBytes <= MAX_ARCHIVE_BYTES,
     "Invalid qualification admission artifact identity",
   );
+  return producer;
+}
+
+// Recheck only live authority after the caller has authenticated the immutable
+// receipt. Raw or caller-authored receipt JSON is not an authentication path.
+export function revalidateQualificationAdmissionAuthority({
+  descriptor,
+  admission,
+  runGh = runQualificationAdmissionGh,
+}) {
+  const receipt = validateReceipt(admission);
+  const producer = admissionDescriptorProducer(descriptor, receipt.request.repository);
+  requireValue(
+    isDeepStrictEqual(receipt.producer, producer),
+    "Admission authority differs from the authenticated producer",
+  );
+  const metadata = api(producer.repository, "actions/artifacts/" + descriptor.artifactId, runGh);
+  const jobs = api(
+    producer.repository,
+    "actions/runs/" + producer.runId + "/attempts/" + producer.runAttempt + "/jobs?per_page=100",
+    runGh,
+  );
+  // Finish with the exact P route, original attempt, and current operator grants;
+  // no immutable source or archive is reacquired between this check and the write.
+  const current = verifyProducer(producer, runGh, true);
+  validateArtifact(descriptor, metadata, current.run, jobs);
+  requireValue(
+    current.run.display_title === "Qualification Admission " + receipt.request.requestId &&
+      isDeepStrictEqual(receipt.operator, current.operator) &&
+      isDeepStrictEqual(receipt.triggeringOperator, current.triggeringOperator),
+    "Admission authority differs from the authenticated operators",
+  );
+}
+
+export function verifyQualificationAdmission({
+  descriptor,
+  repository,
+  candidateSha,
+  qualificationSha,
+  workflowRef,
+  inputs,
+  runGh = runQualificationAdmissionGh,
+  downloadArchive = runQualificationAdmissionGh,
+}) {
+  requireValue(
+    repository === REPOSITORY && SHA.test(candidateSha) && candidateSha === qualificationSha,
+    "Qualification admission requires the canonical C=Q identity",
+  );
+  const producer = admissionDescriptorProducer(descriptor, repository);
+  const { artifactId, artifactDigest, artifactSizeBytes } = descriptor;
   verifyProducerContract(producer, runGh);
   const initial = verifyProducer(producer, runGh, true);
   const metadata = api(repository, "actions/artifacts/" + artifactId, runGh);

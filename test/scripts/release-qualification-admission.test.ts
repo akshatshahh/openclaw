@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildQualificationAdmissionRequest,
   resolveQualificationAdmissionDescriptor,
+  revalidateQualificationAdmissionAuthority,
   semanticQualificationInputs,
   verifyQualificationAdmission,
   QUALIFICATION_ADMISSION_WORKFLOW,
@@ -245,6 +246,88 @@ describe("trusted P qualification admission", () => {
         downloadArchive: () => new Uint8Array(0),
       }),
     ).toThrow(/archive bytes/);
+  });
+
+  it.each([false, true])(
+    "revalidates current authority without reacquiring immutable evidence (protected=%s)",
+    (protectedTag) => {
+      const f = fixture(protectedTag);
+      const admission = f.verify();
+      const acquired = f.calls.length;
+      expect(() =>
+        revalidateQualificationAdmissionAuthority({
+          descriptor: f.descriptor,
+          admission,
+          runGh: f.runGh,
+        }),
+      ).not.toThrow();
+      const rechecks = f.calls.slice(acquired);
+      expect(rechecks.some((call) => call.includes("/permission"))).toBe(true);
+      expect(rechecks.some((call) => call.includes("actions/artifacts/70"))).toBe(true);
+      expect(rechecks.some((call) => call.includes("/contents/") || call.endsWith("/zip"))).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([
+    "operator",
+    "triggering-operator",
+    "protected-P",
+    "original-attempt",
+    "artifact-expiry",
+    "artifact-digest",
+    "seal-job",
+    "dispatch-title",
+  ])("denies revoked %s authority after successful acquisition", (fault) => {
+    const f = fixture(true);
+    const admission = f.verify();
+    if (fault === "operator") {
+      f.authority.permission = "read";
+    }
+    if (fault === "triggering-operator") {
+      f.run.triggering_actor = { ...f.actor, id: 999 };
+    }
+    if (fault === "protected-P") {
+      f.authority.tagSha = candidateSha;
+    }
+    if (fault === "original-attempt") {
+      f.run.run_attempt = 2;
+    }
+    if (fault === "artifact-expiry") {
+      f.metadata.expires_at = "2000-01-01T00:00:00Z";
+    }
+    if (fault === "artifact-digest") {
+      f.metadata.digest = "sha256:" + "f".repeat(64);
+    }
+    if (fault === "seal-job") {
+      expectDefined(f.jobs.jobs[0], "seal job").conclusion = "failure";
+    }
+    if (fault === "dispatch-title") {
+      f.run.display_title = "different admission request";
+    }
+    expect(() =>
+      revalidateQualificationAdmissionAuthority({
+        descriptor: f.descriptor,
+        admission,
+        runGh: f.runGh,
+      }),
+    ).toThrow();
+  });
+
+  it("rechecks operator grants after publication metadata has been read", () => {
+    const f = fixture();
+    const admission = f.verify();
+    const runGh = (args: string[]) => {
+      const value = f.runGh(args);
+      if (args.some((arg) => arg.endsWith("actions/artifacts/70"))) {
+        f.authority.permission = "read";
+      }
+      return value;
+    };
+    expect(() =>
+      revalidateQualificationAdmissionAuthority({ descriptor: f.descriptor, admission, runGh }),
+    ).toThrow(/qualification authority/);
   });
 
   it("keeps admission read-only and excludes package preparation", () => {

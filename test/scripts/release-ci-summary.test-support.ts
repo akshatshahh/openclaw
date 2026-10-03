@@ -212,6 +212,9 @@ export function trustedMainPackageFixture({
     verifyQualificationAdmission: () => {
       throw new Error("historical fixture must not request candidate qualification admission");
     },
+    revalidateQualificationAdmissionAuthority: () => {
+      throw new Error("historical fixture must not request candidate admission authority");
+    },
     getWorkflowSource: (_sha: string) => "name: Full Release Validation\n",
     compareCommitLineage: compareCommits,
     compareCommits,

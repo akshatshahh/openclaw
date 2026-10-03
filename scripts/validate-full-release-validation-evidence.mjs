@@ -608,6 +608,7 @@ export async function authenticateCandidateOwnedArtifact({
   ) {
     throw new Error("Candidate-owned artifact source and qualification SHA differ");
   }
+  const evidenceClient = client ?? createReleaseEvidenceClient(repository);
   const evidence = await validateReleaseRunEvidence(
     {
       repository,
@@ -618,7 +619,7 @@ export async function authenticateCandidateOwnedArtifact({
       verifierSourceSha: publisherSha,
       verifierSourceContent: readFileSync(new URL("./release-ci-summary.mjs", import.meta.url)),
     },
-    client,
+    evidenceClient,
   );
   if (
     evidence.current.manifest.sourceAdmission?.validationPurpose !== "publish" ||
@@ -636,7 +637,19 @@ export async function authenticateCandidateOwnedArtifact({
   ) {
     throw new Error("Publication artifact is not bound to authenticated candidate qualification");
   }
-  return evidence;
+  if (!evidence.qualificationAdmission) {
+    throw new Error("Authenticated candidate admission authority is missing");
+  }
+  // Hold the already authenticated bytes independently of caller-owned manifests.
+  // This callback is process-local authority, never a serialized proof field.
+  const authority = structuredClone({
+    descriptor: manifest.sourceAdmission.qualificationAdmission,
+    admission: evidence.qualificationAdmission,
+  });
+  const revalidateAuthority = () =>
+    evidenceClient.revalidateQualificationAdmissionAuthority(authority);
+  revalidateAuthority();
+  return { ...evidence, revalidateAuthority };
 }
 
 function gitIsAncestor(ancestor, target) {

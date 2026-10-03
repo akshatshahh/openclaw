@@ -67,7 +67,10 @@ import {
   validateTrustedProducerIdentity,
 } from "./lib/release-evidence-identity.mjs";
 import { resolveReleasePublishInputs } from "./lib/release-publish-inputs.mjs";
-import { verifyQualificationAdmission } from "./release-qualification-admission.mjs";
+import {
+  revalidateQualificationAdmissionAuthority,
+  verifyQualificationAdmission,
+} from "./release-qualification-admission.mjs";
 import {
   qualificationAdmissionContract,
   validateQualificationCoverage,
@@ -2114,6 +2117,9 @@ export function createReleaseEvidenceClient(repository = DEFAULT_REPO) {
     },
     verifyQualificationAdmission(options) {
       return verifyQualificationAdmission(options);
+    },
+    revalidateQualificationAdmissionAuthority(options) {
+      return revalidateQualificationAdmissionAuthority(options);
     },
     getArtifact(artifactId) {
       if (!/^[1-9][0-9]{0,19}$/u.test(String(artifactId))) {

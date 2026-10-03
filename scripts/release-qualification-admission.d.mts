@@ -100,6 +100,12 @@ export function resolveQualificationAdmissionDescriptor(params: {
   workflowSha: string;
   runGh?: QualificationAdmissionGh;
 }): QualificationAdmissionDescriptor;
+/** Revalidate live authority for an already authenticated immutable receipt. */
+export function revalidateQualificationAdmissionAuthority(params: {
+  descriptor: unknown;
+  admission: QualificationAdmission;
+  runGh?: QualificationAdmissionGh;
+}): void;
 export function verifyQualificationAdmission(params: {
   descriptor: unknown;
   repository: string;

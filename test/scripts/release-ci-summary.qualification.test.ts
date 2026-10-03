@@ -251,7 +251,7 @@ describe("candidate-owned publish consumer chain", () => {
       runId: f.runId,
       runAttempt: "1",
     });
-    await expect(consumers(f).docker()).resolves.toBe(f.docker);
+    expect((await consumers(f).docker()).manifest).toBe(f.docker);
     expect(JSON.stringify(f.docker, null, 2) + "\n").toBe(f.dockerBytes);
     expect(f.docker.architectures.map((entry) => entry.artifact.digest)).toEqual(
       f.payloadBytes.map((bytes) => "sha256:" + sha256(bytes)),

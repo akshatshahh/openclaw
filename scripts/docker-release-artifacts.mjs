@@ -624,10 +624,14 @@ export async function verifyDockerReleaseProducer(
       sealJob.head_sha === toolingSha,
     "Exact Docker preparation job has not completed successfully.",
   );
+  // Historical producers keep their ancestry contract. Candidate publication
+  // must carry the authenticated owner callback, never reconstruct it from JSON.
+  /** @type {() => void} */
+  let revalidateAuthority;
   if (fullReleaseManifest?.sourceAdmission?.qualificationAdmission) {
     const { authenticateCandidateOwnedArtifact } =
       await import("./validate-full-release-validation-evidence.mjs");
-    await authenticateCandidateOwnedArtifact({
+    const authenticated = await authenticateCandidateOwnedArtifact({
       manifest: fullReleaseManifest,
       repository,
       candidateSha: manifest.sourceSha,
@@ -636,6 +640,10 @@ export async function verifyDockerReleaseProducer(
       publisherFullRef,
       client: evidenceClient,
     });
+    if (!authenticated) {
+      throw new Error("Missing authenticated candidate admission.");
+    }
+    revalidateAuthority = authenticated.revalidateAuthority;
     const selected = preparedDockerEvidenceFromFullRelease({
       manifest: fullReleaseManifest,
       sourceSha: manifest.sourceSha,
@@ -649,6 +657,7 @@ export async function verifyDockerReleaseProducer(
       "Docker producer bytes differ from the authenticated frozen qualification.",
     );
   } else {
+    revalidateAuthority = () => {};
     for (const target of new Set(["main", publisherSha])) {
       const comparison = readApi(`repos/${repository}/compare/${toolingSha}...${target}`);
       requireValue(
@@ -667,7 +676,7 @@ export async function verifyDockerReleaseProducer(
       "Prepared Docker payload artifact changed.",
     );
   }
-  return manifest;
+  return { manifest, revalidateAuthority };
 }
 
 async function loadPreparedManifest(values, env) {
@@ -733,8 +742,16 @@ function resolveRemoteDigest(ref, execFileSyncImpl) {
   return metadata.digest;
 }
 
+/**
+ * @param {Awaited<ReturnType<typeof verifyDockerReleaseProducer>> & {
+ *   payloadDirectory: string, images: string[],
+ *   execFileSyncImpl?: typeof execReleaseCommand, verifyTag?: typeof verifyFinalTag,
+ *   promote?: typeof promoteDockerChannel
+ * }} options
+ */
 export async function publishDockerRelease({
   manifest,
+  revalidateAuthority,
   payloadDirectory,
   images,
   execFileSyncImpl = execReleaseCommand,
@@ -762,13 +779,15 @@ export async function publishDockerRelease({
     }
   }
   verifyTag(manifest);
-  const execute = (command, args) =>
-    execFileSyncImpl(command, args, {
+  const execute = (command, args) => {
+    revalidateAuthority();
+    return execFileSyncImpl(command, args, {
       encoding: "utf8",
       timeout: 1_200_000,
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 20 * 1024 * 1024,
     });
+  };
   const version = `${manifest.version}${manifest.imageTagSuffix}`;
   for (const image of prepared) {
     const suffix = image.variant === "default" ? "" : "-browser";
@@ -846,7 +865,7 @@ export async function publishDockerRelease({
         images,
         includeBrowser: manifest.includeBrowser,
       },
-      { execFileSyncImpl },
+      { execFileSyncImpl, revalidateAuthority },
     );
   }
   return sourceDigests.join("\n");
@@ -882,7 +901,7 @@ async function main() {
     writeJson(values.output, manifest);
     appendFileSync(env.GITHUB_OUTPUT, `manifest_sha256=${sha256(readFileSync(values.output))}\n`);
   } else if (command === "verify" || command === "publish") {
-    const manifest = await loadPreparedManifest(values, env);
+    const { manifest, revalidateAuthority } = await loadPreparedManifest(values, env);
     if (command === "verify") {
       appendFileSync(
         env.GITHUB_OUTPUT,
@@ -893,6 +912,7 @@ async function main() {
       const started = Date.now();
       const sourceDigests = await publishDockerRelease({
         manifest,
+        revalidateAuthority,
         payloadDirectory: values.directory,
         images: [`ghcr.io/${env.GITHUB_REPOSITORY.toLowerCase()}`, "docker.io/openclaw/openclaw"],
       });

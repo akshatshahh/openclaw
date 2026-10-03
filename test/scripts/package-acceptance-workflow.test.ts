@@ -6430,23 +6430,24 @@ render_github_release_notes() { cp "$2" "$1"; printf '%s\\n' '{"verificationIncl
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
     });
     expect(corePublish.run).toContain(
-      "node trusted-workflow/scripts/release-tooling-identity.mjs verify",
+      'bash trusted-workflow/scripts/openclaw-npm-publish.sh --publish "./${tarball_path}"',
     );
-    expect(corePublish.run).toContain("--allow-prevalidated-ref");
     expect(corePublish.run).toContain(
-      '--release-publish-run-attempt "$RELEASE_PUBLISH_RUN_ATTEMPT"',
+      'bash trusted-workflow/scripts/openclaw-npm-publish.sh --publish "${publish_target}"',
     );
-    expect(corePublish.run).toContain('--release-publish-ref "$RELEASE_PUBLISH_REF"');
-    expect(corePublish.run).toContain('--release-publish-full-ref "$RELEASE_PUBLISH_FULL_REF"');
-    expect(corePublish.run).toContain(
-      '--release-publish-parent-state-policy "$RELEASE_PUBLISH_PARENT_STATE_POLICY"',
+    const coreWrapper = readFileSync("scripts/openclaw-npm-publish.sh", "utf8");
+    expect(coreWrapper).toMatch(
+      /--verify-publication-authority\s*\nfi\s*\n"\$\{publish_cmd\[@\]\}"/u,
     );
-    expect(corePublish.run).toMatch(
-      /verify_release_tooling_identity\s+bash scripts\/openclaw-npm-publish\.sh --publish "\.\/\$\{tarball_path\}"/u,
+    const authority = readFileSync("scripts/npm-preflight-tooling-identity.mjs", "utf8");
+    expect(authority).toContain("releasePublishRunAttempt: env.RELEASE_PUBLISH_RUN_ATTEMPT");
+    expect(authority).toContain("releasePublishRef: env.RELEASE_PUBLISH_REF");
+    expect(authority).toContain("releasePublishFullRef: env.RELEASE_PUBLISH_FULL_REF");
+    expect(authority).toContain(
+      "releasePublishParentStatePolicy: env.RELEASE_PUBLISH_PARENT_STATE_POLICY",
     );
-    expect(corePublish.run).toMatch(
-      /verify_release_tooling_identity\s+bash scripts\/openclaw-npm-publish\.sh --publish "\$\{publish_target\}"/u,
-    );
+    expect(authority).toContain("verifyReleaseToolingIdentity(publicationAuthority)");
+    expect(authority).toContain("authenticated.revalidateAuthority()");
 
     const pluginPublishJob = workflowJob(PLUGIN_NPM_RELEASE_WORKFLOW, "publish_plugins_npm");
     const oidcPublish = workflowStep(pluginPublishJob, "Publish with trusted publisher");
