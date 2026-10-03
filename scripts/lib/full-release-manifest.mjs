@@ -5,31 +5,35 @@ import {
 } from "../full-release-publication-contract.mjs";
 import { serializeReleaseArtifact } from "./full-release-evidence.mjs";
 
+export function releaseManifestChildEvidence(child) {
+  return {
+    runId: child.runId,
+    plannedRunAttempt: child.plannedRunAttempt,
+    effectiveRunAttempt: child.runAttempt,
+    observedRunAttempts: child.observedRunAttempts,
+    compositeJobsSha256: child.compositeJobsSha256,
+    dispatchActor: child.dispatchActor,
+    triggeringActor: child.triggeringActor,
+    repository: child.repository,
+    jobs: child.timing.jobs.map(
+      ({ name, status, conclusion, acceptedRunAttempt, startedAt, completedAt, url }) => ({
+        name,
+        status,
+        conclusion,
+        acceptedRunAttempt,
+        startedAt,
+        completedAt,
+        url,
+      }),
+    ),
+  };
+}
+
 export function buildReleaseValidationManifest({ plan, drain, context }) {
   const childEvidence = Object.fromEntries(
     Object.entries(drain?.children ?? {}).map(([key, child]) => [
       key,
-      {
-        runId: child.runId,
-        plannedRunAttempt: child.plannedRunAttempt,
-        effectiveRunAttempt: child.runAttempt,
-        observedRunAttempts: child.observedRunAttempts,
-        compositeJobsSha256: child.compositeJobsSha256,
-        dispatchActor: child.dispatchActor,
-        triggeringActor: child.triggeringActor,
-        repository: child.repository,
-        jobs: child.timing.jobs.map(
-          ({ name, status, conclusion, acceptedRunAttempt, startedAt, completedAt, url }) => ({
-            name,
-            status,
-            conclusion,
-            acceptedRunAttempt,
-            startedAt,
-            completedAt,
-            url,
-          }),
-        ),
-      },
+      releaseManifestChildEvidence(child),
     ]),
   );
   const current = {
