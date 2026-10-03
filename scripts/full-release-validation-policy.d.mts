@@ -7,7 +7,6 @@ export function classifyReleaseChangelogEvidenceComparison(
   identity: { baseSha: string; version?: unknown },
 ): { changedPaths: string[]; policy: string };
 export function serializeReleaseArtifact(payload: unknown): string;
-export function releaseManifestChildEvidence(child: ReleaseRecord): ReleaseRecord;
 export function buildReleaseValidationManifest(input: {
   plan: ReleaseRecord;
   drain?: ReleaseRecord;

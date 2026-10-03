@@ -27,12 +27,7 @@ import { validateQualificationBaselines } from "./lib/release-upgrade-baseline.m
 import { classifyReleaseTrain, parseReleaseVersion } from "./lib/release-version.mjs";
 import { validateQualificationCoverage } from "./release-qualification-coverage.mjs";
 
-export {
-  MAX_RELEASE_ARTIFACT_BYTES,
-  serializeReleaseArtifact,
-  buildReleaseValidationManifest,
-  releaseManifestChildEvidence,
-};
+export { MAX_RELEASE_ARTIFACT_BYTES, serializeReleaseArtifact, buildReleaseValidationManifest };
 
 function validateReleaseAdvisoryJobs(value) {
   const expected = [];
