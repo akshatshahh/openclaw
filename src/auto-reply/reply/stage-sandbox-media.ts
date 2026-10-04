@@ -68,7 +68,7 @@ export async function stageSandboxMedia(params: {
   );
   if (pathEntries.length === 0 || !sessionKey) {
     if (pathEntries.length === 0 && media.length > 0) {
-      console.warn(`Inbound media staging skipped: ${media.length} media fact(s) carry no path to stage`);
+      console.warn(`Staging skipped: ${media.length} media fact(s) have no path`);
     }
     return EMPTY_STAGE_RESULT;
   }
@@ -156,7 +156,7 @@ export async function stageSandboxMedia(params: {
     abortSignal?.throwIfAborted();
     const source = await resolveStageableMediaSource(entry.path);
     if (!source) {
-      console.warn(`Inbound media staging skipped for ${entry.path}: unable to resolve a stageable source`);
+      console.warn(`Staging skipped for ${entry.path}: unable to resolve a stageable source`);
       continue;
     }
     const allowed = await isAllowedSourcePath({
