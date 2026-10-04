@@ -307,10 +307,11 @@ export function handleMessageEnd(
   ctx.state.keptAnswer = addsNothing ? ctx.state.inputAnswer : undefined;
   if (
     !addsNothing &&
-    assistantMessage.stopReason === "stop" &&
+    assistantMessage.stopReason !== "toolUse" &&
     assistantMessage.endTurn !== false
   ) {
-    // Any other response end, including a silent attachment or speech, supersedes that answer.
+    // Any other outcome, including a silent attachment, speech or a cut-off response,
+    // supersedes that answer. Tool-call progress and an interim stop do not.
     ctx.state.inputAnswer = undefined;
   }
 
