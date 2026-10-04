@@ -276,6 +276,7 @@ export function handleMessageEnd(
   if (
     !ctx.params.silentExpected &&
     assistantMessage.stopReason === "stop" &&
+    assistantMessage.endTurn !== false &&
     !parsedText.isSilent &&
     (cleanedText.trim() || mediaUrls.length > 0)
   ) {
