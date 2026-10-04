@@ -106,7 +106,7 @@ describe("assertMxcReadiness", () => {
     });
 
     expect(() => assertMxcReadiness({ executablePath: MXC_EXE })).toThrow(
-      /host probe returned an unexpected result.*--probe for host details/u,
+      /host check returned an unexpected result.*--probe for host details/u,
     );
   });
 
@@ -122,7 +122,7 @@ describe("assertMxcReadiness", () => {
     mockProbe({ probe: "wxc-exec: unknown option --probe" });
 
     expect(() => assertMxcReadiness({ executablePath: MXC_EXE })).toThrow(
-      /host probe did not return JSON.*older executor.*unset plugins\.entries\.mxc\.config\.mxcBinaryPath/u,
+      /host check did not return JSON.*older executor.*unset plugins\.entries\.mxc\.config\.mxcBinaryPath/u,
     );
   });
 

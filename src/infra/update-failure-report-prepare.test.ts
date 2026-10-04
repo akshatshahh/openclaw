@@ -557,33 +557,40 @@ const recoveryCases: RecoveryCase[] = [
     {
       healthy: false,
       code: "private-probe-identifier",
-      expected: "recovery probe failed (gateway-probe-failed)",
+      expected: "recovery check failed (gateway-probe-failed)",
     },
-  ].map(({ healthy, code, expected }): RecoveryCase => ({
-    name: `observed ${expected}`,
-    recordedRun: {
-      runId: attemptId,
-      steps: [],
-      verification: { runningVersion: "2026.9.4", versionMatch: true, readyz: true, settled: true },
-    },
-    result: {
-      reason: "post-update-plugins",
-      after: { version: "2026.9.5" },
-      recovery: healthy
-        ? { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" }
-        : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
-      steps: [
-        step("gateway recovery verification", {
-          command: "gateway verification",
-          cwd: "/fixture",
-          exitCode: healthy ? 0 : 1,
-          ...(code ? { failureFacts: [{ check: "settled", code }] } : {}),
-        }),
-      ],
-    },
-    includes: [`Recovery outcome: ${expected}`],
-    excludes: ["not verified", "private-probe-identifier"],
-  })),
+  ].map(
+    ({ healthy, code, expected }): RecoveryCase => ({
+      name: `observed ${expected}`,
+      recordedRun: {
+        runId: attemptId,
+        steps: [],
+        verification: {
+          runningVersion: "2026.9.4",
+          versionMatch: true,
+          readyz: true,
+          settled: true,
+        },
+      },
+      result: {
+        reason: "post-update-plugins",
+        after: { version: "2026.9.5" },
+        recovery: healthy
+          ? { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" }
+          : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+        steps: [
+          step("gateway recovery verification", {
+            command: "gateway verification",
+            cwd: "/fixture",
+            exitCode: healthy ? 0 : 1,
+            ...(code ? { failureFacts: [{ check: "settled", code }] } : {}),
+          }),
+        ],
+      },
+      includes: [`Recovery outcome: ${expected}`],
+      excludes: ["not verified", "private-probe-identifier"],
+    }),
+  ),
   ...(
     [
       { service: undefined, outcome: "verified safe to restart" },
@@ -614,14 +621,16 @@ const recoveryCases: RecoveryCase[] = [
           "package rollback verified (2026.9.4); Gateway health unverified (gateway-readiness-pending). Run `openclaw gateway status --deep` to check the serving version and readiness.",
       },
     ] as const
-  ).map(({ outcome, ...recovery }): RecoveryCase => ({
-    name: outcome,
-    result: {
-      reason: "runtime-verification-failed",
-      recovery: { serviceRestartSafe: true, version: "2026.9.4", ...recovery },
-    },
-    includes: [`- Recovery outcome: ${outcome}\n`],
-  })),
+  ).map(
+    ({ outcome, ...recovery }): RecoveryCase => ({
+      name: outcome,
+      result: {
+        reason: "runtime-verification-failed",
+        recovery: { serviceRestartSafe: true, version: "2026.9.4", ...recovery },
+      },
+      includes: [`- Recovery outcome: ${outcome}\n`],
+    }),
+  ),
 ];
 it.each(recoveryCases)(
   "reports only the observed recovery outcome: $name",

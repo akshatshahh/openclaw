@@ -661,7 +661,7 @@ describe("noteMemorySearchHealth", () => {
       "Repair the llama.cpp server problem reported by the Gateway",
     );
     expectFirstNoteExcludes(
-      "Gateway probe: GGUF load failed",
+      "Gateway check: GGUF load failed",
       "openclaw plugins install @openclaw/llama-cpp-provider",
     );
   });
@@ -1120,7 +1120,7 @@ describe("noteMemorySearchHealth", () => {
     );
 
     expectFirstNoteContains(
-      "Gateway memory probe for default agent is not ready",
+      "Gateway memory check for default agent is not ready",
       "openclaw configure --section model",
       "GEMINI_API_KEY",
       'provider is set to "gemini"',

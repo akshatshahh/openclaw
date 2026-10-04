@@ -378,7 +378,7 @@ describe("channelsCapabilitiesCommand", () => {
     expect(payload.channels?.[0]?.probe).toStrictEqual({
       ok: false,
       timedOut: true,
-      error: "probe timed out after 1ms",
+      error: "check timed out after 1ms",
     });
   });
 

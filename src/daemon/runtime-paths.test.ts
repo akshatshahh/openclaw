@@ -146,7 +146,7 @@ describe.each(["node", "bun"] as const)("%s probe failures", (runtime) => {
     const resolve = runtime === "node" ? resolvePreferredNodePath : resolvePreferredBunPath;
     await expect(
       resolve({ env: {}, runtime, platform: "linux", execPath: "/fixture/other", execFile }),
-    ).rejects.toThrow(/probe failed.*EACCES/s);
+    ).rejects.toThrow(/check failed.*EACCES/s);
   });
 });
 
@@ -449,7 +449,7 @@ describe("resolvePreferredBunPath", () => {
         await expect(result).resolves.toBeUndefined();
         expect(execFile).not.toHaveBeenCalled();
       } else {
-        await expect(result).rejects.toThrow(/Bun runtime probe failed.*EACCES/s);
+        await expect(result).rejects.toThrow(/Bun runtime check failed.*EACCES/s);
       }
     },
   );

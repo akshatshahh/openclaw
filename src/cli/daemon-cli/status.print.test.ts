@@ -663,7 +663,7 @@ describe("printDaemonStatus", () => {
       runtimeLabel: "running",
       runtimeText: "running (pid 8000)",
       targetRole: "diagnostic-only",
-      suffix: " (diagnostic only, not the probe target)",
+      suffix: " (diagnostic only, not the check target)",
       rpcOk: false,
     },
     {

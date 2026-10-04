@@ -236,7 +236,7 @@ describe("Feishu monitor startup preflight", () => {
     expect(writeCachedFeishuBotIdentityMock).not.toHaveBeenCalled();
     expect(registerFeishuAiAgentMock).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalledWith(
-      "feishu[alpha]: bot info probe returned identity for a different app; ignoring stale result",
+      "feishu[alpha]: bot info check returned identity for a different app; ignoring stale result",
     );
   });
 

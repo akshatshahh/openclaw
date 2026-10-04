@@ -2110,7 +2110,7 @@ EOF
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("/tmp/openclaw-npm/bin");
-    expect(result.stderr).toContain("timed out during installer finalization probe: npm prefix -g");
+    expect(result.stderr).toContain("timed out during installer finalization check: npm prefix -g");
   });
 
   it("bounds daemon status probes during finalization helpers", () => {
@@ -2144,7 +2144,7 @@ EOF
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("not-loaded");
     expect(result.stderr).toContain(
-      "timed out during installer finalization probe: openclaw daemon status --json",
+      "timed out during installer finalization check: openclaw daemon status --json",
     );
   });
 
