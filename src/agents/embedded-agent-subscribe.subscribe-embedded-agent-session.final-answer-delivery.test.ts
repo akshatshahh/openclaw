@@ -355,7 +355,8 @@ describe("Responses final delivery", () => {
     type Request =
       | string
       | readonly WireItem[]
-      | { readonly items: readonly WireItem[]; readonly endTurn: false };
+      | { readonly items: readonly WireItem[]; readonly endTurn: false }
+      | { readonly items: readonly WireItem[]; readonly incomplete: true };
     // Each model request is a real Responses wire stream through the shipped transport.
     function responsesStream(id: string, request: Request) {
       const items: readonly WireItem[] =
@@ -365,6 +366,7 @@ describe("Responses final delivery", () => {
             ? request.items
             : request;
       const endTurn = typeof request === "object" && "endTurn" in request ? request.endTurn : true;
+      const incomplete = typeof request === "object" && "incomplete" in request;
       async function* wire() {
         for (const [outputIndex, item] of items.entries()) {
           if (item.type === "message") {
@@ -387,10 +389,20 @@ describe("Responses final delivery", () => {
           }
           yield { type: "response.output_item.done", output_index: outputIndex, item };
         }
-        yield {
-          type: "response.completed",
-          response: { id, status: "completed", output: items, end_turn: endTurn },
-        };
+        yield incomplete
+          ? {
+              type: "response.incomplete",
+              response: {
+                id,
+                status: "incomplete",
+                incomplete_details: { reason: "max_output_tokens" },
+                output: items,
+              },
+            }
+          : {
+              type: "response.completed",
+              response: { id, status: "completed", output: items, end_turn: endTurn },
+            };
       }
       const output = createResponsesAssistantOutput(model);
       const response = new AssistantMessageEventStream();
@@ -538,6 +550,30 @@ describe("Responses final delivery", () => {
           "NO_REPLY",
         ],
         transcript: ["toolUse:toolCall", "stop:text", "toolUse:toolCall", "stop:text", "stop:text"],
+        delivered: ["/tmp/openclaw/tts-a/voice-a.opus"],
+        reply: { disposition: "silent" },
+      },
+      {
+        name: "a NO_REPLY after a superseding cut-off attachment does not restore the earlier answer",
+        delivery: "deferred",
+        requests: [
+          answered,
+          {
+            items: [
+              { ...lookupCall, id: "fc_lookup_2", call_id: "call_lookup_2" },
+              finalAnswer("msg_media", "NO_REPLY\nMEDIA:/tmp/openclaw/tts-a/voice-a.opus"),
+            ],
+            incomplete: true,
+          },
+          "NO_REPLY",
+        ],
+        transcript: [
+          "toolUse:toolCall",
+          "stop:text",
+          "toolUse:toolCall",
+          "length:text",
+          "stop:text",
+        ],
         delivered: ["/tmp/openclaw/tts-a/voice-a.opus"],
         reply: { disposition: "silent" },
       },
