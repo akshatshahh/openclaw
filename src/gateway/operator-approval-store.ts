@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { serialize } from "node:v8";
 import { expectDefined } from "@openclaw/normalization-core";
 import {
@@ -142,12 +143,16 @@ function execute<Key extends Operation>(
     path: databaseOptions?.database?.path ?? databaseOptions?.path,
   });
   const captured = structuredClone(input);
+  // Receipt settlement owns its work, while live guards retain the caller's approval scope.
+  const assertCallerCurrent = AsyncLocalStorage.bind(() => {
+    guard?.assertCurrent();
+    assertCurrent?.();
+  });
   let mutation: CronReceiptAuthorityMutation | undefined;
   const assertOperationCurrent = () => {
     context.admission.assertCurrent();
     mutation?.assertCurrent();
-    guard?.assertCurrent();
-    assertCurrent?.();
+    assertCallerCurrent();
   };
   const native = guard?.family === "native-compatibility";
   let admission: SqliteWorkerOperationAdmission | undefined;
@@ -215,10 +220,15 @@ function execute<Key extends Operation>(
     },
     assertOperationCurrent,
     (run) =>
-      withCronReceiptAuthorityMutation(context, (authority) => {
-        mutation = authority;
-        return run(authority.context);
-      }),
+      withCronReceiptAuthorityMutation(
+        context,
+        (authority) => {
+          mutation = authority;
+          return run(authority.context);
+        },
+        // Only guarded consumption can settle an already-recorded handoff during close.
+        { settlement: type === "operatorApprovals.consume" && assertCurrent !== undefined },
+      ),
   );
 }
 

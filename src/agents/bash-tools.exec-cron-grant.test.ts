@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { awaitGateBeforeSettlement, withinTest } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { bindCronJobAdmittedRun, resetCronActiveJobs } from "../cron/active-jobs.js";
 import { resolveCronJobConfigRevision } from "../cron/config-revision.js";
@@ -46,6 +47,7 @@ import {
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
 import { observeMainThreadSql } from "../test-utils/main-thread-sql-spies.test-support.js";
 import { resetProcessRegistryForTests } from "./bash-process-registry.test-support.js";
+import * as cronGrant from "./bash-tools.exec-cron-grant.js";
 import { processGatewayAllowlist } from "./bash-tools.exec-host-gateway.js";
 import { runExecProcess } from "./bash-tools.exec-runtime.js";
 
@@ -529,6 +531,75 @@ describe("cron standing grants", () => {
       expect(readGrantUseCounts()).toEqual([1]);
     },
   );
+
+  it("denies native execution when a committed grant expires before its consume reply returns", async ({
+    signal,
+  }) => {
+    const expiresAtMs = 4_000_000_000_000;
+    await prepareCronRun(true, expiresAtMs);
+    const consumed = createDeferredCore();
+    const releaseReply = createDeferredCore();
+    const prepare = cronGrant.prepareCronStandingGrantConsumption;
+    const delayedReply = vi
+      .spyOn(cronGrant, "prepareCronStandingGrantConsumption")
+      .mockImplementation(async (...args) => {
+        const prepared = await prepare(...args);
+        if (!prepared) {
+          return prepared;
+        }
+        return {
+          ...prepared,
+          async consume(...input: Parameters<typeof prepared.consume>) {
+            const result = await prepared.consume(...input);
+            // Delay only the real owner's reply, after its committed use and publication.
+            consumed.resolve();
+            await releaseReply.promise;
+            return result;
+          },
+        };
+      });
+    const security = captureSecurityEvents();
+    const approved = () =>
+      security.events.filter((event) => event.reason?.startsWith("standing-grant grant="));
+    const clock = vi.spyOn(Date, "now");
+    let execution: ReturnType<typeof runNativeCron> | undefined;
+    try {
+      execution = runNativeCron(await runCron());
+      await withinTest(
+        awaitGateBeforeSettlement(
+          consumed.promise,
+          execution,
+          "Exec missed the consume reply gate",
+        ),
+        signal,
+      );
+      expect(readGrantUseCounts()).toEqual([1]);
+      expect(approved()).toEqual([]);
+      clock.mockReturnValue(expiresAtMs);
+      releaseReply.resolve();
+      await expect(execution).rejects.toMatchObject({
+        message: "exec denied by final preflight",
+        result: {
+          details: { status: "failed" },
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining("standing grant no longer valid (expired)"),
+            },
+          ],
+        },
+      });
+      expect(approved()).toEqual([]);
+      expect(fs.existsSync(path.join(workdir, "cron-native-effects.txt"))).toBe(false);
+      expect(readGrantUseCounts()).toEqual([1]);
+    } finally {
+      releaseReply.resolve();
+      await Promise.allSettled([execution]);
+      clock.mockRestore();
+      security.stop();
+      delayedReply.mockRestore();
+    }
+  });
 
   it("refuses policy tightening until a consumed remote launch acknowledges initiation", async () => {
     await prepareCronRun(true);

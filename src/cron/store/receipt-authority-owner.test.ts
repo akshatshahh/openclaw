@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { deserialize } from "node:v8";
 import { MessageChannel, Worker } from "node:worker_threads";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
@@ -10,9 +12,14 @@ import {
   createDeferred,
   withinTest,
 } from "../../../test/helpers/promise.js";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { revokeCronStandingGrant } from "../../gateway/operator-approval-store.js";
 import { acquireFileLock } from "../../infra/file-lock.js";
 import { resolveRuntimeProcessEntrypointUrl } from "../../infra/runtime-process-url.js";
+import {
+  resolveRuntimeWorkerArgv,
+  resolveRuntimeWorkerUrl,
+} from "../../infra/runtime-worker-url.js";
 import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import * as workerCpu from "../../infra/worker-cpu.js";
 import { AsyncWorkScope, getAsyncWorkSignal } from "../../shared/async-work-scope.js";
@@ -25,6 +32,7 @@ import {
   withOpenClawTestState,
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
+import { cronOwnerHardeningEntrypoints } from "../owner-hardening-runtime.test-support.js";
 import { runCronRuntimeMutation } from "../service/runtime-mutation.js";
 import { loadCronStore, saveCronStore } from "../store.js";
 import type { CronStoredJob } from "../types.js";
@@ -44,6 +52,24 @@ import {
 import { prepareCronStoreChanges } from "./save.kernel.js";
 
 afterEach(() => vi.restoreAllMocks());
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+it("reports rejected native settlement without releasing database or authority custody", async ({
+  signal,
+}) => {
+  const stateDir = tempDirs.make("cron-native-custody-");
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      ...resolveRuntimeWorkerArgv(
+        resolveRuntimeWorkerUrl(cronOwnerHardeningEntrypoints.receiptAuthorityFailure),
+      ),
+      stateDir,
+    ],
+    { timeout: 30_000, killSignal: "SIGKILL", signal },
+  );
+  expect(stdout).toContain("retained-native-custody");
+});
 
 it("refuses first authority admission for a hardlinked database without SQL or a poisoned owner", async () => {
   await withOpenClawTestState({ label: "cron-authority-hardlink" }, async (fixture) => {

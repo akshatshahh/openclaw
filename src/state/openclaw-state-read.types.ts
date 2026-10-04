@@ -253,6 +253,7 @@ export type OpenClawStateReadCommand =
   | { type: "workerPlacements.changeSnapshot"; profileIds?: string[] }
   | { type: "fleet.get"; tenantId: string }
   | { type: "nodeHost.config" }
+  | { type: "tts.prefsPath" }
   | { type: "operator.channelPolicy" }
   | { type: "preparedPoolPresence.read" }
   | {
@@ -524,7 +525,7 @@ export type OpenClawStateReadResult =
     }
   | { type: "fleet.get"; cell: FleetCellRecord | undefined }
   | {
-      type: "nodeHost.config" | "operator.channelPolicy";
+      type: "nodeHost.config" | "operator.channelPolicy" | "tts.prefsPath";
       row: ConfigMachineStateRow | undefined;
     }
   | {

@@ -1400,7 +1400,7 @@ describe("processGatewayAllowlist", () => {
 
     const result = await runGatewayAllowlist({
       command: "find . -maxdepth 1",
-      turnSourceChannel: "feishu",
+      turnSourceChannel: "webchat",
       approvalFollowupMode: "agent",
     });
     expect(result.pendingResult?.details.status).toBe("approval-pending");
@@ -1460,7 +1460,7 @@ describe("processGatewayAllowlist", () => {
       const result = await runGatewayAllowlist({
         command,
         workdir,
-        turnSourceChannel: "feishu",
+        turnSourceChannel: "webchat",
         approvalFollowupMode: "agent",
       });
 
@@ -1487,7 +1487,7 @@ describe("processGatewayAllowlist", () => {
 
     const result = await runGatewayAllowlist({
       command: "find . -maxdepth 1",
-      turnSourceChannel: "feishu",
+      turnSourceChannel: "webchat",
       approvalFollowupMode: "agent",
     });
     expect(result.pendingResult?.details.status).toBe("approval-pending");
@@ -1553,7 +1553,7 @@ describe("processGatewayAllowlist", () => {
       try {
         const result = await runGatewayAllowlist({
           command,
-          turnSourceChannel: "feishu",
+          turnSourceChannel: "webchat",
           approvalFollowupMode: "agent",
           env,
           requestedEnv: env,
@@ -1602,7 +1602,7 @@ describe("processGatewayAllowlist", () => {
 
     const result = await runGatewayAllowlist({
       command: "find . -maxdepth 1",
-      turnSourceChannel: "feishu",
+      turnSourceChannel: "webchat",
       approvalFollowupMode: "agent",
       signal: controller.signal,
       env: { PATH: "/usr/bin:/bin" },
@@ -1621,7 +1621,7 @@ describe("processGatewayAllowlist", () => {
 
     const result = await runGatewayAllowlist({
       command: "find . -maxdepth 1",
-      turnSourceChannel: "feishu",
+      turnSourceChannel: "webchat",
       approvalFollowupMode: "agent",
       runId: "run-aborted",
       toolCallId: "tool-aborted",

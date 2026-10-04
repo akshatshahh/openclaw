@@ -22,6 +22,7 @@ import type { CronStoredJob } from "../cron/types.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { assertSqliteSchemaContains } from "../infra/sqlite-schema-contract.js";
+import { runSqliteReadOperationSync } from "../infra/sqlite-schema-facts.js";
 import * as workerAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
@@ -350,7 +351,11 @@ describe("cron standing grant mint", () => {
         throw new Error("force outer rollback");
       }, databaseOptions),
     ).toThrow("force outer rollback");
-    expect(tableExists(database.db, "operator_approval_standing_grant_generations")).toBe(false);
+    expect(
+      runSqliteReadOperationSync(database.db, () =>
+        tableExists(database.db, "operator_approval_standing_grant_generations"),
+      ),
+    ).toBe(false);
 
     const resolved = await resolveOperatorApproval({
       id: "approval-1",
@@ -368,7 +373,11 @@ describe("cron standing grant mint", () => {
       },
     });
     expect(resolved.outcome).toBe("resolved");
-    expect(tableExists(database.db, "operator_approval_standing_grant_generations")).toBe(true);
+    expect(
+      runSqliteReadOperationSync(database.db, () =>
+        tableExists(database.db, "operator_approval_standing_grant_generations"),
+      ),
+    ).toBe(true);
     expect((await consume({ databaseOptions, revision, nowMs: NOW_MS + 3_000 })).outcome).toBe(
       "consumed",
     );
