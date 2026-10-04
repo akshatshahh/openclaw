@@ -69,28 +69,27 @@ it("hot-applies model settings without replacing the Codex generation", async ()
 it("replays a deferred plugin replacement with later edits once its admitted work settles", async () => {
   const codex = (sandbox: string) => ({ enabled: true, config: { sandbox } });
   const initialConfig: OpenClawConfig = {
-    plugins: { entries: { codex: codex("read-only"), other: { enabled: true } } },
+    plugins: { entries: { codex: codex("read-only") } },
     agents: { entries: { main: {} } },
   };
   let config: OpenClawConfig = {
     ...initialConfig,
-    plugins: { entries: { codex: codex("workspace-write"), other: { enabled: false } } },
+    plugins: { entries: { codex: codex("workspace-write") } },
   };
-  // Active Codex generation holding admitted work, as during a long agent turn.
-  const builder = createTestPluginRegistry();
-  const [instance, otherInstance] = ["codex", "other"].map((id) => {
-    const record = createPluginRecord({ id, source: `/synthetic/${id}.ts` });
+  // This Gateway's Codex generation holds admitted work, as during a long agent turn, while
+  // another Gateway in the process owns the default registry with an idle Codex.
+  const [instance, otherGatewayInstance] = [0, 1].map(() => {
+    const builder = createTestPluginRegistry();
+    const record = createPluginRecord({ id: "codex", source: "/synthetic/codex.ts" });
     builder.registry.plugins.push(record);
     builder.createApi(record, { config: {} });
+    setActivePluginRegistry(builder.registry);
     const pluginInstance = getPluginInstance(record);
     assert(pluginInstance);
     return pluginInstance;
   });
-  assert(instance && otherInstance);
-  setActivePluginRegistry(builder.registry);
+  assert(instance && otherGatewayInstance !== instance);
   const releaseWork = instance.retainWork();
-  // The disabled plugin changes without joining the pre-stop drain, so its work cannot hold the retry.
-  otherInstance.retainWork();
   const harness = createReloaderHarness(async () => makeSnapshot({ config }), {
     initialConfig,
     // Stands in for the reload owner's 60s pre-stop drain expiring on the held work.
@@ -101,13 +100,14 @@ it("replays a deferred plugin replacement with later edits once its admitted wor
           {
             operationId: "failed-automatic-drain",
             generation: getPluginRuntimeGeneration(),
-            pluginIds: ["codex", "other"],
+            pluginIds: ["codex"],
             phase: "drain",
             committed: false,
           },
           {
             cause: new PluginAdmittedWorkTimeoutError(
               new Set(["codex"]),
+              [instance],
               new PluginHostCleanupTimeoutError("plugin codex admitted work"),
             ),
           },
