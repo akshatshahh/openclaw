@@ -182,6 +182,7 @@ function retireFailedReply(
         settlement: undefined,
         waitForSettlement: edge.forbidden,
         observeRequests: edge.forbidden,
+        observeCommitted: edge.forbidden,
         service: edge.forbidden,
         bindDatabaseAuthority: edge.forbidden,
         finish() {},
@@ -370,7 +371,11 @@ it.each([
       expect(settleNative).not.toHaveBeenCalled();
       retired.resolve();
       const failure = await completion.promise;
-      expect(settleNative).toHaveBeenCalledExactlyOnceWith({ kind: "unknown", error: failure });
+      expect(settleNative).toHaveBeenCalledExactlyOnceWith({
+        kind: "unknown",
+        error: failure,
+        nativeStopped: true,
+      });
       if (outcome === "direct refusal") {
         expect(failure).toBe(refused);
       } else {
@@ -461,6 +466,7 @@ describe("committed agent registration across failed native opening", () => {
         expect(settleNative).toHaveBeenCalledExactlyOnceWith({
           kind: "unknown",
           error: expect.objectContaining({ message: openingError.message }),
+          nativeStopped: true,
         });
         expect(failure).toMatchObject({
           cause: {
@@ -529,6 +535,7 @@ describe("committed agent registration across failed native opening", () => {
         expect(settleNative).toHaveBeenCalledExactlyOnceWith({
           kind: "unknown",
           error: expect.objectContaining({ message: cleanupFailure.message }),
+          nativeStopped: true,
         });
       } finally {
         retired.resolve();
@@ -604,6 +611,7 @@ describe("committed agent registration across failed native opening", () => {
       expect(settleNative).toHaveBeenCalledExactlyOnceWith({
         kind: "unknown",
         error: expect.objectContaining({ message: reply.error.message }),
+        nativeStopped: true,
       });
     },
   );

@@ -68,6 +68,7 @@ function jobWithCleanup(admissionFailures: readonly unknown[] = []) {
     settlement: undefined,
     waitForSettlement: effects.forbidden,
     observeRequests: effects.forbidden,
+    observeCommitted: effects.forbidden,
     service: effects.forbidden,
     bindDatabaseAuthority: effects.forbidden,
     finish() {
@@ -139,6 +140,36 @@ afterEach(() => {
 });
 
 describe("SQLite worker settlement cleanup lineage", { concurrent: false }, () => {
+  it.each([true, false])(
+    "keeps a lost outcome unknown while reporting confirmed worker exit: %s",
+    async (retired) => {
+      const current = jobWithCleanup();
+      const error = new Error("Worker result was lost");
+      const retirement = createDeferredCore();
+      settleFailedSqliteWorkerJobs({
+        current: current.job,
+        queued: [],
+        queuedError: error,
+        error,
+        retire: () => retirement.promise,
+        finish: settleSqliteWorkerJob,
+      });
+      expect(current.settleNative).not.toHaveBeenCalled();
+      if (retired) {
+        retirement.resolve();
+      } else {
+        retirement.reject(new Error("Native retirement is still uncertain"));
+      }
+      await retirement.promise.catch(() => {});
+      expect(current.settleNative).toHaveBeenCalledExactlyOnceWith({
+        kind: "unknown",
+        error,
+        ...(retired ? { nativeStopped: true } : {}),
+      });
+      expect(current.resolve).not.toHaveBeenCalled();
+      expect(current.reject).toHaveBeenCalledOnce();
+    },
+  );
   it.each([
     { outcome: "value", retired: true },
     { outcome: "error", retired: true },

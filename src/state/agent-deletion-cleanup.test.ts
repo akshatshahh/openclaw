@@ -70,7 +70,9 @@ function fixture() {
     write,
     read: () => loadSessionEntryReadOnly(scope)?.sessionId,
     withDeletion: <T>(run: (deletion: AgentDeletionOperation) => Promise<T>) =>
-      withAgentDeletion(options.agentId, async (begin) => run(begin(entry)), { env: options.env }),
+      withAgentDeletion(options.agentId, async (begin) => run(await begin(entry)), {
+        env: options.env,
+      }),
   };
 }
 

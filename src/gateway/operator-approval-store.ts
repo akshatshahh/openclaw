@@ -5,6 +5,10 @@ import {
   extractErrorCode,
 } from "@openclaw/normalization-core/error-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import {
+  withCronReceiptAuthorityMutation,
+  type CronReceiptAuthorityMutation,
+} from "../cron/store/receipt-authority-owner.js";
 import type { SqliteWorkerInputPreparation } from "../infra/sqlite-worker-broker.types.js";
 import type { SqliteWorkerStore } from "../infra/sqlite-worker-contract.js";
 import type {
@@ -29,6 +33,7 @@ import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worke
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import type { OpenClawStateWorkerOperationOptions } from "../state/openclaw-state-worker-contract.js";
 import { runOpenClawStateWorkerOperation } from "../state/openclaw-state-worker-store.js";
+import type { OperatorApprovalCommitReceipt } from "./operator-approval-store.operations.js";
 import { decodeOperatorApprovalHistoryCursor } from "./operator-approval-store.rows.js";
 import type {
   ListTerminalOperatorApprovalsInput,
@@ -93,6 +98,7 @@ async function runApprovalStoreOperation<T>(
   ) => Promise<T>,
   options?: Omit<OpenClawStateWorkerOperationOptions, "existingOnly">,
   assertCurrent?: () => void,
+  retainAuthority?: (run: (context?: OpenClawStateWorkerContext) => Promise<T>) => Promise<T>,
 ): Promise<T> {
   context.admission.assertCurrent();
   const preparation = reserveSqliteWorkerInputPreparation(serialize(input).byteLength);
@@ -109,11 +115,13 @@ async function runApprovalStoreOperation<T>(
     preparation.assertCurrent();
     context.admission.assertCurrent();
     assertCurrent?.();
-    return await runOpenClawStateWorkerOperation(
-      context,
-      (scope) => operation(scope, preparation),
-      options,
-    );
+    const run = (retainedContext = context) =>
+      runOpenClawStateWorkerOperation(
+        retainedContext,
+        (scope) => operation(scope, preparation),
+        options,
+      );
+    return await (retainAuthority ? retainAuthority(run) : run());
   } finally {
     preparation.release();
     lease.release();
@@ -130,19 +138,24 @@ function execute<Key extends Operation>(
     path: databaseOptions?.database?.path ?? databaseOptions?.path,
   });
   const captured = structuredClone(input);
+  let mutation: CronReceiptAuthorityMutation | undefined;
   const assertOperationCurrent = () => {
     context.admission.assertCurrent();
+    mutation?.assertCurrent();
     guard?.assertCurrent();
     assertCurrent?.();
   };
   const native = guard?.family === "native-compatibility";
   let admission: SqliteWorkerOperationAdmission | undefined;
-  const createWriteAdmission = createSqliteWorkerWriteAdmission(assertOperationCurrent, [
-    context.admission.databasePath,
-  ]);
   const createAdmission: SqliteWorkerAdmissionFactory = (operation) => {
-    const retained = createWriteAdmission(operation);
+    const authority = expectDefined(mutation, "Operator approval receipt authority");
+    const retained = createSqliteWorkerWriteAdmission(
+      assertOperationCurrent,
+      [context.admission.databasePath],
+      authority.attachment,
+    )(operation);
     admission = retained.admission;
+    authority.observe(admission, operation);
     return retained;
   };
   const publishCommitted = (facts: unknown) => {
@@ -164,13 +177,25 @@ function execute<Key extends Operation>(
         preparation.assertCurrent();
         assertOperationCurrent();
         preparation.release();
-        return store.executeNativeOperatorApproval(
-          type,
-          captured,
-          context,
-          assertOperationCurrent,
-          onCommitted ? publishCommitted : undefined,
-        );
+        const authority = expectDefined(mutation, "Operator approval receipt authority");
+        let receipt: OperatorApprovalCommitReceipt | undefined;
+        try {
+          return store.executeNativeOperatorApproval(
+            type,
+            captured,
+            context,
+            assertOperationCurrent,
+            authority.attachment,
+            (committed) => {
+              receipt = committed;
+              if (committed.receiptAuthority) {
+                authority.publish(committed.receiptAuthority);
+              }
+            },
+          );
+        } finally {
+          publishCommitted(receipt);
+        }
       }
       try {
         return await preparation.handoff(() => scope.execute({ type, input: captured }));
@@ -185,6 +210,11 @@ function execute<Key extends Operation>(
       ...(native ? {} : { createAdmission }),
     },
     assertOperationCurrent,
+    (run) =>
+      withCronReceiptAuthorityMutation(context, (authority) => {
+        mutation = authority;
+        return run(authority.context);
+      }),
   );
 }
 
