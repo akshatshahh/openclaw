@@ -99,6 +99,15 @@ These cutovers change no schema, stored bytes, retention, or update behavior.
 
 ## Keep one store owner
 
+Ordinary `chat.send` turns prepare persisted session lookups and sharing facts
+through the existing session workers. Missing rows retain the selected store's routing
+facts without opening a writable database on the Gateway thread. The router
+captures the original caller before session preparation yields, and admission
+rechecks current membership, session identity, and physical source before starting
+work. Read refreshes retain the original discovery owner and never replay a
+consumer that has begun effects. Process-held incognito reads keep their existing
+owner. Configuration, schemas, and stored formats are unchanged.
+
 ### Incognito worker ownership (P1, inactive)
 
 The accepted incognito migration extends the canonical agent execution owner
@@ -1059,6 +1068,16 @@ synchronous proxy-capture SDK remains a deprecated compatibility path; bundled
 callers use the worker APIs. Schemas, stored bytes, retention, and update behavior
 are unchanged.
 
+Per-turn restart admission, runtime selection, and initial placement routing read
+through the existing placement projection. Each read retains the original physical
+store and revocable placement observation until its caller consumes the facts.
+Chat admission reruns its session, reservation, and caller checks after preparation;
+reply admission rechecks its session and lifecycle after the worker read. Runtime
+selection remains a prepared default; the placement claim writer still authorizes
+execution. Other placement lifecycle reads remain separate migration work; the
+released synchronous placement SDK contract is unchanged. No schema, retention,
+durability, or update change is required.
+
 Placement turn claims and releases execute through the shared-state writer,
 including their coordinator acquisition. Local turns retain durable claims:
 cloud dispatch closes admission and joins their settlement before preparing the
@@ -1843,6 +1862,24 @@ opening settles. The remaining native Cron transitions still need migration.
 This cutover preserves schemas, stored bytes, retention, configuration, and update
 behavior.
 
+Worktree run-end snapshots store provisioned chunks and settle removal claims in
+that same worker. Git workers prepare snapshot files; their effects use one
+captured writer for chunk storage and cleanup. The host captures the physical database before preparation;
+transactions reread removal custody and worktree/source predicates, with current
+host grants at admission and commit. Session lifecycle callers separate current
+session authority from worktree ownership so host admission callbacks do not reread
+worktree rows. Native receipts acknowledge lost replies, while unknown outcomes
+retain recovery custody without replay or compensating
+chunk deletion. Capacity eviction awaits each removal claim and validates all
+held claims inside the transaction. Once deletion is admitted, its allocation
+lease owns final settlement independently of caller cancellation.
+Restoration settles old leases before publishing a live row, so
+an awaited finalizer cannot remove a successor run's lease. The final Gateway close seals
+new worktree operations and joins accepted settlement before worker teardown,
+independently of scheduler cancellation. Native registry publication and the
+existing synchronous lock assertions retain their current owners. This changes
+no schema, stored bytes, retention, durability, SDK, or update behavior.
+
 GitHub publication preparation and per-turn tool availability read the selected
 live worktree through the existing worktree reader and shared-state worker. They
 capture the physical store before yielding, recheck session identity after the
@@ -1860,6 +1897,16 @@ use; reads also prepare authority before accepting their results. Transcript
 writes retain their interval through the existing writer's commit and settlement.
 Synchronous guards perform no receipt SQL or worker submission. Agent database
 admission refusals remain with their in-memory admission owner.
+
+Shared HTTP, Discord, Slack, and Telegram message handoffs add owner-held uses
+from exact receipt, job, and deletion facts prepared by the existing read worker.
+After asynchronous preparation, the Gateway owner acquires an interval through
+provider initiation, then releases it without waiting for the response. Each
+retry prepares a fresh use; reads also prepare authority before accepting their
+results. Transcript writes retain their interval through commit and settlement.
+The existing synchronous current-job guards remain active during this staged
+transport migration. Their native SQL path is removed only after the remaining
+transports adopt prepared initiation; this stage does not claim its elimination.
 
 Cron mutations share host-owned receipt-authority custody for the physical shared
 database, across store partitions and approval writers. Runtime mutations, raw

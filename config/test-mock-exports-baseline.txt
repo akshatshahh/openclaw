@@ -8515,8 +8515,6 @@
 ["src/gateway/server-worker-placement-move-barrier.test.ts","../auto-reply/thinking.js","a89ef9e20e607ac06d2b8fe05595aab1ce04ce005b538d6e39e3207ab950ce01",1]
 ["src/gateway/server-worker-placement-move-barrier.test.ts","./worker-environments/workspace-sync-preflight.js","0a181f8163fb7792407c0bac95a37fe9b404ae2981472fb5a7cc6bfc66769e4f",1]
 ["src/gateway/server-worker-placement-provision-cancellation.test.ts","./worker-environments/workspace-sync-preflight.js","f3ad87b0ee41ce02b6a16ddd35c33911a1cb352da2fbc2a62d07db5495bc63a1",1]
-["src/gateway/server-worker-placement-reclaim.preparation.test.ts","./session-utils.js","f45d3c6b1ac8e69f5d469c134202dbfe18476dc5097b3bff051dc0f4ea1754a7",1]
-["src/gateway/server-worker-placement-reclaim.test.ts","./session-utils.js","f45d3c6b1ac8e69f5d469c134202dbfe18476dc5097b3bff051dc0f4ea1754a7",1]
 ["src/gateway/server-worker-placement-recovery-events.test.ts","./server-worker-placement-session-evidence.js","156bacda3feef305581af5a747000128f3e6f9af29df213ab96d0ec29ef8ffb7",1]
 ["src/gateway/server-worker-placement-resume.test.ts","./worker-environments/workspace-sync-preflight.js","f3ad87b0ee41ce02b6a16ddd35c33911a1cb352da2fbc2a62d07db5495bc63a1",1]
 ["src/gateway/server-worker-placement-startup-cleanup.test.ts","./server-worker-placement-session-evidence.js","113654c638758805b09615faa92403df969badb0fd51d3ea2f3136755193f5a3",1]
