@@ -69,22 +69,28 @@ it("hot-applies model settings without replacing the Codex generation", async ()
 it("replays a deferred plugin replacement with later edits once its admitted work settles", async () => {
   const codex = (sandbox: string) => ({ enabled: true, config: { sandbox } });
   const initialConfig: OpenClawConfig = {
-    plugins: { entries: { codex: codex("read-only") } },
+    plugins: { entries: { codex: codex("read-only"), other: { enabled: true } } },
     agents: { entries: { main: {} } },
   };
   let config: OpenClawConfig = {
     ...initialConfig,
-    plugins: { entries: { codex: codex("workspace-write") } },
+    plugins: { entries: { codex: codex("workspace-write"), other: { enabled: false } } },
   };
   // Active Codex generation holding admitted work, as during a long agent turn.
   const builder = createTestPluginRegistry();
-  const record = createPluginRecord({ id: "codex", source: "/synthetic/codex.ts" });
-  builder.registry.plugins.push(record);
-  builder.createApi(record, { config: {} });
+  const [instance, otherInstance] = ["codex", "other"].map((id) => {
+    const record = createPluginRecord({ id, source: `/synthetic/${id}.ts` });
+    builder.registry.plugins.push(record);
+    builder.createApi(record, { config: {} });
+    const pluginInstance = getPluginInstance(record);
+    assert(pluginInstance);
+    return pluginInstance;
+  });
+  assert(instance && otherInstance);
   setActivePluginRegistry(builder.registry);
-  const instance = getPluginInstance(record);
-  assert(instance);
   const releaseWork = instance.retainWork();
+  // The disabled plugin changes without joining the pre-stop drain, so its work cannot hold the retry.
+  otherInstance.retainWork();
   const harness = createReloaderHarness(async () => makeSnapshot({ config }), {
     initialConfig,
     // Stands in for the reload owner's 60s pre-stop drain expiring on the held work.
@@ -95,7 +101,7 @@ it("replays a deferred plugin replacement with later edits once its admitted wor
           {
             operationId: "failed-automatic-drain",
             generation: getPluginRuntimeGeneration(),
-            pluginIds: ["codex"],
+            pluginIds: ["codex", "other"],
             phase: "drain",
             committed: false,
           },
@@ -125,6 +131,8 @@ it("replays a deferred plugin replacement with later edits once its admitted wor
   await flushWatcherChange(harness);
   expect(harness.onHotReload).toHaveBeenCalledOnce();
   expect(harness.onConfigApplied).not.toHaveBeenCalled();
+  expect(harness.log.info).toHaveBeenCalledWith(expect.stringContaining("config reload deferred"));
+  expect(harness.log.info).not.toHaveBeenCalledWith(expect.stringContaining("--wait"));
 
   // The pre-stop drain also joins cleanup calls, so the retry waits for them too.
   const cleanup = createDeferredCore();
@@ -185,6 +193,8 @@ it.each(["explicit wait", "revert", "revert with model edit"] as const)(
     expect(harness.onHotReload).toHaveBeenCalledOnce();
     expect(harness.log.error).toHaveBeenCalledOnce();
     expect(harness.onConfigApplied).not.toHaveBeenCalled();
+    // Nothing watches a drain that failed without an admitted-work timeout.
+    expect(harness.log.info).toHaveBeenCalledWith(expect.stringContaining("--wait"));
 
     if (recovery !== "explicit wait") {
       config = {
