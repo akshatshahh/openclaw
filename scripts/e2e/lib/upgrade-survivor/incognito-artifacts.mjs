@@ -64,6 +64,7 @@ export function assertNoIncognitoArtifacts(roots, marker) {
         for (const { name: table } of db
           .prepare("SELECT name FROM sqlite_master WHERE type='table'")
           .all()) {
+          assert(typeof table === "string", "SQLite table name must be text");
           const statement = db.prepare(`SELECT * FROM "${table.replaceAll('"', '""')}"`);
           statement.setReadBigInts(true);
           for (const row of statement.iterate()) {
