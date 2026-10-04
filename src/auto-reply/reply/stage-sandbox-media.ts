@@ -76,7 +76,8 @@ export async function stageSandboxMedia(params: {
   const remoteWorkspace = getAgentWorkspaceAccess(workspaceDir, "prepareTurnAttachments");
   if (remoteWorkspace?.prepareTurnAttachments && !ctx.MediaRemoteHost) {
     // Keep managed originals on Gateway; the admitted turn transfers them to the Harness.
-    console.warn("Inbound media staging skipped: remote workspace owns attachment preparation");
+    // This is an intentional handoff, not a failure — keep it at debug level.
+    logVerbose("Inbound media staging skipped: remote workspace owns attachment preparation");
     return EMPTY_STAGE_RESULT;
   }
   const forceRemoteCache =
