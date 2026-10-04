@@ -15,6 +15,7 @@ import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { registerOpenClawStateDatabaseAsyncResource } from "../../state/openclaw-state-db-cache.js";
 import { executeExistingOpenClawStateRead } from "../../state/openclaw-state-db-readonly.js";
 import type { OpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.types.js";
+import { CronReceiptAuthorityRefusal } from "./receipt-authority-error.js";
 import type {
   CronReceiptAuthorityAttachment,
   CronReceiptAuthorityPublication,
@@ -45,16 +46,6 @@ type AuthorityOwner = {
   uses: Set<{ observation: Observation; retire: () => void }>;
   failure?: unknown;
 };
-
-export class CronReceiptAuthorityRefusal extends Error {
-  constructor(
-    readonly reason: "retired" | "unavailable" | "permission" | "spent" | "busy",
-    options?: ErrorOptions,
-  ) {
-    super(`Cron effect authority ${reason}; prepare a new use from the live occurrence.`, options);
-    this.name = "CronReceiptAuthorityRefusal";
-  }
-}
 
 export type CronReceiptAuthorityUse = {
   assertCurrent: () => void;

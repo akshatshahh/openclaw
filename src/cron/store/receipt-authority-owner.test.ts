@@ -30,9 +30,9 @@ import { runCronRuntimeMutation } from "../service/runtime-mutation.js";
 import { loadCronStore, saveCronStore } from "../store.js";
 import type { CronStoredJob } from "../types.js";
 import { cronStoreKey } from "./key.js";
+import { CronReceiptAuthorityRefusal } from "./receipt-authority-error.js";
 import {
   beginCronReceiptAuthorityClose,
-  CronReceiptAuthorityRefusal,
   drainCronReceiptAuthority,
   observeCronReceiptAuthority,
   startCronReceiptAuthorityHost,
