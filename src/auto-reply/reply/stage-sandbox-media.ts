@@ -68,9 +68,7 @@ export async function stageSandboxMedia(params: {
   );
   if (pathEntries.length === 0 || !sessionKey) {
     if (pathEntries.length === 0 && media.length > 0) {
-      console.warn(
-        `Inbound media staging skipped: ${media.length} media fact(s) carry no path to stage`,
-      );
+      console.warn(`Inbound media staging skipped: ${media.length} media fact(s) carry no path to stage`);
     }
     return EMPTY_STAGE_RESULT;
   }
@@ -78,9 +76,7 @@ export async function stageSandboxMedia(params: {
   const remoteWorkspace = getAgentWorkspaceAccess(workspaceDir, "prepareTurnAttachments");
   if (remoteWorkspace?.prepareTurnAttachments && !ctx.MediaRemoteHost) {
     // Keep managed originals on Gateway; the admitted turn transfers them to the Harness.
-    console.warn(
-      "Inbound media staging skipped: remote workspace owns attachment preparation",
-    );
+    console.warn("Inbound media staging skipped: remote workspace owns attachment preparation");
     return EMPTY_STAGE_RESULT;
   }
   const forceRemoteCache =
