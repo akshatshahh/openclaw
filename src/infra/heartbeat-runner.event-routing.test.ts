@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resetProcessRegistryForTests } from "../agents/bash-process-registry.test-support.js";
 import { createExecTool } from "../agents/bash-tools.exec-run.js";
+import { buildPayloads } from "../agents/embedded-agent-runner/run/payloads.test-helpers.js";
 import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../agents/failover/user-copy.js";
 import type { InternalGetReplyOptions } from "../auto-reply/reply/get-reply.types.js";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
@@ -584,8 +585,8 @@ describe("Heartbeat event routing", () => {
       stored: { lastAccountId: "default" },
       accountId: "work",
     },
-    // A continuation authorizes the model's reply; the runner's generic failure notice
-    // keeps the heartbeat target and alert toggle that governed it on main (#153573).
+    // A continuation authorizes the model's reply; host-generated notices keep the heartbeat
+    // target, isolation and alert toggle that governed them on main (#153573).
     { name: "failed turn", isolatedSession: true, trigger: "user", reply: "failed", sends: false },
     {
       name: "failed turn, heartbeat alerts off",
@@ -596,10 +597,33 @@ describe("Heartbeat event routing", () => {
       target: "last",
     },
     {
+      name: "failed turn, isolated owner target without an owner",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "failed",
+      sends: false,
+      target: "owner",
+    },
+    {
       name: "failed turn, visible heartbeat",
       isolatedSession: true,
       trigger: "user",
       reply: "failed",
+      sends: true,
+      target: "last",
+    },
+    {
+      name: "failed tool, no final text",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "tool warning",
+      sends: false,
+    },
+    {
+      name: "failed tool, no final text, visible heartbeat",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "tool warning",
       sends: true,
       target: "last",
     },
@@ -629,11 +653,20 @@ describe("Heartbeat event routing", () => {
               ? { showOk: false, showAlerts: false, useIndicator: false }
               : { showOk: true },
           };
+          const toolError = { toolName: "exec", error: "Command exited with code 1" };
           if (reply === "failed") {
             replySpy.mockImplementation(async (_ctx, options) => {
               setHeartbeatAgentTurnStatus(options, "failed");
               return { text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT, isError: true };
             });
+          } else if (reply === "tool warning") {
+            // The real payload builder, as the embedded runner calls it for this turn.
+            replySpy.mockImplementation(async (_ctx, options) =>
+              buildPayloads({
+                isHeartbeatTrigger: options?.isHeartbeat === true && !options.continuesConversation,
+                lastToolError: toolError,
+              }),
+            );
           } else {
             replySpy.mockResolvedValue({
               text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
@@ -690,7 +723,11 @@ describe("Heartbeat event routing", () => {
           expect(ctx.Body?.includes("RESULT-7F3A")).toBe(reply !== "NO_REPLY");
           expect(options.bootstrapContextMode).toBeUndefined();
           const sent =
-            reply === "failed" ? GENERIC_EXTERNAL_RUN_FAILURE_TEXT : "The job printed RESULT-7F3A.";
+            reply === "failed"
+              ? GENERIC_EXTERNAL_RUN_FAILURE_TEXT
+              : reply === "tool warning"
+                ? buildPayloads({ lastToolError: toolError })[0]?.text
+                : "The job printed RESULT-7F3A.";
           expect(sendTelegram.mock.calls.map((call) => call.slice(0, 2))).toEqual(
             sends ? [[topic, sent]] : [],
           );

@@ -189,6 +189,15 @@ function resolveIsolatedHeartbeatSessionKey(params: {
   };
 }
 
+/** Execution key and descriptive conversation chosen for a heartbeat event queue. */
+export type HeartbeatSessionSelection = ResolvedHeartbeatSession & {
+  run:
+    | { kind: "shared"; sessionKey: string }
+    | { kind: "isolated"; sessionKey: string; baseSessionKey: string };
+  conversationEntry: SessionEntry | undefined;
+  inspectsRunQueue: boolean;
+};
+
 /** Selects the execution key and descriptive conversation for an already-resolved event queue. */
 export function resolveHeartbeatSessionSelection(
   cfg: OpenClawConfig,
@@ -197,14 +206,14 @@ export function resolveHeartbeatSessionSelection(
   session: ResolvedHeartbeatSession,
   isolated: boolean,
   env: NodeJS.ProcessEnv = process.env,
-) {
+): HeartbeatSessionSelection {
   if (!isolated) {
     return {
       ...session,
       run: { kind: "shared", sessionKey: session.sessionKey },
       conversationEntry: session.entry,
       inspectsRunQueue: true,
-    } as const;
+    };
   }
   const configured = resolveHeartbeatSessionKey(cfg, agentId, heartbeat, undefined, env);
   const { isolatedSessionKey, isolatedBaseSessionKey } = resolveIsolatedHeartbeatSessionKey({
@@ -231,7 +240,7 @@ export function resolveHeartbeatSessionSelection(
           }),
     // Legacy isolated queues retain their route after the execution key is canonicalized.
     inspectsRunQueue: session.sessionKey !== isolatedBaseSessionKey,
-  } as const;
+  };
 }
 
 export function resolveStaleHeartbeatIsolatedSessionKey(params: {

@@ -171,7 +171,11 @@ async function prepareHeartbeatDispatchReply(
   const { delivery, visibility, sessionKey, storePath, runSessionKey, previousUpdatedAt } =
     prepared;
   const replies = replyResult ? (Array.isArray(replyResult) ? replyResult : [replyResult]) : [];
-  const selected = resolveHeartbeatReplyPayload(replyResult);
+  // A continuation under a quiet heartbeat posts the model's reply, never host-generated
+  // notices (failure notices, tool warnings); its terminal failure then stays silent.
+  const selected = resolveHeartbeatReplyPayload(
+    prepared.quietHostNotices ? replies.filter((reply) => reply.isError !== true) : replyResult,
+  );
   const execution = resolveReplyOperationAgentTurn(runState);
   const heartbeatResponse = selectHeartbeatToolResponse(replyResult);
   const response = heartbeatResponse?.response;
@@ -440,11 +444,7 @@ async function prepareHeartbeatDispatchReply(
     }
   }
   const noChannelTarget = !prepared.internalProjection && (!channel || !delivery.to);
-  if (
-    noChannelTarget ||
-    !visibility.showAlerts ||
-    (failed && (outcome.shouldSkipMain || prepared.quietFailureNotice))
-  ) {
+  if (noChannelTarget || !visibility.showAlerts || (failed && outcome.shouldSkipMain)) {
     if (!failed) {
       await unconfirmed(noChannelTarget ? (delivery.reason ?? "no-target") : "alerts-disabled");
       if (!visibility.showAlerts) {

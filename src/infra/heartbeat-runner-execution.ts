@@ -48,6 +48,7 @@ import {
   shouldPreflightWakeBeforeBusy,
 } from "./heartbeat-runner-prompt.js";
 import {
+  type HeartbeatSessionSelection,
   resolveHeartbeatSession,
   resolveStaleHeartbeatIsolatedSessionKey,
 } from "./heartbeat-runner-session.js";
@@ -392,22 +393,24 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
   // a new session ID (empty transcript) each run, avoiding the cost of
   // sending the full conversation history (~100K tokens) to the LLM.
   // Delivery routing uses the selected conversation, not the fresh execution row.
-  const resolveDeliveryFor = (heartbeatPolicy: typeof heartbeat) =>
+  const resolveDeliveryFor = (
+    selection: HeartbeatSessionSelection,
+    heartbeatPolicy: typeof heartbeat,
+  ) =>
     resolveHeartbeatDeliveryTargetWithSessionRoute({
       cfg,
       agentId,
-      entry: conversationEntry,
+      entry: selection.conversationEntry,
       heartbeat: heartbeatPolicy,
       currentSessionKey: sessionKey,
       // A base queue's route stays excluded; events on the actual isolated queue
       // own their route, including exec completion after the base route moves.
-      turnSource: preflight.session.inspectsRunQueue
-        ? preflight.turnSourceDeliveryContext
-        : undefined,
+      turnSource: selection.inspectsRunQueue ? preflight.turnSourceDeliveryContext : undefined,
     });
   // The heartbeat target, recipient and direct-chat policy govern heartbeat output.
   // A conversation's own command completion answers in that conversation.
   const resolvedDelivery = await resolveDeliveryFor(
+    preflight.session,
     preflight.conversationRoute ? { target: "last" } : heartbeat,
   );
   // Operator-chosen suppression is the resolver's verdict, not a config string:
@@ -465,12 +468,13 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
           channel: delivery.channel,
           accountId: delivery.accountId,
         });
-  // The continuation authorizes the model's reply, not the runner's synthesized failure
-  // notice: that notice keeps the heartbeat target and alert toggle that governed it (#153573).
+  // The continuation authorizes the model's reply, not host-generated notices (failure
+  // notices, tool warnings): those keep the heartbeat target, isolation and alert toggle
+  // that governed them (#153573).
   const heartbeatDelivery = preflight.conversationRoute
-    ? await resolveDeliveryFor(heartbeat)
+    ? await resolveDeliveryFor(preflight.heartbeatSession, heartbeat)
     : undefined;
-  const quietFailureNotice =
+  const quietHostNotices =
     heartbeatDelivery !== undefined &&
     (heartbeatDelivery.channel === "none" ||
       !heartbeatDelivery.to ||
@@ -626,7 +630,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
     runSessionKey,
     outboundPolicySessionKey,
     internalProjection,
-    quietFailureNotice,
+    quietHostNotices,
     ...heartbeatRunPrompt,
     // Selected work outranks a coalesced wake; periodic tasks own their prompt even on an exec wake.
     useHeartbeatFailureCopy:

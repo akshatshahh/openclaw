@@ -28,6 +28,7 @@ import {
   resolveHeartbeatResponseToolPrompt,
 } from "./heartbeat-runner-config.js";
 import {
+  type HeartbeatSessionSelection,
   resolveHeartbeatSession,
   resolveHeartbeatSessionSelection,
 } from "./heartbeat-runner-session.js";
@@ -54,7 +55,9 @@ export function truncateHeartbeatPreview(value: string | undefined): string | un
 type HeartbeatSkipReason = "empty-heartbeat-file" | typeof HEARTBEAT_SKIP_NO_PENDING_EVENT;
 
 type HeartbeatPreflight = HeartbeatWakePayloadFlags & {
-  session: ReturnType<typeof resolveHeartbeatSessionSelection>;
+  session: HeartbeatSessionSelection;
+  /** Selection under the heartbeat's own isolation; differs from `session` only on a continuation. */
+  heartbeatSession: HeartbeatSessionSelection;
   pendingEventEntries: ReturnType<typeof peekSystemEventEntries>;
   turnSourceDeliveryContext: ReturnType<typeof resolveSystemEventDeliveryContext>;
   /** Route of a conversation's own command completion; that conversation owns the turn. */
@@ -152,14 +155,17 @@ export async function resolveHeartbeatPreflight(params: {
     wakeFlags.isExecEventWake && !authoritativeScheduledTick && !params.scheduledTasks?.length
       ? resolveConversationCompletionRoute(pendingEventEntries, queue.entry)
       : undefined;
-  // Isolation saves periodic-poll history cost; a conversation's continuation needs its history.
-  const session = resolveHeartbeatSessionSelection(
+  const heartbeatSession = resolveHeartbeatSessionSelection(
     params.cfg,
     params.agentId,
     params.heartbeat,
     queue,
-    params.heartbeat?.isolatedSession === true && !conversationRoute,
+    params.heartbeat?.isolatedSession === true,
   );
+  // Isolation saves periodic-poll history cost; a conversation's continuation needs its history.
+  const session = conversationRoute
+    ? resolveHeartbeatSessionSelection(params.cfg, params.agentId, params.heartbeat, queue, false)
+    : heartbeatSession;
   const hasTaggedCronEvents = pendingEventEntries.some((event) =>
     event.contextKey?.startsWith("cron:"),
   );
@@ -179,6 +185,7 @@ export async function resolveHeartbeatPreflight(params: {
   const basePreflight = {
     ...wakeFlags,
     session,
+    heartbeatSession,
     pendingEventEntries,
     turnSourceDeliveryContext,
     ...(conversationRoute ? { conversationRoute } : {}),
