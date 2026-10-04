@@ -67,7 +67,9 @@ export function handleMessageEnd(
       messageEnd: ctx.state.assistantMessageIndex,
       finalMessageStart: ctx.state.assistantMessageStartIndex,
       lastAssistant: ctx.state.lastAssistant,
+      answer: ctx.state.inputAnswer,
     });
+    ctx.state.inputAnswer = undefined;
     ctx.state.sourceReplyDeliveryState = "missing";
     ctx.state.messageToolOnlySourceReplyDelivered = false;
     ctx.state.deterministicApprovalPromptPending = false;
@@ -271,6 +273,17 @@ export function handleMessageEnd(
     addedDuringMessage,
     chunkerHasBuffered,
   });
+  if (
+    !ctx.params.silentExpected &&
+    assistantMessage.stopReason === "stop" &&
+    !parsedText.isSilent &&
+    (cleanedText.trim() || mediaUrls.length > 0)
+  ) {
+    ctx.state.inputAnswer = {
+      assistant: assistantMessage,
+      messageIndex: ctx.state.assistantMessageIndex,
+    };
+  }
 
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(

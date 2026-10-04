@@ -1,10 +1,14 @@
 import { AssistantMessageEventStream, type Message, type Model } from "openclaw/plugin-sdk/llm";
+import { Type } from "typebox";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createResponsesAssistantOutput } from "../../packages/ai/src/providers/openai-responses-shared.js";
 import { processResponsesStream } from "../../packages/ai/src/transports/openai-responses-stream-internal.js";
 import { markdownToIR } from "../../packages/markdown-core/src/ir.js";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
+import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import { runAgentLoop } from "../plugin-sdk/agent-core.js";
+import { buildEmbeddedRunPayloads } from "./embedded-agent-runner/run/payloads.js";
 import {
   createSubscribedSessionHarness,
   emitAssistantTextDelta,
@@ -301,6 +305,216 @@ describe("Responses final delivery", () => {
       });
     },
   );
+
+  describe("Astra async response tails", () => {
+    const model: Model<"openai-responses"> = {
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 8192,
+    };
+    const lookupCall = {
+      type: "function_call" as const,
+      id: "fc_lookup",
+      call_id: "call_lookup",
+      name: "lookup",
+      arguments: "{}",
+      status: "completed",
+      async: true,
+    };
+    const finalAnswer = (id: string, text: string) => ({
+      type: "message" as const,
+      id,
+      role: "assistant",
+      status: "completed",
+      phase: "final_answer",
+      content: [{ type: "output_text", text, annotations: [] }],
+    });
+    type WireItem = typeof lookupCall | ReturnType<typeof finalAnswer>;
+    // Each model request is a real Responses wire stream through the shipped transport.
+    function responsesStream(id: string, items: WireItem[]) {
+      async function* wire() {
+        for (const [outputIndex, item] of items.entries()) {
+          if (item.type === "message") {
+            yield {
+              type: "response.output_item.added",
+              output_index: outputIndex,
+              item: { ...item, status: "in_progress", content: [] },
+            };
+            yield {
+              type: "response.output_text.delta",
+              output_index: outputIndex,
+              delta: item.content[0]?.text ?? "",
+            };
+          } else {
+            yield {
+              type: "response.output_item.added",
+              output_index: outputIndex,
+              item: { ...item, status: "in_progress", arguments: "" },
+            };
+          }
+          yield { type: "response.output_item.done", output_index: outputIndex, item };
+        }
+        yield { type: "response.completed", response: { id, status: "completed", output: items } };
+      }
+      const output = createResponsesAssistantOutput(model);
+      const response = new AssistantMessageEventStream();
+      response.push({ type: "start", partial: output });
+      void processResponsesStream(wire(), output, response, model, {
+        asyncToolExecution: true,
+      }).then(
+        () => {
+          response.push({
+            type: "done",
+            reason: output.stopReason === "toolUse" ? "toolUse" : "stop",
+            message: output,
+          });
+          response.end();
+        },
+        (error: unknown) => {
+          response.end({ ...output, stopReason: "error", errorMessage: String(error) });
+        },
+      );
+      return response;
+    }
+
+    const answeredTail = ["toolUse:toolCall", "stop:text", "stop:text"];
+    it.each([
+      {
+        name: "a later NO_REPLY keeps the completed answer",
+        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
+        continuation: "NO_REPLY",
+        transcript: answeredTail,
+        expected: ["Use counter B."],
+      },
+      {
+        name: "a heartbeat turn dispatches the completed answer before NO_REPLY",
+        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
+        continuation: "NO_REPLY",
+        transcript: answeredTail,
+        expected: ["Use counter B."],
+        heartbeat: true,
+      },
+      {
+        name: "a repeated answer is delivered once",
+        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
+        continuation: "Use counter B.",
+        transcript: answeredTail,
+        expected: ["Use counter B."],
+      },
+      {
+        name: "a later answer supersedes the completed answer",
+        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
+        continuation: "Correction: use counter C.",
+        transcript: answeredTail,
+        expected: ["Correction: use counter C."],
+      },
+      {
+        name: "a later NO_REPLY keeps pre-tool progress silent",
+        first: [finalAnswer("msg_progress", "Checking counter B."), lookupCall],
+        continuation: "NO_REPLY",
+        transcript: ["toolUse:text+toolCall", "stop:", "stop:text"],
+        expected: [],
+      },
+    ])("$name", async ({ first, continuation, transcript, expected, heartbeat = false }) => {
+      // Required user replies defer terminal delivery; optional heartbeat turns stream live.
+      const h = setup({
+        blockReplyBreak: "message_end",
+        ...(heartbeat ? {} : { onBeforeTerminalDelivery: async () => undefined }),
+      });
+      const lookup = vi.fn(async () => ({
+        content: [{ type: "text" as const, text: "Counter B is open." }],
+        details: {},
+      }));
+      const requests = [
+        () => responsesStream("resp_first", first),
+        () => responsesStream("resp_continuation", [finalAnswer("msg_next", continuation)]),
+      ];
+      const messages = await runAgentLoop(
+        [{ role: "user", content: "Where do I store my bag?", timestamp: 1 }],
+        {
+          systemPrompt: "",
+          messages: [],
+          tools: [
+            {
+              name: "lookup",
+              label: "lookup",
+              description: "lookup",
+              parameters: Type.Object({}),
+              execute: lookup,
+            },
+          ],
+        },
+        {
+          model,
+          convertToLlm: (history) =>
+            history.filter(
+              (message): message is Message =>
+                message.role === "user" ||
+                message.role === "assistant" ||
+                message.role === "toolResult",
+            ),
+        },
+        async (event) => {
+          h.emit(event);
+          await h.subscription.waitForPendingEvents();
+        },
+        undefined,
+        () => {
+          const next = requests.shift();
+          if (!next) {
+            throw new Error("unexpected model request");
+          }
+          return next();
+        },
+      );
+      await h.subscription.waitForPendingEvents();
+      expect(lookup).toHaveBeenCalledOnce();
+      expect(requests).toEqual([]);
+      // The call-free tail ended the provider response; only the call fragment uses tools.
+      expect(
+        messages.flatMap((message) =>
+          message.role === "assistant"
+            ? [
+                `${message.stopReason}:${message.content
+                  .map((item) => item.type)
+                  .filter((type) => type !== "thinking")
+                  .join("+")}`,
+              ]
+            : [],
+        ),
+      ).toEqual(transcript);
+      const current = h.subscription.getCurrentAttemptAssistant();
+      const payloads = buildEmbeddedRunPayloads({
+        assistantTexts: h.subscription.assistantTexts,
+        answerSegments: h.subscription.answerSegments,
+        inputAnswer: h.subscription.getInputAnswer(),
+        assistantMessageIndex: h.subscription.getLastAssistantTextMessageIndex(),
+        lastAssistant: current,
+        currentAssistant: current ?? null,
+        sessionKey: "agent:main:telegram:direct:astra",
+        isHeartbeatTrigger: heartbeat,
+      });
+      expect(payloads.map((payload) => payload.text)).toEqual(expected);
+      if (heartbeat) {
+        expect(resolveHeartbeatReplyPayload(payloads)?.text).toBe("Use counter B.");
+        // The live block and the final payload share one message identity, so delivery dedupes.
+        expect(h.texts()).toEqual(["Use counter B."]);
+        expect(getReplyPayloadMetadata(payloads[0] ?? {})?.assistantMessageIndex).toBe(
+          h.onBlockReply.mock.calls[0]?.[1]?.assistantMessageIndex,
+        );
+        return;
+      }
+      // Deferred release supersedes earlier tail blocks; only the final message's block remains.
+      expect(h.texts()).toEqual(continuation === "NO_REPLY" ? [] : [continuation]);
+    });
+  });
 });
 
 describe("terminal visible replies", () => {
