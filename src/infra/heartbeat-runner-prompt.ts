@@ -68,24 +68,24 @@ type HeartbeatPreflight = HeartbeatWakePayloadFlags & {
 };
 
 /**
- * A targeted exec wake whose pending events are all command completions captured in the
- * session's own conversation continues that conversation, not the periodic monitor.
- * Heartbeat-owned sessions and foreign routes (cron runs re-keyed onto this queue) keep
- * heartbeat isolation and delivery.
+ * A targeted exec wake whose pending events are all command completions started by a
+ * conversation turn, captured in the session's own conversation, continues that
+ * conversation, not the periodic monitor. Commands started by heartbeat or automation
+ * work keep heartbeat isolation and delivery.
  */
 function resolveConversationCompletionRoute(
   events: readonly SystemEvent[],
   entry: SessionEntry | undefined,
 ): DeliveryContext | undefined {
   const route = events[0]?.deliveryContext;
-  if (!route || entry?.heartbeatIsolatedBaseSessionKey !== undefined) {
-    return undefined;
-  }
-  return events.every(
-    (event) =>
-      isExecCompletionEvent(event.text) &&
-      channelRouteTargetsMatchExact({ left: event.deliveryContext, right: route }),
-  ) && isStoredConversationRoute({ ...route, entry })
+  return route &&
+    events.every(
+      (event) =>
+        event.fromConversationTurn === true &&
+        isExecCompletionEvent(event.text) &&
+        channelRouteTargetsMatchExact({ left: event.deliveryContext, right: route }),
+    ) &&
+    isStoredConversationRoute({ ...route, entry })
     ? route
     : undefined;
 }

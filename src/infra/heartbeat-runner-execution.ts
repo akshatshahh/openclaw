@@ -453,11 +453,15 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
   }
   const visibility =
     delivery.channel !== "none"
-      ? resolveHeartbeatVisibility({
-          cfg,
-          channel: delivery.channel,
-          accountId: delivery.accountId,
-        })
+      ? {
+          ...resolveHeartbeatVisibility({
+            cfg,
+            channel: delivery.channel,
+            accountId: delivery.accountId,
+          }),
+          // A quiet continuation stays quiet; heartbeat OK acknowledgments belong to polls.
+          ...(preflight.conversationRoute ? { showOk: false } : {}),
+        }
       : { showOk: false, showAlerts: true, useIndicator: true };
   const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
   const replyPrefix = createReplyPrefixContext({

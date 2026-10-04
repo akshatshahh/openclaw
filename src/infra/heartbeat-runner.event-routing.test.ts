@@ -532,23 +532,39 @@ describe("Heartbeat event routing", () => {
   });
 
   it.each([
-    { name: "isolated", isolatedSession: true, routeTopic: 42, answers: true },
-    { name: "shared", isolatedSession: false, routeTopic: 42, answers: true },
-    { name: "another topic's route", isolatedSession: true, routeTopic: 77, answers: false },
+    { name: "isolated", isolatedSession: true, trigger: "user", reply: "printed", sends: true },
+    { name: "shared", isolatedSession: false, trigger: "user", reply: "printed", sends: true },
+    {
+      name: "quiet outcome",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "NO_REPLY",
+      sends: false,
+    },
+    {
+      name: "heartbeat-started command",
+      isolatedSession: false,
+      trigger: "heartbeat",
+      reply: "printed",
+      sends: false,
+    },
   ])(
     "answers a forum topic's own background command under target none ($name)",
-    async ({ isolatedSession, routeTopic, answers }) => {
+    async ({ isolatedSession, trigger, reply, sends }) => {
       await withRouting(
         async ({ cfg, storePath, replySpy, sendTelegram }) => {
           const sessionKey = "agent:main:telegram:group:-100155462274:topic:42";
-          const topic = (id: number) => `telegram:-100155462274:topic:${id}`;
+          const topic = "telegram:-100155462274:topic:42";
           await writeTelegramSessionStore(storePath, sessionKey, {
             sessionId: "topic-conversation",
-            lastTo: topic(42),
+            lastTo: topic,
             lastThreadId: 42,
             chatType: "group",
           });
-          replySpy.mockResolvedValue({ text: "The job printed RESULT-7F3A." });
+          cfg.channels!.telegram = { allowFrom: ["*"], heartbeatVisibility: { showOk: true } };
+          replySpy.mockResolvedValue({
+            text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
+          });
           const completionRun = createDeferred<Awaited<ReturnType<typeof runHeartbeatOnce>>>();
           const runner = startHeartbeatRunner({
             cfg,
@@ -573,30 +589,31 @@ describe("Heartbeat event routing", () => {
             allowBackground: true,
             timeoutSec: 10,
             agentId: "main",
+            trigger,
             sessionKey,
             messageProvider: "telegram",
-            currentChannelId: topic(routeTopic),
-            currentThreadTs: String(routeTopic),
+            currentChannelId: topic,
+            currentThreadTs: "42",
           });
-          await exec.execute("call-background", { command: "echo RESULT-7F3A", background: true });
+          // An empty success still wakes Telegram turns; the model's NO_REPLY must stay silent.
+          const command = reply === "NO_REPLY" ? "true" : "echo RESULT-7F3A";
+          await exec.execute("call-background", { command, background: true });
           await expect(completionRun.promise).resolves.toMatchObject({ status: "ran" });
 
           const ctx = getFirstReplyContext(replySpy);
           const options = mockCallAt(replySpy, 0, "completion turn")[1] as InternalGetReplyOptions;
-          if (!answers) {
-            expect(ctx.SessionKey).toBe(`${sessionKey}:heartbeat`);
+          if (trigger !== "user") {
+            // Heartbeat-owned work keeps the heartbeat's own silent delivery.
             expect(ctx.Body).not.toContain("RESULT-7F3A");
             expect(sendTelegram).not.toHaveBeenCalled();
             return;
           }
           expect(ctx).toMatchObject({ SessionKey: sessionKey, InternalTurnSource: "exec" });
-          expect(ctx.Body).toContain("RESULT-7F3A");
+          expect(ctx.Body.includes("RESULT-7F3A")).toBe(sends);
           expect(options.bootstrapContextMode).toBeUndefined();
-          expect(sendTelegram).toHaveBeenCalledOnce();
-          expect(mockCallAt(sendTelegram, 0, "topic send").slice(0, 2)).toEqual([
-            topic(42),
-            "The job printed RESULT-7F3A.",
-          ]);
+          expect(sendTelegram.mock.calls.map((call) => call.slice(0, 2))).toEqual(
+            sends ? [[topic, "The job printed RESULT-7F3A."]] : [],
+          );
           expect(peekSystemEvents(sessionKey)).toEqual([]);
         },
         isolatedSession,

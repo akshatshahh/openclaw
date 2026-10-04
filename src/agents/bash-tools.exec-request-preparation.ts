@@ -173,6 +173,8 @@ export function resolveExecNotificationDefaults(defaults?: ExecToolDefaults) {
     notifySessionKey,
     resolveSubagentSession,
     notifyDeliveryContext,
+    // Periodic heartbeat, automation and continuation turns run with other triggers.
+    notifyFromConversationTurn: defaults?.trigger === "user",
   };
 }
 
