@@ -41,7 +41,7 @@ function observeQueries(prototype: StatementSync) {
   return { executed, restore: () => spies.forEach((spy) => spy.mockRestore()) };
 }
 
-it("publishes byte-identical group and participant facts without membership SQL during cold admission, row refresh or 50 viewer reads", async () => {
+it("publishes byte-identical group and participant facts without host membership SQL during cold admission, row refresh or 50 viewer reads", async () => {
   await withOpenClawTestState({ scenario: "minimal" }, async () => {
     const scope = { agentId: "main", sessionKey: "agent:main:projected-members" };
     await upsertSessionEntryCore(scope, {
