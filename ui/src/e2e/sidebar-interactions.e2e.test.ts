@@ -500,8 +500,10 @@ suite.define(() => {
           bottomGap:
             grid && agentRows.length > 0
               ? Math.round(
-                  grid.getBoundingClientRect().bottom -
-                    Math.max(...agentRows.map((row) => row.getBoundingClientRect().bottom)),
+                  Math.abs(
+                    grid.getBoundingClientRect().bottom -
+                      Math.max(...agentRows.map((row) => row.getBoundingClientRect().bottom)),
+                  ),
                 )
               : Number.NaN,
           widths: agentRows.map((row) => Math.round(row.getBoundingClientRect().width)),
@@ -550,8 +552,10 @@ suite.define(() => {
               return Number.NaN;
             }
             return Math.round(
-              grid.getBoundingClientRect().bottom -
-                Math.max(...rows.map((row) => row.getBoundingClientRect().bottom)),
+              Math.abs(
+                grid.getBoundingClientRect().bottom -
+                  Math.max(...rows.map((row) => row.getBoundingClientRect().bottom)),
+              ),
             );
           }),
         )
