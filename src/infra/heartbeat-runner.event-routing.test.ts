@@ -565,9 +565,26 @@ describe("Heartbeat event routing", () => {
       reply: "printed",
       sends: true,
     },
+    {
+      name: "conversation moved to another topic",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "printed",
+      sends: false,
+      stored: { lastTo: "telegram:-100155462274:topic:43", lastThreadId: 43 },
+    },
+    {
+      name: "command started on another account",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "printed",
+      sends: false,
+      stored: { lastAccountId: "default" },
+      accountId: "work",
+    },
   ])(
     "answers a forum topic's own background command under target none ($name)",
-    async ({ name, isolatedSession, trigger, reply, sends }) => {
+    async ({ name, isolatedSession, trigger, reply, sends, stored, accountId }) => {
       await withRouting(
         async ({ cfg, storePath, replySpy, sendTelegram }) => {
           const sessionKey =
@@ -583,6 +600,7 @@ describe("Heartbeat event routing", () => {
             lastTo: topic,
             lastThreadId: 42,
             chatType: "group",
+            ...stored,
           });
           cfg.channels!.telegram = {
             allowFrom: ["*"],
@@ -623,6 +641,7 @@ describe("Heartbeat event routing", () => {
             messageProvider: "telegram",
             currentChannelId: topic,
             currentThreadTs: "42",
+            accountId,
           });
           // An empty success still wakes Telegram turns; the model's NO_REPLY must stay silent.
           const command = reply === "NO_REPLY" ? "true" : "echo RESULT-7F3A";
@@ -631,8 +650,9 @@ describe("Heartbeat event routing", () => {
 
           const ctx = getFirstReplyContext(replySpy);
           const options = mockCallAt(replySpy, 0, "completion turn")[1] as InternalGetReplyOptions;
-          if (trigger !== "user") {
-            // Heartbeat-owned work keeps the heartbeat's own silent delivery.
+          if (trigger !== "user" || stored) {
+            // Heartbeat-owned work, or a route that is no longer this session's conversation,
+            // keeps the heartbeat's own silent delivery.
             expect(ctx.Body).not.toContain("RESULT-7F3A");
             expect(sendTelegram).not.toHaveBeenCalled();
             return;
