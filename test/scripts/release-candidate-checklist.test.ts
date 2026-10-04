@@ -2237,7 +2237,9 @@ describe("release candidate checklist", () => {
       wait_for_clawhub: "true",
     });
     expect(preparedInputs).not.toHaveProperty("finalize_release_before_docker");
-    const workflow = parse(readFileSync(".github/workflows/openclaw-release-prepare.yml", "utf8")) as {
+    const workflow = parse(
+      readFileSync(".github/workflows/openclaw-release-prepare.yml", "utf8"),
+    ) as {
       on: { workflow_dispatch: { inputs: Record<string, unknown> } };
     };
     for (const match of command.matchAll(/'-f' '([^=']+)=/gu)) {
