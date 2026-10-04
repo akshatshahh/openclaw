@@ -58,14 +58,12 @@ export async function getUpdateCheckResult(params: {
         installKind,
         git,
       }),
-  }).catch(
-    (error: unknown): UpdateCheckResult => ({
-      root,
-      installKind: "unknown",
-      packageManager: "unknown",
-      error: { status: "failed", message: sanitizeTerminalText(formatErrorMessage(error)) },
-    }),
-  );
+  }).catch((error: unknown): UpdateCheckResult => ({
+    root,
+    installKind: "unknown",
+    packageManager: "unknown",
+    error: { status: "failed", message: sanitizeTerminalText(formatErrorMessage(error)) },
+  }));
   if (gitProbeTimeoutMs !== undefined) {
     update.error = {
       status: "unknown",
