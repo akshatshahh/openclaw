@@ -103,6 +103,7 @@ export function createBlockReplyPipeline(params: {
     contentKey: string;
     mediaUrls: readonly string[];
     terminal: boolean;
+    messageStart?: number;
     terminalDeliveryConfirmed?: true;
   };
   const blockAttemptsByMessage = new Map<number | undefined, BlockAttempt[]>();
@@ -157,14 +158,16 @@ export function createBlockReplyPipeline(params: {
     pendingKeys.add(dedupeKey);
     const isTerminalContent = isReplyPayloadTerminalContent(payload);
     const reply = resolveSendableOutboundReplyParts(payload);
+    const metadata = getReplyPayloadMetadata(payload);
     const attempt: BlockAttempt = {
       outcome: "cancelled",
       sourceText: blockSourceText ?? reply.trimmedText,
       contentKey,
       mediaUrls: reply.mediaUrls,
       terminal: isTerminalContent && hasOutboundReplyContent(payload, { trimText: true }),
+      messageStart: metadata?.assistantMessageStartIndex,
     };
-    const index = getReplyPayloadMetadata(payload)?.assistantMessageIndex;
+    const index = metadata?.assistantMessageIndex;
     const attempts = blockAttemptsByMessage.get(index) ?? [];
     attempts.push(attempt);
     blockAttemptsByMessage.set(index, attempts);
@@ -350,17 +353,18 @@ export function createBlockReplyPipeline(params: {
     await sendChain;
   };
 
-  // A final payload joins every text item of its assistant message, and each item streamed
-  // under its own consecutive index, so also match the item runs that end at the payload's index.
+  // A final payload joins every text item of its physical assistant message, and each item
+  // streamed under its own consecutive index, so also match item runs back to the message start.
   const matchingAttempts = (payload: ReplyPayload) => {
     const index = getReplyPayloadMetadata(payload)?.assistantMessageIndex;
     if (index === undefined) {
       return blockAttemptsByMessage.values();
     }
+    const start = blockAttemptsByMessage.get(index)?.[0]?.messageStart ?? index;
     const runs: BlockAttempt[][] = [];
     for (
       let item = index, run: BlockAttempt[] = [];
-      blockAttemptsByMessage.get(item)?.length;
+      item >= start && blockAttemptsByMessage.get(item)?.length;
       item--
     ) {
       run = [...(blockAttemptsByMessage.get(item) ?? []), ...run];
