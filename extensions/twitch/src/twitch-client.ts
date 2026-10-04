@@ -3,6 +3,7 @@ import { ChatClient, LogLevel } from "@twurple/chat";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-resolution";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { channelReadyPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { chunkTextForOutbound } from "openclaw/plugin-sdk/text-chunking";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
@@ -382,6 +383,8 @@ export class TwitchClientManager {
     cfg?: OpenClawConfig,
     accountId?: string,
   ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
+    const effect = captureEffectAuthority();
+    let preparingUse = false;
     try {
       const client = await this.getClient(account, cfg, accountId);
 
@@ -390,11 +393,18 @@ export class TwitchClientManager {
 
       // Pre-chunk so Twurple's raw UTF-16 fallback cannot split surrogate pairs.
       for (const chunk of chunkTextForOutbound(message, TWITCH_CHAT_MESSAGE_LIMIT)) {
-        await client.say(channel, chunk);
+        preparingUse = true;
+        await effect.initiate(() => {
+          preparingUse = false;
+          return client.say(channel, chunk);
+        });
       }
 
       return { ok: true, messageId };
     } catch (error) {
+      if (preparingUse) {
+        throw error;
+      }
       const errorMessage = formatErrorMessage(error);
       this.logger.error(`Failed to send message: ${errorMessage}`);
       return { ok: false, error: errorMessage };

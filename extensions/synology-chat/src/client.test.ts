@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import { PassThrough } from "node:stream";
 import { coerceErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import * as fetchRuntime from "openclaw/plugin-sdk/fetch-runtime";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import type { SynologyHostedMediaUrl } from "./outbound-media.js";
 
@@ -162,6 +164,68 @@ const tlsVerificationDefaultCases: Array<{ name: string; invoke: () => Promise<u
 
 describe("Synology Chat TLS verification defaults", () => {
   installFakeTimerHarness();
+
+  it.each(
+    tlsVerificationDefaultCases.flatMap((testCase) =>
+      [false, true].map((refused) => ({ ...testCase, refused })),
+    ),
+  )(
+    "prepares $name webhook POST before handoff (refused=$refused)",
+    async ({ name, invoke, refused }) => {
+      const preparing = createDeferred<void>();
+      const prepared = createDeferred<void>();
+      const handedOff = createDeferred<void>();
+      const acknowledgment = createDeferred<void>();
+      const refusal = new Error("Synology message authority ended");
+      const authority = fetchRuntime.captureEffectAuthority();
+      const capture = vi.spyOn(fetchRuntime, "captureEffectAuthority").mockReturnValue({
+        ...authority,
+        async initiate(effect) {
+          preparing.resolve();
+          await prepared.promise;
+          if (refused) {
+            throw refusal;
+          }
+          return authority.initiate(effect);
+        },
+      });
+      vi.mocked(https.request).mockImplementation(((...args) => {
+        handedOff.resolve();
+        const res = createMockResponseEmitter(200);
+        void acknowledgment.promise.then(() => {
+          args[2]?.(res);
+          res.end('{"success":true}');
+        });
+        return createMockRequestEmitter();
+      }) as MockRequestHandler);
+      const sending = invoke();
+      try {
+        await Promise.race([
+          preparing.promise,
+          handedOff.promise.then(() => {
+            throw new Error("webhook POST bypassed preparation");
+          }),
+        ]);
+        expect(https.request).not.toHaveBeenCalled();
+        prepared.resolve();
+        if (!refused) {
+          await handedOff.promise;
+          acknowledgment.resolve();
+        }
+        if (refused) {
+          await expect(sending).rejects.toBe(refusal);
+        } else {
+          expect(await sending).toEqual(name === "sendMessage" ? true : { status: "accepted" });
+        }
+        expect(https.request).toHaveBeenCalledTimes(refused ? 0 : 1);
+      } finally {
+        prepared.resolve();
+        acknowledgment.resolve();
+        await sending.catch(() => {});
+        capture.mockRestore();
+      }
+    },
+  );
 
   it.each(tlsVerificationDefaultCases)("$name verifies TLS by default", async ({ invoke }) => {
     mockSuccessResponse();

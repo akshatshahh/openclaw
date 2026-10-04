@@ -1,6 +1,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import * as fetchRuntime from "openclaw/plugin-sdk/fetch-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveTwitchToken } from "./token.js";
 import { TwitchClientManager } from "./twitch-client.js";
@@ -607,6 +608,53 @@ describe("TwitchClientManager", () => {
   describe("sendMessage", () => {
     beforeEach(async () => {
       await manager.getClient(testAccount);
+    });
+
+    it("prepares every chunk before Twurple handoff and stops when the next use is refused", async () => {
+      const preparing = createDeferred<void>();
+      const prepared = createDeferred<void>();
+      const handedOff = createDeferred<void>();
+      const acknowledgment = createDeferred<void>();
+      const authority = fetchRuntime.captureEffectAuthority();
+      const refusal = new Error("Twitch message authority ended");
+      let preparations = 0;
+      const capture = vi.spyOn(fetchRuntime, "captureEffectAuthority").mockReturnValue({
+        ...authority,
+        async initiate(effect) {
+          if (++preparations > 1) {
+            throw refusal;
+          }
+          preparing.resolve();
+          await prepared.promise;
+          return authority.initiate(effect);
+        },
+      });
+      mockSay.mockImplementationOnce(() => {
+        handedOff.resolve();
+        return acknowledgment.promise;
+      });
+      const sending = manager.sendMessage(testAccount, "testchannel", "a".repeat(501));
+      try {
+        await Promise.race([
+          preparing.promise,
+          handedOff.promise.then(() => {
+            throw new Error("Twurple call bypassed preparation");
+          }),
+        ]);
+        expect(mockSay).not.toHaveBeenCalled();
+        prepared.resolve();
+        await handedOff.promise;
+        expect(preparations).toBe(1);
+        acknowledgment.resolve();
+        await expect(sending).rejects.toBe(refusal);
+        expect(mockSay.mock.calls).toEqual([["testchannel", "a".repeat(500)]]);
+        expect(preparations).toBe(2);
+      } finally {
+        prepared.resolve();
+        acknowledgment.resolve();
+        await sending.catch(() => {});
+        capture.mockRestore();
+      }
     });
 
     it("should send message successfully", async () => {

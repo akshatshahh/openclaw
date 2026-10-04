@@ -83,7 +83,13 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
           return true;
         }
       : undefined;
-    const sendOptions = { verbose: false, cfg, accountId: accountId ?? undefined, authorize };
+    const sendOptions = {
+      verbose: false,
+      cfg,
+      accountId: accountId ?? undefined,
+      authorize,
+      assertDirectAdapterHandoff,
+    };
 
     let lastResult: LineSendResult | null = null;
     const recordResult = async (
@@ -333,6 +339,7 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
         mediaUrl,
         cfg,
         accountId: accountId ?? undefined,
+        assertDirectAdapterHandoff,
         authorize: assertDirectAdapterHandoff
           ? () => {
               assertDirectAdapterHandoff();

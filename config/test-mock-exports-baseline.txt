@@ -1072,7 +1072,6 @@
 ["extensions/matrix/src/matrix/sdk/http-client.test.ts","./transport.js","fcbd5ba4ef2d39616150be0055837a024c53b6115305fbe00dca0b0b51e358db",1]
 ["extensions/matrix/src/matrix/sdk/live-room-readiness.test.ts","./joined-room-encryption.js","cbc23f620fbca0bfa0cec3c482a8b131bb38fabc1aca95b7f2587bfeef23fb70",1]
 ["extensions/matrix/src/matrix/sdk/transport.authority-integration.test.ts","openclaw/plugin-sdk/extension-shared","63ad39cce460dfa8302bcb7886ee50ac795cdf9e56c9939467d0d30b92ee08e5",1]
-["extensions/matrix/src/matrix/sdk/transport.authority-integration.test.ts","openclaw/plugin-sdk/fetch-runtime","e8d3f2a3a47b16ff31fb8d6d72f95e6901ba5f3c4c0d2ce5f835b25831986ae8",1]
 ["extensions/matrix/src/matrix/sdk/transport.authority-integration.test.ts","openclaw/plugin-sdk/media-runtime","bb14dedf057f85fe4d99c07c176bef6c002be61e0c8f9b1767f461c1ed49b4f0",1]
 ["extensions/matrix/src/matrix/sdk/transport.authority-integration.test.ts","openclaw/plugin-sdk/response-limit-runtime","fb0332285000df9fe8ee57eaa404f59f59a6191e05eb5ce046bbd027bd6380eb",1]
 ["extensions/matrix/src/matrix/sdk/transport.authority-integration.test.ts","openclaw/plugin-sdk/runtime-fetch","d0736f9945004e825ff401de8fa006ddc77559cbd86afde773244a5884073391",1]

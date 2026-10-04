@@ -3,6 +3,7 @@ import {
   createMessageReceiptFromOutboundResults,
   type MessageReceipt,
 } from "openclaw/plugin-sdk/channel-outbound";
+import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import { requireRuntimeConfig } from "openclaw/plugin-sdk/plugin-config-runtime";
 import { convertMarkdownTables, stripMarkdown } from "openclaw/plugin-sdk/text-chunking";
@@ -43,6 +44,7 @@ export async function sendIrcMessages(
   ],
   onDeliveryResult?: (result: SendIrcResult) => Promise<void> | void,
 ): Promise<SendIrcResult[]> {
+  const effect = captureEffectAuthority();
   const cfg = requireRuntimeConfig(opts.cfg, "IRC send") as CoreConfig;
   const account = resolveIrcAccount({
     cfg,
@@ -90,7 +92,13 @@ export async function sendIrcMessages(
   try {
     opts.abortSignal?.throwIfAborted();
     if (transient && (target.startsWith("#") || target.startsWith("&"))) {
-      client.join(target);
+      await effect.initiate(() => {
+        opts.abortSignal?.throwIfAborted();
+        if (!client.isReady()) {
+          throw new Error("IRC connection closed before join");
+        }
+        client.join(target);
+      });
     }
     for (const message of messages) {
       opts.abortSignal?.throwIfAborted();
@@ -102,7 +110,7 @@ export async function sendIrcMessages(
       if (!client.isReady()) {
         throw new Error("IRC connection closed before send");
       }
-      client.sendPrivmsg(target, message.text, message.replyTo);
+      await client.sendPrivmsg(target, message.text, message.replyTo);
       getOptionalIrcRuntime()?.channel.activity.record({
         channel: "irc",
         accountId: account.accountId,

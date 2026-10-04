@@ -1,9 +1,34 @@
 // Irc tests cover client plugin behavior.
+import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { withTimeout } from "openclaw/plugin-sdk/security-runtime";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { connectIrcClient } from "./client.js";
 import { onIrcTestLine, startIrcTestServer } from "./irc-server.test-support.js";
+
+const effectGate = vi.hoisted(() => ({
+  beforeInitiate: undefined as (() => Promise<void>) | undefined,
+}));
+vi.mock("openclaw/plugin-sdk/fetch-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/fetch-runtime")>();
+  return {
+    ...actual,
+    captureEffectAuthority: () => {
+      const authority = actual.captureEffectAuthority();
+      const beforeInitiate = effectGate.beforeInitiate;
+      return beforeInitiate
+        ? {
+            ...authority,
+            initiate: async <T>(effect: () => T | Promise<T>) => {
+              await beforeInitiate();
+              return authority.initiate(effect);
+            },
+          }
+        : authority;
+    },
+  };
+});
 
 type LoopbackIrcServer = {
   port: number;
@@ -231,7 +256,7 @@ async function collectPrivmsgBodies(
     messageChunkMaxChars,
   });
   try {
-    client.sendPrivmsg("#general", text);
+    await client.sendPrivmsg("#general", text);
     client.quit("test complete");
     await withTimeout(server.quitReceived, 5000, "IRC PRIVMSG output");
     return server.lines
@@ -251,6 +276,54 @@ function maxLineBytes(bodies: string[]): number {
 }
 
 describe("irc client PRIVMSG chunking on the wire", () => {
+  it("preserves partial delivery when authority refuses a later raw chunk", async () => {
+    const server = await startLoopbackIrcServer();
+    const nextChunk = createDeferred<void>();
+    const refuse = createDeferred<void>();
+    const refusal = new PlatformMessageNotDispatchedError("authority ended", {
+      cause: new Error("scheduled sender retired"),
+    });
+    let attempts = 0;
+    effectGate.beforeInitiate = async () => {
+      if (++attempts === 2) {
+        nextChunk.resolve();
+        await refuse.promise;
+        throw refusal;
+      }
+    };
+    const client = await connectIrcClient({
+      host: "127.0.0.1",
+      port: server.port,
+      tls: false,
+      nick: "bot",
+      username: "bot",
+      realname: "OpenClaw Bot",
+      messageChunkMaxChars: 3,
+    });
+    try {
+      const sending = client.sendPrivmsg("#general", "abcdefghi").catch((error: unknown) => error);
+      await nextChunk.promise;
+      refuse.resolve();
+      const error = await sending;
+      expect(isChannelPartialDeliveryError(error)).toBe(true);
+      expect(error).toMatchObject({
+        cause: refusal,
+        deliveryResult: { messageIds: [], visibleReplySent: true },
+      });
+      client.quit("partial test complete");
+      await server.quitReceived;
+      expect(server.lines.filter((line) => line.startsWith("PRIVMSG #general :"))).toEqual([
+        "PRIVMSG #general :abc",
+      ]);
+      expect(attempts).toBe(2);
+    } finally {
+      effectGate.beforeInitiate = undefined;
+      refuse.resolve();
+      client.close();
+      await server.close();
+    }
+  });
+
   it("rejects text that becomes empty after transport sanitization", async () => {
     const server = await startLoopbackIrcServer();
     try {
