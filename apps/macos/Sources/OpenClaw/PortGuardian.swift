@@ -96,14 +96,13 @@ actor PortGuardian {
     }
 
     func removeRecord(_ receipt: Record) {
+        // Callers remove only after the child exited. Even when SQLite needs a retry,
+        // this process must stop protecting the receipt from later sweeps.
+        defer { self.relinquishRecord(receipt) }
         do {
             let recordStore = try self.requireRecordStore()
             _ = try recordStore.deleteIfMatches(receipt)
-            self.relinquishRecord(receipt)
         } catch {
-            // Callers remove only after the child exited. Keep the SQLite row for
-            // retry, but stop protecting its in-memory receipt from later sweeps.
-            self.relinquishRecord(receipt)
             self.logger.error(
                 "failed to remove PortGuardian receipt pid \(receipt.pid, privacy: .public): " +
                     "\(error.localizedDescription, privacy: .public)")
@@ -150,7 +149,8 @@ actor PortGuardian {
         do {
             recordStore = try self.requireRecordStore()
         } catch {
-            self.logger.error("PortGuardian persistence unavailable; orphan reap skipped: " +
+            self.logger.error("orphan tunnel reap skipped; shared PortGuardian ledger " +
+                "\(PortGuardianRecordStore.liveDatabaseURL.path, privacy: .public) unavailable: " +
                 "\(error.localizedDescription, privacy: .public)")
             return
         }
@@ -305,8 +305,8 @@ actor PortGuardian {
         return false
     }
 
-    private static func waitForProcessExit(_ orphan: OrphanedTunnel, timeout: TimeInterval = 1.0) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
+    private static func waitForProcessExit(_ orphan: OrphanedTunnel) async -> Bool {
+        let deadline = Date().addingTimeInterval(1)
         while true {
             switch self.classifyTunnelRecord(
                 orphan.record,
@@ -599,9 +599,10 @@ actor PortGuardian {
     }
 
     private nonisolated static func openRecordStore() throws -> PortGuardianRecordStore {
-        guard !self.hasLegacyOpenClawAppProcess() else {
+        if let application = self.legacyOpenClawAppProcess() {
             throw PortGuardianStoreError(
-                "Quit older OpenClaw app copies before opening the SQLite PortGuardian ledger")
+                "Quit older OpenClaw app copies (pid \(application.processIdentifier), " +
+                    "\(application.bundleIdentifier ?? "unknown")) before opening the SQLite PortGuardian ledger")
         }
         let legacyURL = PortGuardianRecordStore.liveLegacyRecordURL
         guard FileManager.default.fileExists(atPath: legacyURL.path) else {
@@ -620,9 +621,13 @@ actor PortGuardian {
     }
 
     private nonisolated static func requirePostSpawnCompatibility() throws {
-        guard !self.hasLegacyOpenClawAppProcess(),
-              !FileManager.default.fileExists(atPath: PortGuardianRecordStore.liveLegacyRecordURL.path)
-        else {
+        if let application = self.legacyOpenClawAppProcess() {
+            throw PortGuardianStoreError(
+                "Older OpenClaw app (pid \(application.processIdentifier), " +
+                    "\(application.bundleIdentifier ?? "unknown")) appeared after tunnel preflight; " +
+                    "SSH launch cancelled")
+        }
+        guard !FileManager.default.fileExists(atPath: PortGuardianRecordStore.liveLegacyRecordURL.path) else {
             throw PortGuardianStoreError(
                 "Older OpenClaw storage appeared after tunnel preflight; SSH launch cancelled")
         }
@@ -666,9 +671,9 @@ actor PortGuardian {
 
     /// Old app builds can create the JSON ledger after startup. The signed marker
     /// distinguishes those writers without blocking aligned copies.
-    private nonisolated static func hasLegacyOpenClawAppProcess() -> Bool {
+    private nonisolated static func legacyOpenClawAppProcess() -> NSRunningApplication? {
         let currentPID = ProcessInfo.processInfo.processIdentifier
-        return NSWorkspace.shared.runningApplications.contains { application in
+        return NSWorkspace.shared.runningApplications.first { application in
             guard application.processIdentifier != currentPID else { return false }
             return self.usesLegacyPortGuardianStorage(
                 bundleIdentifier: application.bundleIdentifier,
@@ -733,11 +738,7 @@ actor PortGuardian {
 #if DEBUG
 extension PortGuardian {
     func setTestingDescriptor(_ descriptor: Descriptor?, forPort port: Int) {
-        if let descriptor {
-            self.testingDescriptors[port] = descriptor
-        } else {
-            self.testingDescriptors.removeValue(forKey: port)
-        }
+        self.testingDescriptors[port] = descriptor
     }
 
     static func _testTunnelProcessInfo(pid: Int32) -> TunnelProcessInfo? {

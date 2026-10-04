@@ -6,16 +6,23 @@ import { performance } from "node:perf_hooks";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { collectNestedErrorCandidates } from "@openclaw/normalization-core/error-coercion";
 import { expect, it, vi } from "vitest";
-import { withinTest } from "../../test/helpers/promise.js";
+import { awaitGateBeforeSettlement, withinTest } from "../../test/helpers/promise.js";
+import { openContextEngineTurnOutboxWorkerStore } from "../agents/harness/context-engine-turn-outbox-store.js";
 import { isAgentRunRestartAbortReason } from "../agents/run-termination.js";
 import {
   createReplyOperation,
   type ReplyOperation,
 } from "../auto-reply/reply/reply-run-registry.js";
 import { runGatewayLoop } from "../cli/gateway-cli/run-loop.js";
-import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import {
+  loadSessionEntry,
+  patchSessionEntryCore,
+  replaceSessionEntry,
+} from "../config/sessions/session-accessor.js";
+import { applySessionEntryLifecycleMutation } from "../config/sessions/session-accessor.sqlite-projection.js";
 import { runSqliteSessionReclamation } from "../config/sessions/session-accessor.sqlite-reclamation-run.js";
 import { createSessionMaintenanceStatisticsOperation } from "../config/sessions/session-accessor.sqlite-reclamation.js";
+import { settlePendingFinalDelivery } from "../infra/outbound/delivery-completion.js";
 import { writeGatewayRestartIntentSync } from "../infra/restart-intent.js";
 import type { SqliteIntegrityDiagnostics } from "../infra/sqlite-integrity.js";
 import { createSqliteWorkerOperationAdmission } from "../infra/sqlite-worker-operation-admission.js";
@@ -46,14 +53,216 @@ import {
   openOpenClawAgentDatabase,
   resolveIncognitoOpenClawAgentSqlitePath,
 } from "../state/openclaw-agent-db.js";
+import type { IncognitoAgentDatabaseExecution } from "../state/openclaw-agent-execution-incognito.js";
 import { captureOpenClawAgentDatabaseExecution } from "../state/openclaw-agent-execution.js";
 import { readOpenClawAgentIntegrityVerification } from "../state/openclaw-quarantine-store.js";
+import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import {
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
 } from "../state/openclaw-state-db.js";
+import * as userProfiles from "../state/user-profile-list.js";
+import { ensureProfileForEmail } from "../state/user-profiles.js";
+import { readMentionStoreSnapshot } from "./mention-inbox-store.js";
+import type { MentionCommittedInput } from "./mention-inbox.types.js";
 import { createGatewayMetadataCloseFixture } from "./server-close.metadata.test-support.js";
 import type { GatewayServer } from "./server-public.js";
+
+it("settles an accepted incognito outbox write after the close prelude and before actor retirement", async ({
+  signal,
+}) => {
+  const fixture = await createGatewayMetadataCloseFixture("gateway-incognito-outbox-close");
+  const entered = createDeferredCore();
+  const release = createDeferredCore();
+  const accepted = createDeferredCore();
+  const joining = createDeferredCore();
+  let actor: IncognitoAgentDatabaseExecution | undefined;
+  let holding: Promise<void> | undefined;
+  let writing: Promise<void> | undefined;
+  let closing: Promise<void> | undefined;
+  let persisted: unknown;
+  try {
+    const port = await fixture.reservePort();
+    const server = await fixture.start(port);
+    const kernel = fixture.kernels.get(port);
+    assert(kernel);
+    const authority = { assertCurrent() {} };
+    actor = await captureOpenClawAgentDatabaseExecution({
+      kind: "ephemeral",
+      agentId: "main",
+      env: fixture.state.env,
+      authority,
+    });
+    assert(actor);
+    const target = {
+      sessionKey: "agent:main:dashboard:incognito-outbox-close",
+      sessionId: "outbox-close",
+    };
+    await actor.sessions.create(authority, {
+      sessionKey: target.sessionKey,
+      entry: { sessionId: target.sessionId, updatedAt: 1, incognito: true },
+    });
+    const message = await actor.sessions.transcript(authority, {
+      type: "session.message.append",
+      input: { ...target, fence: {}, message: { role: "user", content: "accepted question" } },
+    });
+    assert(message.ok && message.value.append?.anchor);
+    const admission = {
+      ...message.value.append.anchor,
+      logicalTurnId: "accepted-close-turn",
+      role: "user" as const,
+    };
+    const outbox = openContextEngineTurnOutboxWorkerStore({
+      agentId: actor.agentId,
+      path: actor.path,
+      incognito: { actor, authority, ...target },
+    });
+    holding = actor.run(authority, async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    await withinTest(entered.promise, signal);
+    const filter = { engineId: "close-fixture", sessionId: target.sessionId };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    kernel.scheduler.schedule({
+      id: "accepted-incognito-outbox",
+      delayMs: 0,
+      async run() {
+        writing = outbox.enqueueIntent({ ...filter, admission, isHeartbeat: false });
+        accepted.resolve();
+        await writing;
+        persisted = await outbox.readNextPending(filter);
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await withinTest(accepted.promise, signal);
+    vi.useRealTimers();
+    const stop = kernel.scheduler.stop.bind(kernel.scheduler);
+    vi.spyOn(kernel.scheduler, "stop").mockImplementation(() => {
+      joining.resolve();
+      return stop();
+    });
+    closing = server.close({ reason: "incognito outbox close regression" });
+    await withinTest(
+      awaitGateBeforeSettlement(joining.promise, closing, "Gateway skipped scheduler settlement"),
+      signal,
+    );
+    expect(kernel.scheduler.signal.aborted).toBe(true);
+    expect(() => actor?.assertCurrent()).not.toThrow();
+    expect(persisted).toBeUndefined();
+    const late = vi.fn();
+    await kernel.scheduler
+      .schedule({ id: "refused-incognito-outbox", delayMs: 0, run: late })
+      .stop();
+    expect(late).not.toHaveBeenCalled();
+    release.resolve();
+    await withinTest(Promise.all([holding, writing, closing]), signal);
+    expect(persisted).toMatchObject({
+      advancement_key: admission.logicalTurnId,
+      session_id: target.sessionId,
+    });
+    expect(() => actor?.assertCurrent()).toThrow("Incognito session ended");
+  } finally {
+    release.resolve();
+    await Promise.allSettled([holding, writing, closing]);
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    await actor?.close();
+    await fixture.cleanup();
+  }
+});
+
+it("persists accepted mentions and involvement before Gateway worker close and rejects records after the close prelude", async ({
+  signal,
+}) => {
+  const fixture = await createGatewayMetadataCloseFixture("gateway-mention-close");
+  const entered = createDeferredCore();
+  const release = createDeferredCore();
+  const parentClosed = createDeferredCore();
+  let closing: Promise<void> | undefined;
+  let accepted: Promise<void> | undefined;
+  try {
+    const port = await fixture.reservePort();
+    const server = await fixture.start(port);
+    const kernel = fixture.kernels.get(port);
+    assert(kernel);
+    const alice = ensureProfileForEmail("alice@mentions.example.test");
+    const bob = ensureProfileForEmail("bob@mentions.example.test");
+    const sessionKey = "agent:main:mention-close";
+    await replaceSessionEntry(
+      { agentId: "main", sessionKey },
+      {
+        sessionId: "mention-close-session",
+        updatedAt: 1,
+        visibility: "shared",
+        createdActor: { type: "human", source: "profile", id: alice.id },
+      },
+    );
+    await kernel.mentionInbox.invalidateAsync();
+    const input: MentionCommittedInput = {
+      sourceId: "accepted-before-close",
+      committedSource: { generation: "mention-close", sequence: 1, timestamp: 1 },
+      sessionKey,
+      agentId: "main",
+      sessionId: "mention-close-session",
+      messageId: "accepted-before-close",
+      senderProfileId: alice.id,
+      recipientProfileIds: [bob.id],
+      excerpt: "@Bob review this change",
+    };
+    const prepareProfiles = userProfiles.prepareUserProfileCatalog;
+    vi.spyOn(userProfiles, "prepareUserProfileCatalog").mockImplementationOnce(async (...args) => {
+      const profiles = await prepareProfiles(...args);
+      entered.resolve();
+      await release.promise;
+      return profiles;
+    });
+    accepted = kernel.mentionInbox.recordCommittedInputAsync(input);
+    await withinTest(
+      awaitGateBeforeSettlement(
+        entered.promise,
+        accepted,
+        "Mention settled without preparing involvement profile aliases",
+      ),
+      signal,
+    );
+    const shared = openOpenClawStateDatabase({ env: fixture.state.env }).db;
+    const agent = openOpenClawAgentDatabase({ agentId: "main", env: fixture.state.env }).db;
+    kernel.scheduler.signal.addEventListener("abort", () => parentClosed.resolve(), { once: true });
+    closing = server.close({ reason: "mention close regression" });
+    await withinTest(parentClosed.promise, signal);
+    await kernel.mentionInbox.recordCommittedInputAsync({
+      ...input,
+      sourceId: "refused-after-close",
+      messageId: "refused-after-close",
+    });
+    expect(shared.isOpen).toBe(true);
+    expect(agent.isOpen).toBe(true);
+    release.resolve();
+    await accepted;
+    await closing;
+    expect(shared.isOpen).toBe(false);
+    expect(agent.isOpen).toBe(false);
+
+    // Read durable results after the real close; a second Gateway boot adds no settlement proof.
+    const stored = withExistingOpenClawStateDatabaseReadOnly(
+      ({ db }) => readMentionStoreSnapshot(-1, db),
+      { env: fixture.state.env },
+    );
+    expect(stored?.sources.map((source) => source.message?.content.messageId)).toEqual([
+      "accepted-before-close",
+    ]);
+    expect(stored?.sources[0]?.recipients).toEqual([[bob.id, expect.any(String)]]);
+    expect(
+      loadSessionEntry({ agentId: "main", sessionKey })?.profileInvolvement?.profiles[bob.id],
+    ).toMatchObject({ hidden: false, lastMention: input.committedSource });
+  } finally {
+    release.resolve();
+    await Promise.allSettled([accepted, closing]);
+    vi.restoreAllMocks();
+    await fixture.cleanup();
+  }
+});
 
 it("joins scheduled plugin work before closing stores while retaining a deleted agent store", async ({
   signal,
@@ -63,6 +272,9 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
   const rootJoinEntered = createDeferredCore();
   const releaseRootWork = createDeferredCore();
   let closing: Promise<void> | undefined;
+  let heldWriter: ReturnType<typeof patchSessionEntryCore> | undefined;
+  let acceptedFinal: ReturnType<typeof settlePendingFinalDelivery> | undefined;
+  let acceptedLifecycle: ReturnType<typeof applySessionEntryLifecycleMutation> | undefined;
   try {
     const pluginId = fixture.pluginId;
     const registry = createEmptyPluginRegistry();
@@ -93,9 +305,35 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
           sessionId: `${agentId}-session`,
           updatedAt: 1,
           pluginExtensions: { [pluginId]: { active: true } },
+          ...(agentId === "main"
+            ? {
+                pendingFinalDelivery: {
+                  kind: "replayable" as const,
+                  text: "accepted final",
+                  createdAt: 1,
+                  intentId: "close-intent",
+                  deliveries: [{ id: "close-delivery", state: "prepared" as const }],
+                },
+              }
+            : {}),
         },
       );
     }
+    const lifecycleKey = "agent:main:lifecycle-close";
+    await replaceSessionEntry(
+      { agentId: "main", storePath: activeStore, sessionKey: lifecycleKey },
+      {
+        sessionId: "lifecycle-close-session",
+        updatedAt: 1,
+        sessionDiffBaseline: {
+          version: 1,
+          sessionId: "lifecycle-close-session",
+          root: "/synthetic",
+          files: [],
+        },
+        skillsSnapshot: { prompt: "before close", skills: [] },
+      },
+    );
     const retainedDatabase = path.join(fixture.state.agentDir("retired"), "openclaw-agent.sqlite");
     const operationId = randomUUID();
     beginAgentDeletionJournal(
@@ -117,6 +355,17 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
     const shared = openOpenClawStateDatabase({ env: fixture.state.env }).db;
     const pluginWorkEntered = createDeferredCore();
     const rootWorkEntered = createDeferredCore();
+    const writerEntered = createDeferredCore();
+    heldWriter = patchSessionEntryCore(
+      { agentId: "main", storePath: activeStore, sessionKey: "agent:main:main" },
+      async () => {
+        writerEntered.resolve();
+        await releaseRootWork.promise;
+        return { label: "writer settled before final" };
+      },
+      { skipMaintenance: true, workerGuard: {} },
+    );
+    await withinTest(writerEntered.promise, signal);
     const stopService = vi.fn(() => stopEntered.resolve());
     const services = createEmptyPluginRegistry();
     services.services.push({
@@ -151,8 +400,35 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
       id: "kernel-held-work",
       delayMs: 0,
       async run() {
+        acceptedFinal = settlePendingFinalDelivery(
+          {
+            kind: "pending-final",
+            agentId: "main",
+            sessionKey: "agent:main:main",
+            sessionId: "main-session",
+            storePath: activeStore,
+            deliveryId: "close-delivery",
+            intentId: "close-intent",
+          },
+          "delivered",
+        );
+        acceptedLifecycle = applySessionEntryLifecycleMutation({
+          agentId: "main",
+          storePath: activeStore,
+          activeSessionKey: lifecycleKey,
+          upserts: [
+            {
+              sessionKey: lifecycleKey,
+              entry: {
+                sessionId: "lifecycle-close-session",
+                updatedAt: 2,
+                skillsSnapshot: { prompt: "accepted before close", skills: [] },
+              },
+            },
+          ],
+        });
         rootWorkEntered.resolve();
-        await releaseRootWork.promise;
+        await Promise.all([acceptedFinal, acceptedLifecycle]);
       },
     });
     await vi.advanceTimersByTimeAsync(0);
@@ -168,21 +444,45 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
     expect(stopService).toHaveBeenCalledOnce();
     await withinTest(rootJoinEntered.promise, signal);
     expect(kernel.scheduler.signal.aborted).toBe(true);
+    const lateWork = vi.fn();
+    await kernel.scheduler.schedule({ id: "after-close", delayMs: 0, run: lateWork }).stop();
+    expect(lateWork).not.toHaveBeenCalled();
     expect(disposed).toBe(false);
     expect(shared.isOpen).toBe(true);
     releaseRootWork.resolve();
+    await heldWriter;
+    await expect(acceptedFinal).resolves.toEqual({ state: "delivered" });
+    await expect(acceptedLifecycle).resolves.toMatchObject({ removedEntries: 0 });
     await expect(closing).resolves.toBeUndefined();
     expect(disposed).toBe(true);
     expect(shared.isOpen).toBe(false);
     expect((await fs.stat(retainedDatabase)).isFile()).toBe(true);
+    const lifecycleEntry = loadSessionEntry({
+      agentId: "main",
+      storePath: activeStore,
+      sessionKey: lifecycleKey,
+    });
+    expect(lifecycleEntry?.skillsSnapshot).toEqual({
+      prompt: "accepted before close",
+      skills: [],
+    });
+    expect(lifecycleEntry?.sessionDiffBaseline).toBeUndefined();
     expect(
       loadSessionEntry({ agentId: "main", storePath: activeStore, sessionKey: "agent:main:main" })
         ?.pluginExtensions,
-    ).toBeUndefined();
+    ).toEqual({ [pluginId]: { active: true } });
+    expect(
+      loadSessionEntry({ agentId: "main", storePath: activeStore, sessionKey: "agent:main:main" }),
+    ).toMatchObject({
+      label: "writer settled before final",
+      pendingFinalDelivery: {
+        deliveries: [{ id: "close-delivery", state: "delivered" }],
+      },
+    });
   } finally {
     stopEntered.resolve();
     releaseRootWork.resolve();
-    await Promise.allSettled([closing]);
+    await Promise.allSettled([heldWriter, acceptedFinal, acceptedLifecycle, closing]);
     vi.useRealTimers();
     vi.restoreAllMocks();
     await fixture.cleanup();
@@ -233,7 +533,7 @@ it("releases agent leases for Doctor after the final Gateway stops while its pro
 });
 
 it.skipIf(process.platform !== "linux")(
-  "joins agent resources and records a clean witness after a managed SIGTERM drain",
+  "releases idle agent leases before sidecar settlement and joins managed SIGTERM cleanup",
   async () => {
     const fixture = await createGatewayMetadataCloseFixture("gateway-agent-resource-close");
     const entered = createDeferredCore();
@@ -379,14 +679,17 @@ it.skipIf(process.platform !== "linux")(
       ]);
       expect(isAgentRunRestartAbortReason(operation.abortSignal.reason)).toBe(true);
       await writerReleased.promise;
-      expect(agentLeases.all(agent.path)).toHaveLength(1);
+      expect(agentLeases.all(agent.path)).toEqual([]);
       await vi.advanceTimersByTimeAsync(10_001);
       expect(exit).not.toHaveBeenCalled();
-      expect(agent.db.isOpen).toBe(true);
+      expect(agent.db.isOpen).toBe(false);
       expect(shared.isOpen).toBe(true);
-      expect(() => assertNoOpenClawAgentDatabaseLeasesReadOnly({ env: fixture.state.env })).toThrow(
-        OpenClawAgentDatabaseLeaseActiveError,
-      );
+      expect(() =>
+        assertNoOpenClawAgentDatabaseLeasesReadOnly({ env: fixture.state.env }),
+      ).not.toThrow();
+      expect(
+        readOpenClawAgentIntegrityVerification(agent.path, fixture.state.env)?.clean_close,
+      ).toBe(1);
       await vi.advanceTimersByTimeAsync(4_999);
       release.resolve();
       await closing;

@@ -117,6 +117,13 @@ describe("plugin subagent sessions_yield follow-up", () => {
     let distinctFollowupRun: boolean;
 
     try {
+      // The kickoff reply only acknowledges the spawn; it carries no child result.
+      await transport.waitForOutbound({
+        conversation: REQUESTER_CONVERSATION,
+        sinceIndex: outboundStartIndex,
+        textIncludes: "QA-SELF-YIELD-SPAWNED",
+        timeoutMs: 30_000,
+      });
       const followUpResponse = await fetch(`${gateway.baseUrl}/qa/self-yield/follow-up`, {
         method: "POST",
         headers: {
@@ -165,9 +172,9 @@ describe("plugin subagent sessions_yield follow-up", () => {
     const outbound = state
       .getSnapshot()
       .messages.filter((message) => message.direction === "outbound");
-    // The queued follow-up supersedes the paused turn before its notice publishes.
-    // Only the final completion may reach the requester, exactly once.
-    expect(outbound).toHaveLength(outboundStartIndex + 1);
+    // The follow-up supersedes the paused turn before its notice publishes, so the
+    // requester sees only the spawn acknowledgement and the one completion announcement.
+    expect(outbound).toHaveLength(outboundStartIndex + 2);
     expect(
       outbound.filter((message) => message.text.includes(QA_SUBAGENT_SELF_YIELD_MARKER)),
     ).toHaveLength(1);
@@ -198,13 +205,22 @@ describe("plugin subagent sessions_yield follow-up", () => {
       ).length;
     const requests = (await fetch(`${mock.baseUrl}/debug/requests`).then((response) =>
       response.json(),
-    )) as Array<{ plannedToolName?: string; prompt?: string }>;
+    )) as Array<{ allInputText?: string; plannedToolName?: string; prompt?: string }>;
     const handoffRequests = requests.filter(
       (request) =>
         request.prompt?.includes("Subagent self yield qa worker") ||
         request.prompt?.includes("Subagent self yield qa remote job finished"),
     );
-    expect(requests).toHaveLength(2);
+    // The follow-up was admitted while the child was still yielding. Its result
+    // reaches the original requester through one registry completion turn, and
+    // the pause it superseded never wakes that requester with a notice.
+    const requesterCompletionTurns = requests.filter((request) =>
+      request.allInputText?.includes("A background task completed."),
+    ).length;
+    const pauseNoticeRequests = requests.filter((request) =>
+      request.prompt?.includes("A child is paused awaiting a continuation"),
+    ).length;
+    expect(requests).toHaveLength(3);
     const verdict = {
       schemaVersion: 1,
       scenario: "channel-handoff-adoption",
@@ -217,7 +233,8 @@ describe("plugin subagent sessions_yield follow-up", () => {
           (request) => request.plannedToolName === "sessions_yield",
         ).length,
         childModelRequests: handoffRequests.length,
-        pauseNoticeRequests: requests.length - handoffRequests.length,
+        requesterCompletionTurns,
+        pauseNoticeRequests,
         visibleReplies: outbound.filter((message) =>
           message.text.includes(QA_SUBAGENT_SELF_YIELD_MARKER),
         ).length,
@@ -229,6 +246,7 @@ describe("plugin subagent sessions_yield follow-up", () => {
     expect(verdict.facts).toEqual({
       sessionsYieldCalls: 1,
       childModelRequests: 2,
+      requesterCompletionTurns: 1,
       pauseNoticeRequests: 0,
       visibleReplies: 1,
       duplicateRepliesAfterQuietWindow: 0,

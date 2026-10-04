@@ -175,7 +175,6 @@ export function prepareSessionEntryMaintenanceInDatabase(
   };
   const { store, archived, capArchived, modelRunPruned, pruned, capped } =
     planSessionEntryMaintenance({
-      profile: "write",
       maintenance,
       initialUnarchivedCount: entryCount,
       forceMaintenance: params.forceMaintenance,
@@ -277,7 +276,6 @@ export function prepareSessionEntryMaintenanceInDatabase(
       }
     }
     const archivedSessionKeys: string[] = [];
-    const archivedWorktrees: NonNullable<SessionEntryMaintenancePlan["archivedWorktrees"]> = [];
     for (const key of archivedKeys) {
       const previousEntry = selectedEntries[key];
       const planned = store[key];
@@ -293,13 +291,6 @@ export function prepareSessionEntryMaintenanceInDatabase(
       writeSessionEntry(database, key, entry, { canonicalPreviousEntry: previousEntry });
       onArchived?.(key, previousEntry, entry);
       archivedSessionKeys.push(key);
-      if (entry.worktree) {
-        archivedWorktrees.push({
-          entry: structuredClone(entry),
-          sessionKey: key,
-          storePath: params.storePath,
-        });
-      }
     }
     const removals = [...removalReasons].flatMap(([sessionKey, maintenanceReason]) => {
       const expectedEntry = selectedEntries[sessionKey];
@@ -309,7 +300,6 @@ export function prepareSessionEntryMaintenanceInDatabase(
     if (removals.length === 0) {
       return {
         archivedSessionKeys,
-        ...(archivedWorktrees.length ? { archivedWorktrees } : {}),
         entryRemovals: [],
         stateDeletePlans: [],
         archived,
@@ -352,7 +342,6 @@ export function prepareSessionEntryMaintenanceInDatabase(
     }
     return {
       archivedSessionKeys,
-      ...(archivedWorktrees.length ? { archivedWorktrees } : {}),
       entryRemovals: removals,
       stateDeletePlans: deletePlans,
       archived,

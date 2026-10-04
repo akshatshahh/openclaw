@@ -44,6 +44,7 @@ struct ChatSessionSidebar: View {
     @State var observedOrder = ChatSessionSidebarModel.ObservedOrder()
     @State var batch = ChatSessionSidebarBatch()
     @State private var lastSnoozeWake = Date.distantPast
+    @State var catalogData = ChatSessionSidebarCatalogs()
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -57,6 +58,7 @@ struct ChatSessionSidebar: View {
             in: self.rosterData?.queryRows ?? self.viewModel.sessions, now: now)
         let projectedRows = sections.flatMap(\.nodes).flatMap(\.previewSessions)
         let ownership = self.ownership(for: projectedRows)
+        let rosterIDs = (self.rosterData?.rows ?? self.viewModel.sessions).map(OpenClawChatSessionSidebarData.identity)
         let previewRequest = ChatSessionSidebarPreviews.Request(
             viewModel: self.viewModel,
             sessions: projectedRows)
@@ -96,7 +98,10 @@ struct ChatSessionSidebar: View {
             {
                 self.childLoadState(selectedTreeSession)
             }
-            if sections.allSatisfy(\.nodes.isEmpty), self.rosterData?.isSettled != false {
+            self.catalogSections(now: now, ownership: ownership, previewRequest: previewRequest)
+            if sections.allSatisfy(\.nodes.isEmpty), self.catalogPresentation.catalogs.isEmpty,
+               self.rosterData?.isSettled != false
+            {
                 Text(self.query
                     .isEmpty ? (self.sessionStatus == .archived ? String(localized: "No archived threads") :
                         String(localized: "No threads yet")) : String(localized: "No matching threads"))
@@ -108,6 +113,7 @@ struct ChatSessionSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .modifier(ChatSidebarCatalogLifecycle(data: self.catalogData, viewModel: self.viewModel))
         .listItemTint(.monochrome)
         .sidebarAgentAvatars(owner: self.viewModel.sidebarData, transport: self.viewModel.transport)
         .searchable(
@@ -117,7 +123,8 @@ struct ChatSessionSidebar: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 self.batchBar
-                self.connectionFooter
+                self.archiveUndoNotice
+                self.identityFooter(now: now)
             }
             .background(.bar)
         }
@@ -127,9 +134,9 @@ struct ChatSessionSidebar: View {
         }
         .onChange(of: self.viewModel.sidebarData?.scopeRevision) { _, _ in self.batch.reset() }
         .onChange(of: self.rosterData?.query) { _, _ in self.batch.reset(clearConnection: false) }
-        .onChange(of: self.viewModel.sessionKey) { _, _ in self.batch.selection = .init() }
+        .onChange(of: self.viewModel.currentSessionTarget) { _, _ in self.batch.selection = .init() }
         .task(id: self.viewModel.sidebarData?.scopeRevision) { await self.watchPinOrder() }
-        .onChange(of: (self.rosterData?.rows ?? self.viewModel.sessions).map(\.key), initial: true) { _, keys in
+        .onChange(of: rosterIDs, initial: true) { _, keys in
             self.observedOrder.observe(keys)
         }
         .onChange(of: self.query, initial: true) { _, value in
@@ -330,7 +337,7 @@ struct ChatSessionSidebar: View {
         section: String = "",
         previewRequest: ChatSessionSidebarPreviews.Request) -> some View
     {
-        ForEach(nodes) { node in
+        ForEach(nodes, id: \.sidebarID) { node in
             self.treeRow(node, isChild: false, now: now, ownership: ownership, previewRequest: previewRequest)
                 .modifier(ChatSidebarSectionInteraction(
                     sidebar: self,

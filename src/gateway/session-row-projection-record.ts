@@ -489,6 +489,7 @@ export function present(
     excludedChildKeys: options.excludedChildKeys,
   });
   Object.assign(row, options.preparedFacts ?? record.facts?.present());
+  row.hasBoard = record.hasBoard;
   // Undefined omits wire fields without converting each presented row to dictionary storage.
   if (!options.includeDerivedTitles) {
     row.derivedTitle = undefined;
@@ -663,18 +664,6 @@ export function readSessionRowLineage(
   };
 }
 
-export function sameParents(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
-  if (left.size !== right.size) {
-    return false;
-  }
-  for (const parent of left) {
-    if (!right.has(parent)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 export function acquireSessionRowEntry(params: {
   row: Row;
   storedEntry: SessionEntry | undefined;
@@ -695,7 +684,7 @@ export function acquireSessionRowEntry(params: {
   const { entry, parents } = lineage;
   // Equal timestamps still need the full metadata comparison.
   const changed =
-    !sameParents(row.parents, parents) ||
+    !isDeepStrictEqual(row.parents, parents) ||
     !Object.is(storedEntry.updatedAt, row.storedEntry?.updatedAt) ||
     !isDeepStrictEqual(storedEntry, row.storedEntry) ||
     !isDeepStrictEqual(entry, row.entry);

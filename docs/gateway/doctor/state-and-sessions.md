@@ -148,6 +148,7 @@ auth health, sandbox images, and plugin installs.
 
     - **State dir missing**: warns about catastrophic state loss, prompts to recreate the directory, and reminds you that it cannot recover missing data.
     - **State dir permissions**: verifies writability; offers to repair permissions (and emits a `chown` hint when owner/group mismatch is detected).
+      Config repairs, including during updates, preserve a writable state root owned by another user (for example a Kubernetes `fsGroup` volume with mode `2775`). They report its path, owner IDs, and retained mode as a warning. Config and backup files still require mode `600`; owned-directory hardening and private credential directory checks remain enforced.
     - **macOS cloud-synced state dir**: warns when state resolves under iCloud Drive (`~/Library/Mobile Documents/com~apple~CloudDocs/...`) or `~/Library/CloudStorage/...`, because sync-backed paths can cause slower I/O and lock/sync races.
     - **Windows cloud-synced state dir**: warns when state resolves under a OneDrive sync root (from `OneDrive`, `OneDriveConsumer`, or `OneDriveCommercial`), because sync-backed paths can cause slower I/O, lock/sync races, and Files On-Demand dehydration. To relocate, stop the Gateway, move the whole state directory, set `OPENCLAW_STATE_DIR` for the Gateway service (not just one shell), restart, and rerun doctor.
     - **Linux SD or eMMC state dir**: warns when state resolves to an `mmcblk*` mount source, because SD/eMMC-backed random I/O can be slower and wear faster under session and credential writes.
@@ -169,7 +170,7 @@ auth health, sandbox images, and plugin installs.
 
     Doctor also imports legacy generated provider catalogs (`plugins/*/catalog.json` and retained migration claims) into agent SQLite while preserving provider credentials. Run `openclaw doctor --fix` to import these catalogs or repair persisted generated models whose transport API cannot be derived. Ordinary model loading reads canonical SQLite catalogs without importing sidecars or repairing saved rows. Initial disk discovery and explicit registry refresh report legacy catalogs with a Doctor command; hot model lookups and lifecycle-captured catalogs do not inspect legacy files. Newly generated catalogs are still normalized before publication.
 
-    Legacy Codex OAuth profiles with encrypted sidecar credentials are repaired only by doctor. Run `openclaw doctor --fix` from an interactive terminal on the original host so it can recover the legacy encryption key, including from macOS Keychain when needed, and import supported credentials into the SQLite auth store. If the legacy material cannot be recovered, sign in again with `openclaw models auth login --provider openai` on the Gateway host.
+    OAuth credential sidecar imports are retired. Doctor leaves their files and encryption keys untouched and refuses the migration. Upgrade through `2026.9.7` and run `openclaw doctor --fix` from an interactive terminal on the original host before retrying; that release can recover the historical key and import the credentials. See [retention policy](/gateway/doctor/config-migrations#retention-policy).
 
   </Accordion>
   <Accordion title="6. Hooks model validation">

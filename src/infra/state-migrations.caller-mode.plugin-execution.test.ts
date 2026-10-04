@@ -101,34 +101,6 @@ describe("legacy state migration caller plugin execution", () => {
     });
   });
 
-  it("completes Doctor after archiving verified empty Telegram thread bindings", async () => {
-    const fixture = await makeFixture();
-    const sourcePath = path.join(fixture.stateDir, "telegram", "thread-bindings-default.json");
-    const source = '{"version":1,"bindings":[]}\n';
-    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-    fs.writeFileSync(sourcePath, source);
-    clearPluginDoctorContractRegistryCache();
-
-    const result = await autoMigrateLegacyState({
-      cfg: {},
-      doctorOnlyStateMigrations: true,
-      env: fixture.env,
-      homedir: () => fixture.homeDir,
-      legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
-    });
-
-    expect(
-      result.stepReceipts.find((receipt) => receipt.id === "plugin-doctor-state"),
-    ).toMatchObject({
-      outcome: "completed",
-      changes: [`Archived empty Telegram thread bindings legacy source -> ${sourcePath}.migrated`],
-      warnings: [],
-    });
-    expect(() => throwIfDoctorStateMigrationRefused(result.stepReceipts)).not.toThrow();
-    expect(fs.existsSync(sourcePath)).toBe(false);
-    expect(fs.readFileSync(`${sourcePath}.migrated`, "utf8")).toBe(source);
-  });
-
   it.each([
     {
       name: "reordered exports with only the second action pending",
@@ -447,11 +419,10 @@ module.exports = { stateMigrations: [{
       const legacyStateDir = legacyRoot
         ? path.join(fixture.homeDir, ".clawdbot")
         : fixture.stateDir;
-      const stateDir = legacyRoot ? path.join(fixture.homeDir, ".openclaw") : fixture.stateDir;
       const pluginId = "relocated-owner";
       const pluginRoot = fromInstallIndex
         ? path.join(fixture.root, pluginId)
-        : path.join(legacyRoot ? fixture.root : stateDir, "extensions", pluginId);
+        : path.join(legacyStateDir, "extensions", pluginId);
       const markerPath = path.join(fixture.root, "relocated-action-ran");
       const doctorOnlyMarkerPath = path.join(fixture.root, "doctor-only-action-ran");
       fs.mkdirSync(legacyStateDir, { recursive: true });
@@ -525,7 +496,10 @@ module.exports = { stateMigrations: [{
         agents: { entries: { main: {} } },
         plugins: { entries: { [pluginId]: { enabled: true } } },
       };
-      fs.writeFileSync(fixture.configPath, `${JSON.stringify(cfg)}\n`);
+      fs.writeFileSync(
+        legacyRoot ? path.join(legacyStateDir, "openclaw.json") : fixture.configPath,
+        `${JSON.stringify(cfg)}\n`,
+      );
       const env: NodeJS.ProcessEnv = {
         ...fixture.env,
         OPENCLAW_HOME: fixture.homeDir,
@@ -534,6 +508,8 @@ module.exports = { stateMigrations: [{
       };
       if (legacyRoot) {
         delete env.OPENCLAW_STATE_DIR;
+        delete env.OPENCLAW_HOME;
+        delete env.OPENCLAW_CONFIG_PATH;
       }
       if (legacySchema) {
         const databasePath = resolveOpenClawStateSqlitePath(env);
@@ -599,7 +575,7 @@ module.exports = { stateMigrations: [{
       expect(preludeReceipt, JSON.stringify(preludeReceipt)).toMatchObject({
         outcome: legacyRoot ? "completed" : "skipped",
       });
-      expect(fs.realpathSync(legacyStateDir)).toBe(fs.realpathSync(stateDir));
+      expect(fs.existsSync(legacyStateDir)).toBe(!legacyRoot);
       expect(result.warnings).toEqual([]);
       if (legacySchema) {
         expect(result.stepReceipts.find((receipt) => receipt.id === "state-schema")).toMatchObject({

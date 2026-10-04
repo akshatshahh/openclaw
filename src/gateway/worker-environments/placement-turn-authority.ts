@@ -3,6 +3,8 @@ import { stageSqliteTransactionState } from "../../infra/sqlite-post-commit.js";
 import { assertTransactionUsable } from "../../infra/sqlite-transaction.js";
 import type { DatabasePathIdentity } from "../../infra/sqlite-worker-identity.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
+import { freezeJsonSnapshot } from "../../shared/immutable-data.js";
+import { registerListener } from "../../shared/listeners.js";
 import {
   registerOpenClawStateDatabaseLifecycleListener,
   requireOpenClawStateDatabaseIdentity,
@@ -65,7 +67,7 @@ type PlacementAuthorityOwner = {
   identity: DatabasePathIdentity;
   active: boolean;
   claims: Map<string, Set<RetainedClaim>>;
-  observations: Map<string, Set<{ revoked: boolean }>>;
+  observations: Map<string | undefined, Set<{ revoked: boolean }>>;
   pending: Set<ClaimChange>;
   sequence: number;
   published: Map<string, number>;
@@ -189,7 +191,10 @@ function commitChange(owner: PlacementAuthorityOwner, change: ClaimChange, seque
     prunePublication(owner, change.sessionId);
     return;
   }
-  for (const observation of owner.observations.get(change.sessionId) ?? []) {
+  for (const observation of [
+    ...(owner.observations.get(change.sessionId) ?? []),
+    ...(owner.observations.get(undefined) ?? []),
+  ]) {
     observation.revoked = true;
   }
   if (sequence > (owner.published.get(change.sessionId) ?? -1)) {
@@ -204,10 +209,13 @@ function commitChange(owner: PlacementAuthorityOwner, change: ClaimChange, seque
     if (change.kind === "journal" && !change.uncertain) {
       // Journal-only commits leave the exact placement and pending result unchanged.
     } else if (result?.pendingResult) {
-      owner.workspaceResults.set(change.sessionId, {
-        placement: result.placement,
-        pendingResult: result.pendingResult,
-      });
+      owner.workspaceResults.set(
+        change.sessionId,
+        Object.freeze({
+          placement: result.placement,
+          pendingResult: result.pendingResult,
+        }),
+      );
     } else if (
       !result &&
       placement &&
@@ -215,10 +223,13 @@ function commitChange(owner: PlacementAuthorityOwner, change: ClaimChange, seque
       isCurrentWorkerWorkspacePendingResultOwner(placement, retained.pendingResult)
     ) {
       // Drain keeps exact result custody. Read at commit so earlier clears stay cleared.
-      owner.workspaceResults.set(change.sessionId, {
-        placement,
-        pendingResult: retained.pendingResult,
-      });
+      owner.workspaceResults.set(
+        change.sessionId,
+        Object.freeze({
+          placement,
+          pendingResult: retained.pendingResult,
+        }),
+      );
     } else {
       // Native writers without a complete postimage cannot preserve prepared custody.
       owner.workspaceResults.delete(change.sessionId);
@@ -263,8 +274,8 @@ function commitChange(owner: PlacementAuthorityOwner, change: ClaimChange, seque
   prunePublication(owner, change.sessionId);
 }
 
-/** Retain placement custody across a read-worker wait and pending claim commits. */
-export function observePlacementAuthority(pathname: string, sessionId: string) {
+/** Omit the session to observe the inventory, including placements created after an empty read. */
+export function observePlacementAuthority(pathname: string, sessionId?: string) {
   const context = captureOpenClawStateWorkerContext({ path: pathname });
   const owner = ownerFor(context.admission.identity);
   const observation = { revoked: false };
@@ -281,10 +292,15 @@ export function observePlacementAuthority(pathname: string, sessionId: string) {
         !owner.active ||
         owners.get(owner.identity.key) !== owner ||
         [...owner.pending].some(
-          (change) => change.kind !== "tools" && change.sessionId === sessionId,
+          (change) =>
+            change.kind !== "tools" && (sessionId === undefined || change.sessionId === sessionId),
         )
       ) {
-        throw new Error(`Session ${sessionId} placement authority changed`);
+        throw new Error(
+          sessionId === undefined
+            ? "Worker placement inventory changed"
+            : `Session ${sessionId} placement authority changed`,
+        );
       }
     },
     release(this: void) {
@@ -293,7 +309,9 @@ export function observePlacementAuthority(pathname: string, sessionId: string) {
       if (observations.size === 0 && owner.observations.get(sessionId) === observations) {
         owner.observations.delete(sessionId);
       }
-      prunePublication(owner, sessionId);
+      if (sessionId !== undefined) {
+        prunePublication(owner, sessionId);
+      }
     },
   };
 }
@@ -338,7 +356,7 @@ export function stagePlacementTurnClaimWorkerPublication(
   return stageWorkerChange(identity, {
     kind: "claim",
     sessionId: facts.sessionId,
-    facts: structuredClone(facts),
+    facts: freezeJsonSnapshot(facts),
     workspaceResult: captureWorkspaceResultPostimage(facts.sessionId, workspaceResult),
   });
 }
@@ -354,7 +372,7 @@ function captureWorkspaceResultPostimage(
   ) {
     throw new Error("Workspace result publication has a different session owner");
   }
-  return facts ? structuredClone(facts) : undefined;
+  return freezeJsonSnapshot(facts);
 }
 
 /** Pending-result changes invalidate read observations without revoking turn authority. */
@@ -394,7 +412,7 @@ export function readPlacementWorkspaceResultAuthority(
   ) {
     return undefined;
   }
-  return structuredClone(facts);
+  return facts;
 }
 
 /** Bind the worker read to the original store before yielding and reject obsolete snapshots. */
@@ -430,7 +448,7 @@ export async function preparePlacementWorkspaceResultAuthority(
       pendingResult &&
       isCurrentWorkerWorkspacePendingResultOwner(placement, pendingResult)
     ) {
-      owner.workspaceResults.set(claim.sessionId, structuredClone({ placement, pendingResult }));
+      owner.workspaceResults.set(claim.sessionId, freezeJsonSnapshot({ placement, pendingResult }));
     } else {
       owner.workspaceResults.delete(claim.sessionId);
     }
@@ -542,22 +560,12 @@ export function publishPlacementTurnClaimState(
   db: DatabaseSync,
   record: WorkerSessionPlacementRecord,
 ): void {
-  const { sessionId, agentId, sessionKey, state, executionMode, environmentId, activeOwnerEpoch } =
-    record;
+  const snapshot = freezeJsonSnapshot(structuredClone(record));
   stageChange(db, {
     kind: "claim",
-    sessionId,
-    workspacePlacement: structuredClone(record),
-    facts: {
-      sessionId,
-      agentId,
-      sessionKey,
-      state,
-      executionMode,
-      environmentId,
-      activeOwnerEpoch,
-      turnClaim: record.turnClaim ? { ...record.turnClaim } : null,
-    },
+    sessionId: snapshot.sessionId,
+    workspacePlacement: snapshot,
+    facts: snapshot,
   });
 }
 
@@ -656,8 +664,7 @@ export async function preparePlacementTurnClaimAuthority(
           listener();
           return () => {};
         }
-        retained.listeners.add(listener);
-        return () => retained.listeners.delete(listener);
+        return registerListener(retained.listeners, listener);
       },
       release,
     };
