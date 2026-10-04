@@ -673,7 +673,6 @@ async function runMessageActionWithAuthority(
             channel,
             channelPlugin,
             mediaAccess,
-            extraActionMediaSourceParamKeys,
             accountId,
             dryRun,
             gateway,

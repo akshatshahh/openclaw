@@ -4,6 +4,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/openclaw-agent-execution-incognito.compute.test.ts",
   "src/state/openclaw-agent-execution-incognito.lifecycle.test.ts",
   "src/state/openclaw-agent-execution-incognito.history.test.ts",
+  "src/state/openclaw-agent-execution-incognito.pending-history.test.ts",
   "src/state/openclaw-agent-pending-inputs-schema.test.ts",
   "src/agents/bash-tools.visible-subagent-notify.test.ts",
   "src/agents/live-model-switch.worker.test.ts",
@@ -629,6 +630,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/openclaw-agent-execution.integrity.test.ts",
   "src/state/openclaw-agent-execution-incognito.test.ts",
   "src/state/openclaw-agent-execution-incognito.sessions.test.ts",
+  "src/state/openclaw-agent-execution-incognito.acp.test.ts",
   "src/state/openclaw-agent-execution-incognito.side-data.test.ts",
   "src/state/openclaw-agent-execution-incognito.reports.test.ts",
   "src/state/openclaw-agent-execution-incognito.outbox.test.ts",
@@ -956,6 +958,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/embedded-agent-runner/run/failover-retry-controller.inline-auth.worker.test.ts",
   "src/agents/embedded-agent-runner/run/auth-profile-personal-usage.worker.test.ts",
   "src/agents/embedded-agent-runner/run/auth-profile-shared-usage.worker.test.ts",
+  "src/agents/embedded-agent-runner/run/auth-controller.test.ts",
   "src/agents/auth-profiles.markauthprofilefailure.test.ts",
 
   "src/node-host/node-worker-launch-store.test.ts",
