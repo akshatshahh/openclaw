@@ -42,7 +42,33 @@ type AuthorityOwner = {
   tail: Promise<void>;
   pending: Set<string>;
   observations: Set<Observation>;
+  uses: Set<{ observation: Observation; retire: () => void }>;
   failure?: unknown;
+};
+
+export class CronReceiptAuthorityRefusal extends Error {
+  constructor(
+    readonly reason: "retired" | "unavailable" | "permission" | "spent" | "busy",
+    options?: ErrorOptions,
+  ) {
+    super(`Cron effect authority ${reason}; prepare a new use from the live occurrence.`, options);
+    this.name = "CronReceiptAuthorityRefusal";
+  }
+}
+
+export type CronReceiptAuthorityUse = {
+  assertCurrent: () => void;
+  /** Invoke only the synchronous native initiation, never an async preparation wrapper. */
+  initiate: <T>(effect: () => T) => T;
+  release: () => void;
+  /** Borrow this exact gate for consumption; accepted persistence settles before release. */
+  mutate: <T>(run: (mutation: CronReceiptAuthorityMutation) => Promise<T>) => Promise<T>;
+};
+
+type UseOptions = {
+  permission: "message" | "source" | "execution";
+  assertCurrent: (facts: CronRunReceiptCurrentFacts) => void;
+  signal?: AbortSignal;
 };
 const lifetime = resolveGlobalSingleton(Symbol.for("openclaw.cron.receiptAuthority"), () => ({
   owners: new Map<string, AuthorityOwner>(),
@@ -103,6 +129,7 @@ function ownerFor(context: OpenClawStateWorkerContext): AuthorityOwner {
     tail: Promise.resolve(),
     pending: new Set(),
     observations: new Set(),
+    uses: new Set(),
   };
   // Custody belongs to this host, so losing a SQLite worker cannot release it.
   void owner.custody.catch((error: unknown) => {
@@ -115,6 +142,9 @@ function ownerFor(context: OpenClawStateWorkerContext): AuthorityOwner {
         return;
       }
       owner.closing = true;
+      for (const use of owner.uses) {
+        use.retire();
+      }
       await owner.work.drain();
       if (owner.pending.size > 0) {
         throw unavailable();
@@ -138,6 +168,9 @@ export function beginCronReceiptAuthorityClose(): void {
   lifetime.closing = true;
   for (const owner of owners.values()) {
     owner.closing = true;
+    for (const use of owner.uses) {
+      use.retire();
+    }
   }
 }
 
@@ -209,6 +242,141 @@ function install(observation: Observation, facts: CronRunReceiptCurrentFacts): v
   observation.facts = facts;
 }
 
+function acquireUse(
+  owner: AuthorityOwner,
+  context: OpenClawStateWorkerContext,
+  observation: Observation,
+  expectedReceipt: CronRunReceiptCurrentFacts["receipt"],
+  options: UseOptions,
+): Promise<CronReceiptAuthorityUse> {
+  if (owner.closing || observation.retired) {
+    return Promise.reject(new CronReceiptAuthorityRefusal("retired"));
+  }
+  const acquired = createDeferredCore<CronReceiptAuthorityUse>();
+  const released = createDeferredCore();
+  let ended: CronReceiptAuthorityRefusal | undefined;
+  let borrowing = false;
+  const finish = () => {
+    if (!borrowing) {
+      released.resolve();
+    }
+  };
+  const retire = () => {
+    ended ??= new CronReceiptAuthorityRefusal("retired");
+    finish();
+  };
+  const entry = { observation, retire };
+  owner.uses.add(entry);
+  options.signal?.addEventListener("abort", retire, { once: true });
+  const assertAuthority = () => {
+    if (ended) {
+      throw ended;
+    }
+    try {
+      assertOwner(owner, context);
+      options.signal?.throwIfAborted();
+      if (owner.closing || observation.retired) {
+        throw new CronReceiptAuthorityRefusal("retired");
+      }
+      const facts = observation.facts;
+      if (
+        !expectedReceipt ||
+        !isDeepStrictEqual(facts.receipt, expectedReceipt) ||
+        !facts.job ||
+        facts.job.id !== expectedReceipt.jobId ||
+        !facts.job.hasCanonicalDeliveryMode ||
+        facts.deletionBlocked
+      ) {
+        throw new CronReceiptAuthorityRefusal("retired");
+      }
+      if (
+        (options.permission !== "execution" &&
+          (observation.messageRevoked || !facts.job.messageToolAuthorityInputs)) ||
+        (options.permission === "source" &&
+          (observation.sourceRevoked || !facts.job.messageActionAuthorityInputs))
+      ) {
+        throw new CronReceiptAuthorityRefusal("permission");
+      }
+      options.assertCurrent(facts);
+    } catch (error) {
+      ended =
+        error instanceof CronReceiptAuthorityRefusal
+          ? error
+          : new CronReceiptAuthorityRefusal("unavailable", { cause: error });
+      finish();
+      throw ended;
+    }
+  };
+  const assertCurrent = () => {
+    assertAuthority();
+    if (borrowing || owner.pending.size > 0) {
+      throw new CronReceiptAuthorityRefusal("busy");
+    }
+  };
+  const release = () => {
+    ended ??= new CronReceiptAuthorityRefusal("spent");
+    finish();
+  };
+  const use: CronReceiptAuthorityUse = {
+    assertCurrent,
+    release,
+    initiate(effect) {
+      try {
+        assertCurrent();
+        // Spend before invoking user code, including reentrant initiation and thrown launches.
+        ended = new CronReceiptAuthorityRefusal("spent");
+        return effect();
+      } finally {
+        release();
+      }
+    },
+    async mutate(run) {
+      assertCurrent();
+      borrowing = true;
+      try {
+        return await runOutsideAsyncWorkScope(() =>
+          executeMutation(owner, context, async (mutation) =>
+            run({
+              ...mutation,
+              assertCurrent() {
+                assertAuthority();
+                mutation.assertCurrent();
+              },
+            }),
+          ),
+        );
+      } catch (error) {
+        retire();
+        throw error;
+      } finally {
+        borrowing = false;
+        if (ended) {
+          finish();
+        }
+      }
+    },
+  };
+  void queue(owner, async () => {
+    assertAuthority();
+    await rebuild(owner, context, [observation]);
+    assertCurrent();
+    acquired.resolve(use);
+    await released.promise;
+  })
+    .catch((error: unknown) => {
+      acquired.reject(
+        error instanceof CronReceiptAuthorityRefusal
+          ? error
+          : new CronReceiptAuthorityRefusal("unavailable", { cause: error }),
+      );
+    })
+    .finally(() => {
+      owner.uses.delete(entry);
+      options.signal?.removeEventListener("abort", retire);
+    });
+  return acquired.promise;
+}
+
 /** Bind only a newly committed local occurrence; startup snapshots never recreate capabilities. */
 export function observeCronReceiptAuthority(
   context: OpenClawStateWorkerContext,
@@ -231,6 +399,7 @@ export function observeCronReceiptAuthority(
   };
   owner.observations.add(observation);
   const selected = observation;
+  const expectedReceipt = structuredClone(facts.receipt);
   const prepared = admitted
     ? Promise.resolve()
     : queue(owner, async () => {
@@ -244,7 +413,15 @@ export function observeCronReceiptAuthority(
     prepared,
     release() {
       observation.retired = true;
+      for (const use of owner.uses) {
+        if (use.observation === observation) {
+          use.retire();
+        }
+      }
       owner.observations.delete(observation);
+    },
+    acquireUse(options: UseOptions) {
+      return acquireUse(owner, context, selected, expectedReceipt, options);
     },
     readForPreparation() {
       assertOwner(owner);
@@ -325,6 +502,15 @@ export function withCronReceiptAuthorityMutation<T>(
   if (owner.closing && !options?.settlement) {
     return Promise.reject(unavailable());
   }
+  return queue(owner, () => executeMutation(owner, context, run, options));
+}
+
+function executeMutation<T>(
+  owner: AuthorityOwner,
+  context: OpenClawStateWorkerContext,
+  run: (mutation: CronReceiptAuthorityMutation) => Promise<T>,
+  options?: { settlement?: boolean },
+): Promise<T> {
   const nonce = randomUUID();
   const capturedScope = context.runInCapturedSchemaScope;
   const persistenceContext = capturedScope
@@ -334,7 +520,7 @@ export function withCronReceiptAuthorityMutation<T>(
           capturedScope(() => runOutsideAsyncWorkScope(() => owner.work.run(operation))),
       }
     : context;
-  return queue(owner, async () => {
+  return owner.work.track(async () => {
     assertOwner(owner, context);
     const observations = [...owner.observations];
     const attachment = { nonce, reads: observations.map((entry) => entry.command) };
