@@ -61,6 +61,8 @@ export type CronReceiptAuthorityUse = {
   /** Invoke only the synchronous native initiation, never an async preparation wrapper. */
   initiate: <T>(effect: () => T) => T;
   release: () => void;
+  /** Other database owners keep this interval until their accepted write settles. */
+  persist: <T>(run: (assertCurrent: () => void) => Promise<T>) => Promise<T>;
   /** Borrow this exact gate for consumption; accepted persistence settles before release. */
   mutate: <T>(run: (mutation: CronReceiptAuthorityMutation) => Promise<T>) => Promise<T>;
 };
@@ -320,6 +322,16 @@ function acquireUse(
   const use: CronReceiptAuthorityUse = {
     assertCurrent,
     release,
+    async persist(run) {
+      assertCurrent();
+      borrowing = true;
+      try {
+        return await runOutsideAsyncWorkScope(() => owner.work.track(() => run(assertAuthority)));
+      } finally {
+        borrowing = false;
+        release();
+      }
+    },
     initiate(effect) {
       try {
         assertCurrent();

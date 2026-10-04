@@ -1,6 +1,9 @@
 import { inspect } from "node:util";
 import { gunzipSync } from "node:zlib";
-import { captureChannelReadAuthority } from "openclaw/plugin-sdk/fetch-runtime";
+import {
+  captureChannelReadAuthority,
+  captureEffectAuthority,
+} from "openclaw/plugin-sdk/fetch-runtime";
 import {
   clampTimerTimeoutMs,
   resolveIntegerOption as normalizeIntegerOption,
@@ -45,6 +48,7 @@ type NormalizedRequestClientOptions = RequestClientOptions & {
 type RequestDispatchData = {
   data?: RequestData;
   assertCurrent?: () => void;
+  effect: ReturnType<typeof captureEffectAuthority>;
 };
 
 const defaultOptions = {
@@ -120,6 +124,7 @@ export class RequestClient {
   readonly options: NormalizedRequestClientOptions;
   protected token: string;
   protected customFetch: DiscordEndpointRuntime["fetch"] | undefined;
+  private readonly guardedEndpoint: boolean;
   protected requestControllers = new Set<AbortController>();
   private scheduler: RestScheduler<RequestDispatchData>;
 
@@ -134,6 +139,7 @@ export class RequestClient {
       : options;
     this.token = token.replace(/^Bot\s+/i, "");
     this.customFetch = resolvedOptions?.fetch;
+    this.guardedEndpoint = endpoint !== undefined;
     this.options = normalizeRequestClientOptions(resolvedOptions);
     this.scheduler = new RestScheduler<RequestDispatchData>(
       async (request) =>
@@ -143,6 +149,7 @@ export class RequestClient {
           { data: request.data?.data, query: request.query },
           request.routeKey,
           request.data?.assertCurrent,
+          request.data?.effect,
         ),
     );
   }
@@ -177,6 +184,7 @@ export class RequestClient {
     // both host action and read authority before queueing or rate-limit retries.
     const assertActionAuthority = captureDiscordRequestAuthority();
     const assertReadAuthority = captureChannelReadAuthority();
+    const effect = captureEffectAuthority();
     const assertCurrent = assertActionAuthority
       ? () => {
           assertActionAuthority();
@@ -185,14 +193,14 @@ export class RequestClient {
       : assertReadAuthority;
     assertCurrent?.();
     if (!this.options.queueRequests) {
-      return await this.executeRequest(method, path, params, routeKey, assertCurrent);
+      return await this.executeRequest(method, path, params, routeKey, assertCurrent, effect);
     }
     return await this.scheduler.enqueue({
       method,
       path,
       priority: getRequestPriority(method, path),
       query: params.query,
-      data: { data: params.data, assertCurrent },
+      data: { data: params.data, assertCurrent, effect },
     });
   }
 
@@ -202,6 +210,7 @@ export class RequestClient {
     params: { data?: RequestData; query?: RequestQuery },
     routeKey = createRouteKey(method, path),
     assertCurrent?: () => void,
+    effect = captureEffectAuthority(),
   ): Promise<unknown> {
     const url = `${this.options.apiBaseUrl}${appendQuery(path, params.query)}`;
     const headers = new Headers({
@@ -221,10 +230,13 @@ export class RequestClient {
     try {
       assertCurrent?.();
       const init = { method, headers, body, signal };
-      const response =
-        this.customFetch && assertCurrent
-          ? await this.customFetch(url, init, assertCurrent)
-          : await (this.customFetch ?? fetch)(url, init);
+      const request = () => {
+        assertCurrent?.();
+        return this.customFetch ? this.customFetch(url, init, assertCurrent) : fetch(url, init);
+      };
+      const response = this.guardedEndpoint
+        ? await effect.run(request)
+        : await effect.initiate(request);
       const text = await readResponseBodyText(response, this.options.timeout ?? 15_000);
       const parsed = coerceResponseBody(text);
       this.scheduler.recordResponse(routeKey, path, response, parsed);

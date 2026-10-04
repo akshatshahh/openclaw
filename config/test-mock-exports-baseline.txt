@@ -1627,7 +1627,6 @@
 ["extensions/slack/src/resolve-users.test.ts","./client.js","6bddda154225bfd635e49747675c4560feaf18e92c7e832042da73e3b19e12d5",1]
 ["extensions/slack/src/scopes.test.ts","./client.js","c5492fb1f6edc5c30f414fba257372d4ac25befbc8d200387ccfb7718c2acf1e",1]
 ["extensions/slack/src/security-audit.test.ts","openclaw/plugin-sdk/conversation-runtime","576452dda5dfe08621db0d5abd4cea791899445831b92a9b3966944823843149",1]
-["extensions/slack/src/send.enterprise.test.ts","openclaw/plugin-sdk/fetch-runtime","74518b0cf727a4855b3f83ba840c8349e19a1a0f76e6fe5283b5f358e7833352",1]
 ["extensions/slack/src/send.enterprise.test.ts","openclaw/plugin-sdk/ssrf-runtime","0ab90693cb27154081b54a38cf25a0d7dbe51240fcdfef11abd1279f2d213079",1]
 ["extensions/sms/src/gateway.test.ts","./ingress-spool.js","7e7460e4714bbb0662cd946689fc2f40625e612bf7fd37872156580dd407f63d",1]
 ["extensions/sms/src/gateway.test.ts","./media.js","dfc5e9b8a9b9044f16c0a8fb121d3177b37f678523481fc2defe4a38db4682e5",1]

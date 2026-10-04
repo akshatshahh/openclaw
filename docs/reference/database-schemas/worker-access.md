@@ -1607,14 +1607,15 @@ opening settles. The remaining native Cron transitions still need migration.
 This cutover preserves schemas, stored bytes, retention, configuration, and update
 behavior.
 
-Cron receipt guards use the current read-only owner without initializing storage
-or waiting for the worker's writer transaction. They read deletion authority
-through the admitted connection. Synchronous current-authority readers may reuse that
-same thread's managed write transaction, including its pending lifecycle rows;
-ordinary discovery reads retain committed-state isolation. This avoids preparing
-a child-process snapshot while holding the shared-state write transaction. Agent
-database admission refusals remain with their in-memory admission owner. Schemas,
-retention, configuration, and update behavior are unchanged.
+Shared HTTP, Discord, Slack, and Telegram message handoffs add owner-held uses
+from exact receipt, job, and deletion facts prepared by the existing read worker.
+After asynchronous preparation, the Gateway owner acquires an interval through
+provider initiation, then releases it without waiting for the response. Each
+retry prepares a fresh use; reads also prepare authority before accepting their
+results. Transcript writes retain their interval through commit and settlement.
+The existing synchronous current-job guards remain active during this staged
+transport migration. Their native SQL path is removed only after the remaining
+transports adopt prepared initiation; this stage does not claim its elimination.
 
 Cron mutations share host-owned receipt-authority custody for the physical shared
 database, across store partitions and approval writers. Runtime mutations, raw
@@ -1634,8 +1635,10 @@ prelude seals new work before scheduler cancellation, while accepted persistence
 and receipt finalizers retain their original source through settlement and
 publication. Stored grants survive restart; process-local observations do not.
 This publication foundation preserves receipt revisions, force-run eligibility,
-schemas, retention, and update behavior. Existing final message and execution
-SQL guards remain until their separate consumer cutovers.
+schemas, retention, and update behavior. Native standing-grant lookup and
+consumption remain a separate execution cutover. Provider-library preparation
+after an SDK handoff remains inside that accepted operation; OpenClaw does not
+hold cron authority through the provider response.
 
 Cron display names are prepared through the existing shared-state and history workers.
 Live resolvers retain their physical database generation; cron's mutation owner

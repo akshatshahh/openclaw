@@ -1453,6 +1453,7 @@ src/shared/avatar-policy.ts
 src/shared/dedupe-by-key.ts
 src/shared/deferred.ts
 src/shared/dot-path.ts
+src/shared/effect-authority.ts
 src/shared/env-var-candidates.ts
 src/shared/freebsd-process-identity-native.ts
 src/shared/freebsd-process-identity.ts
