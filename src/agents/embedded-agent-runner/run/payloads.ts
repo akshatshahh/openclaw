@@ -157,11 +157,11 @@ export function buildEmbeddedRunPayloads(params: {
     const nonEmptyAssistantTexts = assistantTexts
       .map((text) => sanitizeAssistantVisibleStreamText(text))
       .filter((text) => text.trim().length > 0);
-    // The subscriber decides when an earlier completed answer stays the reply.
-    const assistantForPayload =
-      keptAnswer?.assistant ??
-      currentAssistant ??
-      (nonEmptyAssistantTexts.length === 1 ? undefined : lastAssistant);
+    const terminalAssistant =
+      currentAssistant ?? (nonEmptyAssistantTexts.length === 1 ? undefined : lastAssistant);
+    // The subscriber decides when an earlier completed answer stays the reply. Only the answer
+    // lane is restored; its reasoning was emitted at its own message_end.
+    const assistantForPayload = keptAnswer?.assistant ?? terminalAssistant;
     const assistantMessageIndex = keptAnswer?.messageIndex ?? terminalMessageIndex;
     // Pre-upgrade recovered messages have no stored facts, and recovery intentionally does not
     // reparse text; one in-flight reply can lose delivery or speech intent across this boundary.
@@ -231,8 +231,8 @@ export function buildEmbeddedRunPayloads(params: {
     const reasoningText =
       suppressAssistantArtifacts || runAborted || lastAssistantNeedsErrorSurface
         ? ""
-        : assistantForPayload && params.reasoningLevel === "on" && params.thinkingLevel !== "off"
-          ? extractAssistantThinking(assistantForPayload)
+        : terminalAssistant && params.reasoningLevel === "on" && params.thinkingLevel !== "off"
+          ? extractAssistantThinking(terminalAssistant)
           : "";
     if (reasoningText) {
       replyItems.push({ text: reasoningText, isReasoning: true });
