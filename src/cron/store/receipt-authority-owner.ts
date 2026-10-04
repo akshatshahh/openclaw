@@ -59,7 +59,8 @@ export class CronReceiptAuthorityRefusal extends Error {
 export type CronReceiptAuthorityUse = {
   assertCurrent: () => void;
   /** Invoke only the synchronous native initiation, never an async preparation wrapper. */
-  initiate: <T>(effect: () => T) => T;
+  /** Remote initiation settles at native acknowledgement or proven actor retirement. */
+  initiate: <T>(effect: () => T, settlement?: Promise<unknown>) => T;
   release: () => void;
   /** Borrow this exact gate for consumption; accepted persistence settles before release. */
   mutate: <T>(run: (mutation: CronReceiptAuthorityMutation) => Promise<T>) => Promise<T>;
@@ -256,8 +257,9 @@ function acquireUse(
   const released = createDeferredCore();
   let ended: CronReceiptAuthorityRefusal | undefined;
   let borrowing = false;
+  let initiating = false;
   const finish = () => {
-    if (!borrowing) {
+    if (!borrowing && !initiating) {
       released.resolve();
     }
   };
@@ -320,11 +322,24 @@ function acquireUse(
   const use: CronReceiptAuthorityUse = {
     assertCurrent,
     release,
-    initiate(effect) {
+    initiate(effect, settlement) {
       try {
         assertCurrent();
         // Spend before invoking user code, including reentrant initiation and thrown launches.
         ended = new CronReceiptAuthorityRefusal("spent");
+        initiating = settlement !== undefined;
+        if (settlement) {
+          void settlement.then(
+            () => {
+              initiating = false;
+              finish();
+            },
+            (error: unknown) => {
+              // An uncertain remote launch keeps custody until the original host retires.
+              owner.failure = new CronReceiptAuthorityRefusal("unavailable", { cause: error });
+            },
+          );
+        }
         return effect();
       } finally {
         release();

@@ -923,6 +923,12 @@ const reviewedOperations = new Map([
     [
       {
         tier: "W",
+        operations: ["lookupCronStandingGrantInDatabase", "consumeCronStandingGrantInDatabase"],
+        evidence:
+          "Only openclaw-state-read.worker.ts validates and operator-approval-store.operations.ts consumes through the existing workers; bash-tools.exec-cron-grant.ts awaits operator-approval-store.ts while retaining the Gateway authority interval. No native lookup/consume facade remains.",
+      },
+      {
+        tier: "W",
         operations: ["listCronStandingGrantsInDatabase"],
         evidence:
           "Only state/openclaw-state-read.worker.ts:495; server-methods/exec-approval.ts:462 -> operator-approval-store.ts:273 uses readApprovalStore -> executeExistingOpenClawStateRead at :248 even when a guard exists.",

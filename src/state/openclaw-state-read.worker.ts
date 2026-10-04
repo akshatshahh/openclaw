@@ -36,7 +36,10 @@ import {
   readKnownRepositoryGitHubPublicationPullRequestUrlsInDatabase,
   readRepositoryGitHubPublicationInDatabase,
 } from "../gateway/github-repository-publication-store.js";
-import { listCronStandingGrantsInDatabase } from "../gateway/operator-approval-standing-grants.js";
+import {
+  listCronStandingGrantsInDatabase,
+  lookupCronStandingGrantInDatabase,
+} from "../gateway/operator-approval-standing-grants.js";
 import { listTerminalOperatorApprovalsInDatabase } from "../gateway/operator-approval-store.kernel.js";
 import { readSessionGroupCatalogSnapshot } from "../gateway/session-group-catalog.kernel.js";
 import { readSessionGroupMembership } from "../gateway/session-group-membership.read.js";
@@ -460,6 +463,12 @@ serveOwnedWorkerTasks(
               return {
                 type: command.type,
                 history: listTerminalOperatorApprovalsInDatabase(command.input, db),
+              };
+            }
+            if (command.type === "operatorApprovals.validateCronGrant") {
+              return {
+                type: command.type,
+                result: lookupCronStandingGrantInDatabase(db, command.input, false),
               };
             }
             if (command.type === "operatorApprovals.listCronGrants") {

@@ -713,6 +713,54 @@ it("retires uses on close while joining accepted work borrowed from their exact 
   });
 });
 
+it.each([false, true])(
+  "joins native initiation acknowledgement after a throwing launch: %s",
+  async (throws) => {
+    await withOpenClawTestState({ label: "cron-native-initiation-close" }, async (fixture) => {
+      const owner = await seed(fixture);
+      const nativeReady = createDeferred();
+      const use = await owner.observation.acquireUse({
+        permission: "execution",
+        assertCurrent() {},
+      });
+      let drained = false;
+      let draining: Promise<void> | undefined;
+      try {
+        const initiate = () =>
+          use.initiate(() => {
+            if (throws) {
+              throw new Error("launch rejected");
+            }
+          }, nativeReady.promise);
+        if (throws) {
+          expect(initiate).toThrow("launch rejected");
+        } else {
+          initiate();
+        }
+        expect(() => use.initiate(() => undefined)).toThrow(CronReceiptAuthorityRefusal);
+        use.release();
+        expect(() => use.assertCurrent()).toThrow(CronReceiptAuthorityRefusal);
+        beginCronReceiptAuthorityClose();
+        draining = drainCronReceiptAuthority().then(() => {
+          drained = true;
+        });
+        await owner.read();
+        expect(drained).toBe(false);
+        nativeReady.resolve();
+        await draining;
+        expect(drained).toBe(true);
+      } finally {
+        nativeReady.resolve();
+        await draining;
+        use.release();
+        await owner.close();
+        await closeOpenClawStateDatabaseAsync();
+        startCronReceiptAuthorityHost();
+      }
+    });
+  },
+);
+
 it("enrolls approval mutations in the same physical receipt authority boundary", async () => {
   await withOpenClawTestState({ label: "cron-authority-approval-enrollment" }, async (fixture) => {
     const owner = await seed(fixture);

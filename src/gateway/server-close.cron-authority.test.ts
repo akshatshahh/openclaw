@@ -9,7 +9,10 @@ import {
 import { saveCronStore } from "../cron/store.js";
 import * as receiptAuthority from "../cron/store/receipt-authority-owner.js";
 import { readCronRunReceiptCurrentFactsInDatabase } from "../cron/store/run-receipt-read.js";
-import { finishCronRunReceiptAsync } from "../cron/store/run-receipt-store.js";
+import {
+  finishCronRunReceiptAsync,
+  releaseLocalCronRunReceiptOwnership,
+} from "../cron/store/run-receipt-store.js";
 import {
   claimCronRunReceiptForTest,
   makeCronReceiptJob,
@@ -17,9 +20,14 @@ import {
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import * as stateWorker from "../state/openclaw-state-worker-store.js";
+import {
+  insertOperatorApproval,
+  resolveOperatorApproval,
+  consumeCronStandingGrant,
+} from "./operator-approval-store.js";
 import { createGatewayMetadataCloseFixture } from "./server-close.metadata.test-support.js";
 
-it("joins committed publication and queued receipt finalization across the real close prelude", async ({
+it("settles a committed consume and queued receipt finalizer across the real close prelude", async ({
   signal,
 }) => {
   const fixture = await createGatewayMetadataCloseFixture("gateway-cron-authority-close");
@@ -34,6 +42,7 @@ it("joins committed publication and queued receipt finalization across the real 
   let finishing: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
   let observation: ReturnType<typeof receiptAuthority.observeCronReceiptAuthority> | undefined;
+  let releaseReceipt: (() => void) | undefined;
   try {
     const port = await fixture.reservePort();
     const server = await withinTest(fixture.start(port), signal);
@@ -42,7 +51,42 @@ it("joins committed publication and queued receipt finalization across the real 
     const job = makeCronReceiptJob("accepted-before-close", "main");
     await withinTest(saveCronStore(storePath, { version: 1, jobs: [job] }), signal);
     const handle = claimCronRunReceiptForTest(storePath, job, 1);
+    releaseReceipt = () => releaseLocalCronRunReceiptOwnership(handle);
     const context = captureOpenClawStateWorkerContext();
+    await insertOperatorApproval({
+      approval: {
+        id: "close-grant",
+        kind: "exec",
+        runtimeEpoch: "close-test",
+        createdAtMs: 1,
+        expiresAtMs: Date.now() + 60_000,
+        reviewerDeviceIds: [],
+        audienceSessionKeys: [],
+        presentation: {
+          kind: "exec",
+          commandText: "echo close",
+          commandPreview: "echo close",
+          warningText: null,
+          host: "gateway",
+          nodeId: null,
+          agentId: "main",
+          allowedDecisions: ["allow-once", "allow-always", "deny"],
+        },
+      },
+    });
+    await resolveOperatorApproval({
+      id: "close-grant",
+      decision: "allow-always",
+      resolver: { kind: "device", id: "reviewer" },
+      standingGrant: {
+        kind: "cron",
+        agentId: handle.agentId,
+        cronJobId: job.id,
+        jobConfigRevision: handle.configRevision,
+        operationBinding: "close-binding",
+        expiresAtMs: null,
+      },
+    });
     const shared = openOpenClawStateDatabase({ env: fixture.state.env }).db;
     const otherPath = fixture.state.statePath("other-authority.sqlite");
     openOpenClawStateDatabase({ path: otherPath, env: fixture.state.env });
@@ -77,7 +121,7 @@ it("joins committed publication and queued receipt finalization across the real 
                   await releaseFinish.promise;
                 }
                 const result = await scope.execute(selected, executeOptions);
-                if (selected.type === "cron.save" && !heldSave) {
+                if (selected.type === "operatorApprovals.consumeCronGrant" && !heldSave) {
                   heldSave = true;
                   saveCommitted.resolve();
                   await releaseSaveReply.promise;
@@ -98,12 +142,35 @@ it("joins committed publication and queued receipt finalization across the real 
         return pending;
       },
     );
-    saving = kernel.connectionWork.track(() =>
-      saveCronStore(storePath, {
-        version: 1,
-        jobs: [{ ...job, enabled: false }],
-      }),
-    );
+    const initiate = vi.fn();
+    saving = kernel.connectionWork.track(async () => {
+      await consumeCronStandingGrant(
+        context,
+        {
+          agentId: handle.agentId,
+          cronJobId: job.id,
+          jobConfigRevision: handle.configRevision,
+          operationBinding: "close-binding",
+          handle,
+          recordUse: true,
+        },
+        () => {},
+        async (consume) => {
+          const use = await observation!.acquireUse({
+            permission: "execution",
+            assertCurrent() {},
+          });
+          try {
+            const result = await use.mutate(consume);
+            use.initiate(initiate);
+            return result;
+          } finally {
+            use.release();
+          }
+        },
+      );
+    });
+    void saving.catch(() => {});
     await withinTest(
       awaitGateBeforeSettlement(
         saveCommitted.promise,
@@ -164,7 +231,8 @@ it("joins committed publication and queued receipt finalization across the real 
     expect(closed).toBe(false);
 
     releaseSaveReply.resolve();
-    await withinTest(saving, signal);
+    await expect(withinTest(saving, signal)).rejects.toThrow(/retired|unavailable/);
+    expect(initiate).not.toHaveBeenCalled();
     await expect(refusing).rejects.toThrow("unavailable");
     await withinTest(
       awaitGateBeforeSettlement(
@@ -191,7 +259,10 @@ it("joins committed publication and queued receipt finalization across the real 
         database
           .prepare("SELECT enabled, name FROM cron_jobs WHERE store_key = ? AND job_id = ?")
           .get(handle.storeKey, job.id),
-      ).toEqual({ enabled: 0, name: job.name });
+      ).toEqual({ enabled: 1, name: job.name });
+      expect(
+        database.prepare("SELECT use_count FROM operator_approval_standing_grants").get(),
+      ).toEqual({ use_count: 1 });
     } finally {
       database.close();
     }
@@ -200,6 +271,7 @@ it("joins committed publication and queued receipt finalization across the real 
     releaseFinish.resolve();
     await Promise.allSettled([saving, refusing, finishing, closing]);
     observation?.release();
+    releaseReceipt?.();
     vi.restoreAllMocks();
     await fixture.cleanup();
   }
