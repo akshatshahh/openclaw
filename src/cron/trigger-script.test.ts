@@ -77,7 +77,7 @@ describe("cron trigger script evaluator", () => {
     let aborts = 0;
     const prepared = createPreparedRuntime(config);
     const gate: AnyAgentTool = {
-      ...prepared.createTools()[0],
+      ...(await prepared.createTools())[0],
       name: "gate",
       label: "Gate",
       description: "Wait for the local fixture",

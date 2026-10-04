@@ -434,7 +434,7 @@ async function projectMcpCatalog(params: {
     modelId: params.context.modelId,
   });
   try {
-    return await acquired.run((runtimeModelContext) => {
+    return acquired.run((runtimeModelContext) => {
       const mcpInventory = buildRuntimeCompatibleMcpToolInventory({
         tools: filteredMcpTools,
         cfg: params.context.cfg,

@@ -56,7 +56,7 @@ describe("subagent progress-card availability", () => {
   });
 
   it.each([parent, ...children])("exposes tools and guidance for %s", async (sessionKey) => {
-    const inventory = resolveEffectiveToolInventory({
+    const inventory = await resolveEffectiveToolInventory({
       cfg: config,
       sessionKey,
       workspaceDir: tempDir,
