@@ -1767,7 +1767,10 @@ describe("frozen admission workflow barriers", () => {
     );
     const compact = spawnSync(
       process.execPath,
-      [resolve("scripts/preflight-frozen-target-contracts.mjs"), "--workflow-request"],
+      [
+        join(fixture.tooling, "scripts/preflight-frozen-target-contracts.mjs"),
+        "--workflow-request",
+      ],
       {
         encoding: "utf8",
         env: { ...fixture.env, ADMISSION_INPUTS: JSON.stringify(inputs) },
