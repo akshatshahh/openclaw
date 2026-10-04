@@ -163,20 +163,21 @@ export function buildEmbeddedRunPayloads(params: {
     const terminalAssistant =
       currentAssistant ?? (nonEmptyAssistantTexts.length === 1 ? undefined : lastAssistant);
     const terminalAnswer =
-      terminalAssistant?.stopReason === "stop"
+      answer && terminalAssistant?.stopReason === "stop"
         ? parseReplyDirectives(resolveRawAssistantAnswerText(terminalAssistant))
         : undefined;
     // A later NO_REPLY or empty stop adds nothing to an answer the model already
     // completed for this input, so that answer stays the reply, as if it had ended the turn.
-    const answerStands =
-      answer !== undefined &&
-      terminalAnswer !== undefined &&
+    const keptAnswer =
+      terminalAnswer &&
       (terminalAnswer.isSilent || !terminalAnswer.text.trim()) &&
       !terminalAnswer.mediaUrls?.length &&
       !terminalAnswer.audioAsVoice &&
-      !terminalAssistant?.openclawDelivery?.tts?.text?.trim();
-    const assistantForPayload = answerStands ? answer.assistant : terminalAssistant;
-    const assistantMessageIndex = answerStands ? answer.messageIndex : terminalMessageIndex;
+      !terminalAssistant?.openclawDelivery?.tts?.text?.trim()
+        ? answer
+        : undefined;
+    const assistantForPayload = keptAnswer?.assistant ?? terminalAssistant;
+    const assistantMessageIndex = keptAnswer ? keptAnswer.messageIndex : terminalMessageIndex;
     // Pre-upgrade recovered messages have no stored facts, and recovery intentionally does not
     // reparse text; one in-flight reply can lose delivery or speech intent across this boundary.
     const storedDelivery = assistantForPayload?.openclawDelivery;
