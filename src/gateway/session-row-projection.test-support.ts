@@ -10,10 +10,16 @@ import {
   parseAgentSessionKey,
 } from "../routing/session-key.js";
 import { resolveRequestedSessionAgentId } from "./session-request-agent.js";
-import { sort as sortSessionRows } from "./session-row-projection-record.js";
+import { readSessionRowModelFacts } from "./session-row-model-facts.js";
+import {
+  create as createSessionRow,
+  sort as sortSessionRows,
+  type SelectionChange,
+} from "./session-row-projection-record.js";
 import { createSessionRowProjection, type SessionRowProjection } from "./session-row-projection.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { SessionListRowContext } from "./session-utils-contracts.js";
+import { projectGatewaySessionRunState } from "./session-utils-display.js";
 import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
 import {
   materializeSessionRow,
@@ -37,8 +43,10 @@ export function createSessionRowProjectionFixture(params: {
   const storePath = params.storePath ?? "";
   const rowContext = params.rowContext ?? buildSessionListRowMetadataContext({ now: Date.now() });
   const rows = new Map<string, Row>();
+  const selectionListeners = new Set<(change: SelectionChange) => void>();
   const store = { ...params.store };
   let revision = 0;
+  let revisionToken = {};
   const id = (row: Pick<Row, "agentId" | "key" | "storeTarget">) =>
     `${row.agentId}\0${row.storeTarget.storePath}\0${row.key}`;
   const describe: SessionRowProjection["describe"] = (
@@ -75,6 +83,10 @@ export function createSessionRowProjectionFixture(params: {
     const previous = rows.get(id(fields));
     delete store[key];
     revision++;
+    revisionToken = {};
+    for (const listener of selectionListeners) {
+      listener({ kind: "reset" });
+    }
     if (!entry || entry.incognito || isIncognitoSessionKey(key)) {
       rows.delete(id(fields));
       return;
@@ -86,6 +98,7 @@ export function createSessionRowProjectionFixture(params: {
       store,
       key: fields.key,
       entry,
+      preparedRepositoryWorkspace: null,
       agentId,
       modelCatalog,
       rowContext,
@@ -95,7 +108,7 @@ export function createSessionRowProjectionFixture(params: {
       modelSource: { entry, readSourceEntry: (parentKey) => store[parentKey] },
     });
     rows.set(id(fields), {
-      ...fields,
+      ...createSessionRow(fields, entry),
       entry,
       storedEntry: entry,
       materialized: materializeSessionRow(inputs),
@@ -103,9 +116,13 @@ export function createSessionRowProjectionFixture(params: {
       fallbackModel: presentation.activeModel,
       membership: new Set(),
       parents: new Set(
-        [entry.spawnedBy, entry.parentSessionKey].filter((parentKey): parentKey is string =>
-          Boolean(parentKey),
-        ),
+        [
+          entry.spawnedBy,
+          entry.parentSessionKey,
+          ...(rowContext.subagentRunsByChildSessionKey.get(fields.key) ?? []).map(
+            (run) => run.controllerSessionKey || run.requesterSessionKey,
+          ),
+        ].filter((parentKey): parentKey is string => Boolean(parentKey)),
       ),
       generation:
         previous &&
@@ -118,7 +135,7 @@ export function createSessionRowProjectionFixture(params: {
   for (const [key, entry] of Object.entries(store)) {
     setEntry(key, entry);
   }
-  const select = (options?: Parameters<SessionRowProjection["select"]>[0]) => {
+  const selectEntries = (options?: Parameters<SessionRowProjection["selectEntries"]>[0]) => {
     const query = options ?? {};
     const matchingKeys =
       query.sessionIdOrKey &&
@@ -141,6 +158,27 @@ export function createSessionRowProjectionFixture(params: {
     return sortSessionRows(selected, query.sortBy);
   };
   const projection: SessionRowProjection = {
+    onSelectionChange(listener) {
+      selectionListeners.add(listener);
+    },
+    observeGeneration() {
+      const observedRevision = revision;
+      let active = true;
+      return {
+        isCurrent: (row) => active && revision === observedRevision && projection.isCurrent(row),
+        dispose() {
+          active = false;
+        },
+      };
+    },
+    readPreparedRowContext: () => rowContext,
+    readPreparedSpawnedBy(query) {
+      const row = describe(query);
+      return row
+        ? projectGatewaySessionRunState({ key: row.key, now: Date.now(), rowContext })
+            .subagentOwner || row.storedEntry?.spawnedBy
+        : undefined;
+    },
     capture: describe,
     findBySessionId: (query) =>
       [...rows.values()].filter(
@@ -152,15 +190,33 @@ export function createSessionRowProjectionFixture(params: {
           (!query.storePath || row.storeTarget.storePath === query.storePath),
       ),
     describe,
-    withPreparedExactRows: async (_queries, consume) => ({
-      kind: "complete",
-      value: consume(projection),
-    }),
+    readSource: () => undefined,
+    readMembership: (query) => describe(query)?.membership,
+    // This row-only fixture cannot certify the resident owner's complete ancestry graph.
+    ancestorRows: () => undefined,
+    setArchivePageSize: () => {},
+    modelFacts: (query) => {
+      const row = describe(query)!;
+      return readSessionRowModelFacts({
+        cfg,
+        key: row.key,
+        agentId: row.agentId,
+        entry: row.entry,
+        preparedAcpMeta: row.materialized.source.thinkingProjection.acpMeta,
+        rowContext,
+        modelCatalog,
+        source: { entry: row.storedEntry, readSourceEntry: (key) => store[key] },
+      });
+    },
+    withPreparedExactRows: async (queries, consume) => {
+      queries(cfg);
+      return { kind: "complete", value: consume(projection) };
+    },
     present: (record, options) => {
       const now = options?.now ?? Date.now();
       const row = presentSessionRow(record.materialized, {
         now,
-        subagentRuns: rowContext.subagentRuns.atTime(now),
+        subagentRuns: options?.subagentRuns ?? rowContext.subagentRuns.atTime(now),
         activeModel: record.fallbackModel,
         excludedChildKeys: options?.excludedChildKeys,
       });
@@ -174,13 +230,62 @@ export function createSessionRowProjectionFixture(params: {
       return row;
     },
     ensureMaterialized: () => Promise.resolve(),
+    prepareSelection: () => undefined,
+    withSelectionPreparation: (consume) => consume(),
+    needsSelectionPreparation: () => false,
+    isMaterialized: (query) => describe(query) !== undefined,
+    prepareMembership: () => Promise.resolve(),
+    needsMembershipPreparation: () => false,
+    sessionGroupTargets: () => {
+      const groups = new Map<string, { agentId: string; sessionKey: string }[]>();
+      for (const row of rows.values()) {
+        const name = row.entry.category?.trim();
+        if (name) {
+          const targets = groups.get(name) ?? [];
+          targets.push({ agentId: row.agentId, sessionKey: row.key });
+          groups.set(name, targets);
+        }
+      }
+      return groups;
+    },
+    sharingTarget(query) {
+      const row = describe(query);
+      return row
+        ? {
+            agentId: row.agentId,
+            generation: row.generation,
+            canonicalKey: row.key,
+            entry: row.entry,
+            storeKey: row.key,
+            storeKeys: [row.key],
+            storePath: row.storeTarget.storePath,
+          }
+        : null;
+    },
+    sharingTargetState(query) {
+      const target = projection.sharingTarget(query);
+      return target ? { status: "ready", target } : { status: "missing" };
+    },
+    hasMembership: (path, key, identity) =>
+      [...rows.values()].some(
+        (row) =>
+          row.storeTarget.storePath === path && row.key === key && row.membership.has(identity),
+      ),
     get materializedCount() {
       return revision;
     },
     dirtyRowCount: 0,
     needsMaterialization: false,
+    getPolicyConfig: () => cfg,
+    get sharingRevision() {
+      return revisionToken;
+    },
     state: {
+      get revision() {
+        return revisionToken;
+      },
       cfg,
+      policyConfig: cfg,
       modelCatalog,
       rowContext,
       scope: (options) => ({
@@ -191,15 +296,26 @@ export function createSessionRowProjectionFixture(params: {
       }),
     },
     isCurrent: (row) => rows.get(id(row))?.generation === row.generation,
-    select,
-    selectEntries: select,
+    selectEntries,
+    listCreatedActors: () =>
+      selectEntries({ sortBy: null }).flatMap((row) =>
+        row.entry.createdActor ? [row.entry.createdActor] : [],
+      ),
     snapshot: (query, options) => {
       const record = describe(query);
       return record
         ? { row: projection.present(record, options), lifecycleRunId: record.entry.lifecycleRunId }
         : { row: null };
     },
-    dispose: () => rows.clear(),
+    dispose: () => {
+      revision++;
+      revisionToken = {};
+      rows.clear();
+      for (const listener of selectionListeners) {
+        listener({ kind: "reset" });
+      }
+      selectionListeners.clear();
+    },
   };
   return Object.assign(projection, { setEntry });
 }

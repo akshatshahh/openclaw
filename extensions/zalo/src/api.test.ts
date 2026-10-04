@@ -96,28 +96,6 @@ describe("Zalo API request methods", () => {
     });
   });
 
-  it("accepts the native Zalo getMe identity fields", async () => {
-    const fetcher: ZaloFetch = vi.fn(async () =>
-      Response.json({
-        ok: true,
-        result: {
-          account_name: "bot.example",
-          account_type: "BASIC",
-          can_join_groups: false,
-          id: "1459232241454765289",
-        },
-      }),
-    );
-
-    await expect(getMe("test-token", undefined, fetcher)).resolves.toMatchObject({
-      result: {
-        account_name: "bot.example",
-        account_type: "BASIC",
-        can_join_groups: false,
-      },
-    });
-  });
-
   it("uses the production API root by default", async () => {
     const fetcher = createOkFetcher();
 
@@ -141,27 +119,11 @@ describe("Zalo API request methods", () => {
     );
   });
 
-  it("prefers an explicit API URL over ZALO_API_URL", async () => {
-    vi.stubEnv("ZALO_API_URL", "http://127.0.0.1:49152/env");
-    const fetcher = createOkFetcher();
-
-    await callZaloApi("getMe", "test-token", undefined, {
-      apiUrl: "http://127.0.0.1:49153/explicit/",
-      fetch: fetcher,
-    });
-
-    expect(fetcher).toHaveBeenCalledWith(
-      "http://127.0.0.1:49153/explicit/bottest-token/getMe",
-      expect.any(Object),
-    );
-  });
-
-  it("rejects an explicitly empty API URL instead of falling back to ZALO_API_URL", async () => {
-    vi.stubEnv("ZALO_API_URL", "http://127.0.0.1:49152/env");
+  it("rejects an empty ZALO_API_URL", async () => {
+    vi.stubEnv("ZALO_API_URL", "   ");
 
     await expect(
       callZaloApi("getMe", "test-token", undefined, {
-        apiUrl: "   ",
         fetch: createOkFetcher(),
       }),
     ).rejects.toThrow("ZALO_API_URL must not be empty.");
@@ -178,9 +140,9 @@ describe("Zalo API request methods", () => {
   it.each(["https://proxy.example/zalo?tenant=1", "https://proxy.example/zalo#provider"])(
     "rejects an API root with URL suffix components: %s",
     async (apiUrl) => {
+      vi.stubEnv("ZALO_API_URL", apiUrl);
       await expect(
         callZaloApi("getMe", "test-token", undefined, {
-          apiUrl,
           fetch: createOkFetcher(),
         }),
       ).rejects.toThrow("ZALO_API_URL must not include a query string or fragment.");
@@ -341,6 +303,38 @@ describe("Zalo API request methods", () => {
     } finally {
       setTimeoutMock.mockRestore();
     }
+  });
+
+  it.each([
+    { name: "short", caption: "caption text", expected: "caption text" },
+    {
+      name: "exact UTF-16 boundary",
+      caption: `${"a".repeat(1998)}🐱`,
+      expected: `${"a".repeat(1998)}🐱`,
+    },
+    {
+      name: "surrogate crossing the boundary",
+      caption: `${"a".repeat(1999)}🐱tail`,
+      expected: "a".repeat(1999),
+    },
+    { name: "oversized ASCII", caption: "a".repeat(2001), expected: "a".repeat(2000) },
+  ])("bounds $name photo captions in the serialized API request", async ({ caption, expected }) => {
+    const fetcher = createOkFetcher();
+
+    await sendPhoto(
+      "test-token",
+      { chat_id: "chat-123", photo: "https://example.com/image.png", caption },
+      fetcher,
+    );
+
+    const [, request] = expectDefined(fetcher.mock.calls[0], "Zalo photo request");
+    expect(request?.body).toBe(
+      JSON.stringify({
+        chat_id: "chat-123",
+        photo: "https://example.com/image.png",
+        caption: expected,
+      }),
+    );
   });
 
   it("keeps URL-only photo sends past the default and bounds the media window", async () => {

@@ -11,6 +11,7 @@ import type { CodexCatalogIndexOptions } from "./session-catalog-index-contract.
 import { readCodexCatalogCursor } from "./session-catalog-index-cursor.js";
 import { CodexCatalogIndexEvents } from "./session-catalog-index-events.js";
 import { CodexCatalogField } from "./session-catalog-index-field.js";
+import { reconcileCodexCatalogFiles } from "./session-catalog-index-files.js";
 import { applyCodexCatalogName } from "./session-catalog-index-names.js";
 import { CodexCatalogObservations } from "./session-catalog-index-observations.js";
 import {
@@ -29,23 +30,20 @@ import {
 } from "./session-catalog-index-state.js";
 import { CODEX_CATALOG_MAX_ROWS } from "./session-catalog-limits.js";
 import { withCodexCatalogListRequest } from "./session-catalog-list-request.js";
-import { CodexCatalogNativePages } from "./session-catalog-native-page.js";
 import {
-  CODEX_CATALOG_NATIVE_PAGE_LIMIT,
-  projectCodexCatalogNativeThread,
-} from "./session-catalog-native-projection.js";
-import { readControlCursor } from "./session-catalog-parsing.js";
+  CodexCatalogNativePages,
+  readCodexCatalogHydrationPages,
+} from "./session-catalog-native-page.js";
+import { projectCodexCatalogNativeThread } from "./session-catalog-native-projection.js";
 import {
   projectCodexCatalogThread,
-  mergeCodexCatalogRolloutRow,
   CodexCatalogProjections,
   CodexCatalogProjectionCapacityError,
 } from "./session-catalog-projection.js";
+import { CodexCatalogRolloutScanner } from "./session-catalog-rollout-scanner.js";
 import {
-  scanCodexCatalogRollouts,
   codexCatalogRolloutLogicalPath,
-  isCodexCatalogRolloutPathCovered,
-  readCodexCatalogRollout,
+  resolveCodexCatalogRolloutFingerprint,
 } from "./session-catalog-rollouts.js";
 import { CodexCatalogSettingsIndex } from "./session-catalog-settings.js";
 import { setCodexCatalogSource } from "./session-catalog-source.js";
@@ -71,7 +69,6 @@ export class CodexCatalogIndex {
   private needsNativeRefresh = false;
   private restored = false;
   private restoring: Promise<void> | undefined;
-  private background: NodeJS.Immediate | undefined;
   private failure: { error: unknown } | undefined;
   private closed = false;
   private readonly currency: CodexCatalogCurrency;
@@ -86,12 +83,16 @@ export class CodexCatalogIndex {
   private readonly ordering = new CodexCatalogOrdering();
   private readonly observations = new CodexCatalogObservations();
   private readonly events: CodexCatalogIndexEvents;
+  private readonly rolloutScanner: CodexCatalogRolloutScanner | undefined;
 
   constructor(private readonly options: CodexCatalogIndexOptions) {
+    this.rolloutScanner = options.localSessionsRoot
+      ? new CodexCatalogRolloutScanner(options.localSessionsRoot)
+      : undefined;
     this.currency = new CodexCatalogCurrency({
       local: Boolean(options.localSessionsRoot),
       reconcileFiles: () => this.reconcile(),
-      reconcileNative: () => this.reconcileNative(),
+      reconcileNative: (full) => this.reconcileNative(full),
       runBackground: options.runBackground,
       report: (error) => this.report(error),
     });
@@ -106,6 +107,7 @@ export class CodexCatalogIndex {
       },
       updateSettings: (id, settings, source) => this.liveSettings.update(id, settings, source),
       rename: (id, name) => {
+        this.currency.requestNativeRefresh();
         this.names.update(id, name);
         const row = this.rows.get(id);
         if (row && !this.closed) {
@@ -114,15 +116,20 @@ export class CodexCatalogIndex {
       },
       upsert: (thread) => this.upsertThread(thread),
       reserveTurnStartOrder: () => this.ordering.reserveEvent(),
+      requestNativeRefresh: () => this.currency.requestNativeRefresh(),
       refresh: (id, readThread, sourceOrder) => this.refreshThread(id, readThread, sourceOrder),
       archive: (id) => this.archive(id),
-      remove: (id) => this.remove(id),
-      report: (error) => this.report(error),
+      remove: (id) => {
+        this.currency.requestNativeRefresh();
+        this.remove(id);
+      },
+      report: (error, disposition) => this.report(error, disposition),
     });
     this.unsubscribe = subscribeCodexCatalogEvents(
       options.homeId,
       (event, readThread, source) => this.events.handle(event, readThread, source),
       {
+        onEphemeralThread: (id) => this.remove(id),
         onClose: (source) => {
           this.liveStatus.invalidate(source);
           this.liveSettings.invalidate(source);
@@ -157,9 +164,14 @@ export class CodexCatalogIndex {
     }
   }
 
-  private report(error: unknown): void {
-    if (!this.closed) {
-      embeddedAgentLog.warn("Codex resident catalog background update failed", { error });
+  private report(error: unknown, disposition?: "deferred"): void {
+    if (!this.closed && !this.currency.stopForTerminalFailure(error)) {
+      embeddedAgentLog.warn(
+        disposition === "deferred"
+          ? "Codex resident catalog metadata refresh interrupted; deferred for automatic recovery"
+          : "Codex resident catalog background update failed",
+        { error },
+      );
     }
   }
 
@@ -216,8 +228,8 @@ export class CodexCatalogIndex {
 
   async initialize(): Promise<void> {
     this.assertCurrent();
-    clearImmediate(this.background);
-    this.background = undefined;
+    this.currency.assertRunnable();
+    this.currency.cancelHydration();
     if (this.initialized && !this.needsNativeRefresh) {
       return;
     }
@@ -232,9 +244,7 @@ export class CodexCatalogIndex {
         if (!this.initialized) {
           let observedRevision: number;
           do {
-            observedRevision = await this.observations.observe((isCurrent) =>
-              this.hydrate(isCurrent, this.availability.complete),
-            );
+            observedRevision = await this.hydrate(this.availability.complete);
           } while (observedRevision !== this.sourceRevision);
           // A complete replacement walk also satisfies a pending snapshot refresh.
           this.needsNativeRefresh = false;
@@ -251,6 +261,7 @@ export class CodexCatalogIndex {
         .catch((error: unknown) => {
           this.failure = { error };
           this.availability.fail(error);
+          this.currency.stopForTerminalFailure(error);
           throw error;
         })
         .finally(() => {
@@ -279,7 +290,12 @@ export class CodexCatalogIndex {
         for (const key of snapshot.obsolete) {
           this.obsoleteStoredKeys.add(key);
         }
+        let restoredRows = 0;
         for (const row of snapshot.rows) {
+          if (++restoredRows % 128 === 0) {
+            await nextTurn();
+            this.assertCurrent();
+          }
           if (isCurrent(row.threadId)) {
             const restored = row.rolloutPath
               ? { ...row, rolloutPath: codexCatalogRolloutLogicalPath(row.rolloutPath) }
@@ -312,22 +328,10 @@ export class CodexCatalogIndex {
   }
 
   private scheduleHydration(): void {
-    if (
-      (this.initialized && !this.needsNativeRefresh) ||
-      this.initializing ||
-      this.background ||
-      this.closed
-    ) {
+    if ((this.initialized && !this.needsNativeRefresh) || this.initializing || this.closed) {
       return;
     }
-    this.background = setImmediate(() => {
-      this.background = undefined;
-      const run = () => this.initialize();
-      void (this.options.runBackground ? this.options.runBackground(run) : run()).catch(
-        (error: unknown) => this.report(error),
-      );
-    });
-    this.background.unref();
+    this.currency.scheduleHydration(() => this.initialize());
   }
 
   private captureFields(): FieldRevision {
@@ -351,61 +355,58 @@ export class CodexCatalogIndex {
     }
   }
 
-  private reconcileNative(): Promise<void> {
+  private reconcileNative(full = true): Promise<void> {
     if (!this.options.localSessionsRoot && this.initializing && !this.initialized) {
       return this.initializing;
     }
     if (!this.reconcilingNative) {
-      const refresh = this.observations.observe(async (isCurrent) => {
-        await this.hydrate(isCurrent, true);
-      });
-      this.reconcilingNative = refresh.finally(() => {
-        this.reconcilingNative = undefined;
-      });
+      this.reconcilingNative = this.hydrate(true, !full)
+        .then(() => undefined)
+        .finally(() => {
+          this.reconcilingNative = undefined;
+        });
     }
     return this.reconcilingNative;
   }
 
-  private async hydrate(
+  private hydrate(useStateDbOnly = false, incremental = false): Promise<number> {
+    const run = () =>
+      this.observations.observe((isCurrent) =>
+        this.hydratePages(isCurrent, useStateDbOnly, incremental),
+      );
+    return this.options.runNativeWalk?.(run) ?? run();
+  }
+
+  private async hydratePages(
     isCurrent: (id: string) => boolean,
-    useStateDbOnly = false,
+    useStateDbOnly: boolean,
+    incremental: boolean,
   ): Promise<number> {
     this.assertCurrent();
     const files =
-      this.options.localSessionsRoot && !useStateDbOnly
-        ? (await scanCodexCatalogRollouts(this.options.localSessionsRoot, new Set())).files
+      this.rolloutScanner && !useStateDbOnly
+        ? (await this.rolloutScanner.scan(new Set())).files
         : new Map<string, CodexCatalogRolloutFingerprint>();
-    let cursor: string | undefined;
-    let observedRevision = this.sourceRevision;
-    let firstPage = true;
-    let sourceOrder = 0;
+    this.assertCurrent();
+    let observedRevision: number | undefined;
     let frontier: CodexCatalogOrderKey | undefined;
     const batchOrder = this.ordering.captureBatch(this.availability.complete);
-    const remaining = new Map(this.rows);
-    const cursors = new Set<string>();
-    do {
+    const remaining = incremental ? undefined : new Map(this.rows);
+    const pages = readCodexCatalogHydrationPages(async (params, remainingRows) => {
       this.assertCurrent();
       const fieldRevision = this.captureFields();
-      const page = await this.options.readNative(
-        {
-          archived: false,
-          modelProviders: [],
-          sortKey: "recency_at",
-          sortDirection: "desc",
-          limit: CODEX_CATALOG_NATIVE_PAGE_LIMIT,
-          ...(useStateDbOnly ? { useStateDbOnly } : {}),
-          ...(cursor ? { cursor } : {}),
-        },
-        Math.max(0, CODEX_CATALOG_MAX_ROWS - sourceOrder),
-      );
+      const page = await this.options.readNative(params, remainingRows);
+      return { ...page, fieldRevision, sourceRevision: this.sourceRevision };
+    }, useStateDbOnly);
+    for await (const page of pages) {
       this.assertCurrent();
-      if (firstPage) {
-        // The first page includes readiness of the client opened by this walk.
-        observedRevision = this.sourceRevision;
-        firstPage = false;
-      }
+      // The first page includes readiness of the client opened by this walk.
+      observedRevision ??= page.sourceRevision;
+      let sourceOrder = page.offset;
+      let changed = false;
       for (const id of page.excludedThreadIds ?? []) {
         if (isCurrent(id)) {
+          changed ||= this.rows.has(id);
           this.remove(id);
         }
       }
@@ -414,46 +415,44 @@ export class CodexCatalogIndex {
         if (position >= CODEX_CATALOG_MAX_ROWS) {
           continue;
         }
-        remaining.delete(row.threadId);
-        this.observeFields(row, fieldRevision);
+        remaining?.delete(row.threadId);
+        const previous = this.rows.get(row.threadId);
+        this.observeFields(row, page.fieldRevision);
         if (!isCurrent(row.threadId)) {
+          changed = true;
           continue;
         }
-        const logicalPath = row.rolloutPath && codexCatalogRolloutLogicalPath(row.rolloutPath);
-        const previous = this.rows.get(row.threadId);
-        const fingerprint = logicalPath
-          ? (files.get(logicalPath) ??
-            files.get(`${logicalPath}.zst`) ??
-            (useStateDbOnly &&
-            previous?.rolloutPath &&
-            codexCatalogRolloutLogicalPath(previous.rolloutPath) === logicalPath
-              ? previous.fingerprint
-              : undefined))
-          : undefined;
+        const fingerprint = resolveCodexCatalogRolloutFingerprint(
+          row.rolloutPath,
+          useStateDbOnly ? previous : undefined,
+          files,
+        );
         this.observations.mark(row.threadId);
         this.put({
           ...row,
           sourceOrder: batchOrder(row, previous, position),
           ...(fingerprint ? { fingerprint } : {}),
         });
+        changed ||= this.rows.get(row.threadId) !== previous;
         frontier = this.rows.get(row.threadId) ?? frontier;
       }
-      cursor = readControlCursor(page.nextCursor, "hydration response");
-      if (cursor && cursors.has(cursor)) {
-        throw new Error("Codex catalog repeated a hydration cursor");
+      // Recency-descending pages have a known prefix once a whole page is unchanged.
+      // Silent older metadata/membership changes belong to the full safety walk.
+      if (
+        incremental &&
+        ((!changed && page.rows.length > 0) || sourceOrder >= CODEX_CATALOG_MAX_ROWS)
+      ) {
+        break;
       }
-      if (cursor) {
-        cursors.add(cursor);
-        if (cursors.size > CODEX_CATALOG_MAX_ROWS) {
-          cursors.delete(cursors.values().next().value!);
-        }
+      if (page.nextCursor) {
         this.availability.publish(frontier);
+        await nextTurn();
+        this.assertCurrent();
       }
-      await nextTurn();
-    } while (cursor);
+    }
     // DB-only listing can omit local files when indexing is incomplete or the
     // database is unavailable. Verified file absence and events own their removal.
-    if (!useStateDbOnly || !this.options.localSessionsRoot) {
+    if (remaining && (!useStateDbOnly || !this.options.localSessionsRoot)) {
       for (const [id, row] of remaining) {
         if (isCurrent(id) && this.rows.get(id) === row) {
           this.remove(id);
@@ -462,7 +461,7 @@ export class CodexCatalogIndex {
     }
     this.availability.publish(frontier, true);
     await this.persistence.finishHydration(this.overflow);
-    return observedRevision;
+    return observedRevision ?? this.sourceRevision;
   }
 
   reconcile(): Promise<void> {
@@ -478,86 +477,21 @@ export class CodexCatalogIndex {
 
   private async reconcileFiles(isCurrent: (id: string) => boolean): Promise<void> {
     const root = this.options.localSessionsRoot;
-    if (!root || !this.initialized || this.closed) {
+    if (!root || !this.rolloutScanner || !this.initialized || this.closed) {
       return;
     }
     this.assertCurrent();
-    const byPath = new Map(
-      [...this.rows.values()].flatMap((row) =>
-        row.rolloutPath ? [[codexCatalogRolloutLogicalPath(row.rolloutPath), row] as const] : [],
-      ),
-    );
-    const { files, present } = await scanCodexCatalogRollouts(root, new Set(byPath.keys()));
-    this.assertCurrent();
-    const observed = new Map(files);
-    for (const [file, fingerprint] of files) {
-      const previous = byPath.get(codexCatalogRolloutLogicalPath(file));
-      const known = this.observedFiles.get(file) ?? previous?.fingerprint;
-      if (known?.mtimeMs === fingerprint.mtimeMs && known.size === fingerprint.size) {
-        continue;
-      }
-      // Publish a new fingerprint only after its projection survives concurrent native updates.
-      observed.delete(file);
-      if (known) {
-        observed.set(file, known);
-      }
-      let thread: CodexThread | undefined;
-      try {
-        thread = await readCodexCatalogRollout(root, file);
-      } catch (error) {
-        this.assertCurrent();
-        this.report(error);
-        continue;
-      }
-      this.assertCurrent();
-      if (!thread) {
-        observed.set(file, fingerprint);
-        continue;
-      }
-      if (!isCurrent(thread.id)) {
-        continue;
-      }
-      const existing = this.rows.get(thread.id);
-      if (
-        existing?.rolloutPath &&
-        codexCatalogRolloutLogicalPath(existing.rolloutPath) !==
-          codexCatalogRolloutLogicalPath(file)
-      ) {
-        // Reverts retain older immutable files with the same thread id. Only
-        // native metadata may change which rollout the catalog considers current.
-        observed.set(file, fingerprint);
-        continue;
-      }
-      if (!existing && !thread.preview) {
-        observed.set(file, fingerprint);
-        continue;
-      }
-      thread.preview ||= existing?.preview;
-      const projected = await projectCodexCatalogThread(thread, root);
-      this.assertCurrent();
-      if (!isCurrent(thread.id)) {
-        continue;
-      }
-      observed.set(file, fingerprint);
-      const row = projected.rows[0];
-      if (!row) {
-        continue;
-      }
-      this.observations.mark(row.threadId);
-      this.put(mergeCodexCatalogRolloutRow(row, existing, fingerprint));
-      await nextTurn();
-    }
-    for (const row of byPath.values()) {
-      if (
-        row.rolloutPath &&
-        isCodexCatalogRolloutPathCovered(root, row.rolloutPath) &&
-        !present.has(codexCatalogRolloutLogicalPath(row.rolloutPath)) &&
-        this.rows.get(row.threadId) === row
-      ) {
-        this.remove(row.threadId);
-      }
-    }
-    this.observedFiles = observed;
+    this.observedFiles = await reconcileCodexCatalogFiles(root, isCurrent, {
+      rows: this.rows,
+      observedFiles: this.observedFiles,
+      scanner: this.rolloutScanner,
+      assertCurrent: () => this.assertCurrent(),
+      requestNativeRefresh: () => this.currency.requestNativeRefresh(),
+      report: (error) => this.report(error),
+      mark: (id) => this.observations.mark(id),
+      put: (row) => this.put(row),
+      remove: (id) => this.remove(id),
+    });
   }
 
   upsertThread(thread: CodexThread): Promise<void> {
@@ -571,6 +505,7 @@ export class CodexCatalogIndex {
       return Promise.resolve();
     }
     try {
+      this.currency.requestNativeRefresh();
       return this.upsertPreparedThread(
         projectCodexCatalogNativeThread(thread, sanitizeTerminalText),
       );
@@ -640,13 +575,7 @@ export class CodexCatalogIndex {
     }
     if (row) {
       const previous = this.rows.get(thread.id);
-      const fingerprint =
-        previous?.rolloutPath &&
-        row.rolloutPath &&
-        codexCatalogRolloutLogicalPath(previous.rolloutPath) ===
-          codexCatalogRolloutLogicalPath(row.rolloutPath)
-          ? previous.fingerprint
-          : undefined;
+      const fingerprint = resolveCodexCatalogRolloutFingerprint(row.rolloutPath, previous);
       this.observations.mark(thread.id);
       this.put({
         ...row,
@@ -664,6 +593,7 @@ export class CodexCatalogIndex {
     if (this.closed) {
       return;
     }
+    this.currency.requestNativeRefresh();
     this.observations.mark(threadId);
     this.liveStatus.delete(threadId);
     this.liveSettings.delete(threadId);
@@ -678,6 +608,19 @@ export class CodexCatalogIndex {
 
   get(threadId: string): CodexCatalogIndexRow | undefined {
     return this.rows.get(threadId);
+  }
+
+  hasActiveWork(): boolean {
+    return Boolean(
+      this.initializing ||
+      (!this.restored && this.restoring) ||
+      this.reconciling ||
+      this.reconcilingNative ||
+      this.currency.hasActiveWork() ||
+      this.observations.hasActiveWork() ||
+      this.events.hasActiveWork() ||
+      this.persistence.hasActiveWork(),
+    );
   }
 
   async list(
@@ -703,6 +646,7 @@ export class CodexCatalogIndex {
           return await this.nativePages.list(params, cursor, this.options, request);
         }
         if (page) {
+          void this.currency.refreshNativeIfDue();
           return page;
         }
         await this.availability.next(expiresAt);
@@ -717,8 +661,9 @@ export class CodexCatalogIndex {
     this.liveStatus.invalidate();
     this.liveSettings.invalidate();
     this.unsubscribe();
-    this.currency.close();
-    clearImmediate(this.background);
+    this.rolloutScanner?.close();
+    // close() joins the running scan after retirement has fenced its publications.
+    void this.currency.close();
     return this.persistence.retire();
   }
 
@@ -729,6 +674,7 @@ export class CodexCatalogIndex {
       this.restoring,
       this.reconciling,
       this.reconcilingNative,
+      this.currency.close(),
       writes,
       this.events.close(),
     ]);

@@ -120,7 +120,11 @@ async function readCodexCatalogSnapshot(state: CodexCatalogState | undefined) {
   };
   let complete = false;
   let overflow = false;
+  let processed = 0;
   for (const entry of entries) {
+    if (++processed % 128 === 0) {
+      await nextTurn();
+    }
     if (Buffer.byteLength(entry.key) > CODEX_CATALOG_MAX_STATE_KEY_BYTES) {
       valid = false;
       discard(entry.key);
@@ -150,6 +154,9 @@ async function readCodexCatalogSnapshot(state: CodexCatalogState | undefined) {
   if (!complete) {
     rows.clear();
     for (const entry of entries) {
+      if (++processed % 128 === 0) {
+        await nextTurn();
+      }
       discard(entry.key);
     }
     if (entries.length) {
@@ -179,6 +186,10 @@ export class CodexCatalogPersistence {
     private readonly report: (error: unknown) => void,
   ) {}
 
+  hasActiveWork(): boolean {
+    return this.writing !== undefined || this.pending.size > 0;
+  }
+
   async readSnapshot() {
     await this.drain();
     return await readCodexCatalogSnapshot(this.state);
@@ -203,8 +214,14 @@ export class CodexCatalogPersistence {
     keys: Iterable<string>,
     currentRows: Iterable<CodexCatalogIndexRow>,
   ): Promise<void> {
+    const obsolete = new Set(keys);
+    if (!obsolete.size) {
+      return;
+    }
+    // Keep membership capture and deletion admission in one turn: a yield could
+    // let a fresh row's write be overwritten by this obsolete-key cleanup.
     const currentKeys = new Set(Array.from(currentRows, (row) => this.key(row.threadId)));
-    for (const key of keys) {
+    for (const key of obsolete) {
       if (!currentKeys.has(key)) {
         this.queue(key, undefined);
       }

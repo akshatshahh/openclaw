@@ -11,7 +11,7 @@ import "../../components/app-sidebar.ts";
 
 describe("AppSidebar agent menu scope", () => {
   it.each([0, 1])(
-    "keeps agent actions without an All agents tile with %i configured agents",
+    "keeps agent actions without a Show all tile with %i configured agents",
     async (count) => {
       const gateway = createGateway({} as GatewayBrowserClient);
       const { sidebar } = await mountSidebar(
@@ -28,7 +28,11 @@ describe("AppSidebar agent menu scope", () => {
       sidebar.connected = true;
       await sidebar.updateComplete;
 
-      sidebar.querySelector<HTMLButtonElement>(".sidebar-agent-card__main")?.click();
+      sidebar
+        .querySelector<HTMLButtonElement>(
+          ".sidebar-agent-card__main, .sidebar-workspace-header__main",
+        )
+        ?.click();
       await sidebar.updateComplete;
       const menu = sidebar.querySelector(".sidebar-agent-menu");
       expect(menu?.querySelector(".sidebar-agent-menu__filter")).toBeNull();
@@ -41,7 +45,7 @@ describe("AppSidebar agent menu scope", () => {
       ).toEqual([
         "command:new-agent",
         "command:agents-directory",
-        "command:capabilities",
+        ...(count ? ["command:capabilities"] : []),
         "command:agent-settings",
       ]);
     },
@@ -133,7 +137,7 @@ describe("AppSidebar agent menu scope", () => {
     },
   );
 
-  it("moves the scope ring between the active agent and All agents", async () => {
+  it("moves the scope ring between the active agent and Show all", async () => {
     const { sidebar, context } = await mountSidebar(
       createGatewayHarness({} as GatewayBrowserClient).gateway,
       createSessions("main", ["agent:main:main"]),

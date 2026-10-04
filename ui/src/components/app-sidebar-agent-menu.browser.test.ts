@@ -28,6 +28,7 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar agent menu layout", 
         renderSidebarAgentMenuSwitcher({
           activeId: agents[0]!.id,
           allAgentsScope: true,
+          openMode: "hover",
           agents: agents.slice(0, count),
           identities: new Map(),
           pinnedAgentIds: [],
@@ -106,6 +107,10 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar agent menu layout", 
       sidebar.querySelectorAll<HTMLElement>(".sidebar-agent-menu__agent-switch"),
     );
     expect(tiles).toHaveLength(5);
+    await expect.poll(() => document.activeElement).toBe(tiles[1]);
+    const { userEvent } = await import("vitest/browser");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(tiles[2]);
     await expect
       .poll(() =>
         tiles.map((tile) => tile.classList.contains("sidebar-agent-menu__agent-switch--active")),
@@ -123,6 +128,18 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar agent menu layout", 
         label.textContent ?? "agent name",
       ).toBeLessThanOrEqual(1);
     }
+
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => sidebar.querySelector(".sidebar-agent-menu")).toBeNull();
+    sidebar.sidebarAgentsMode = "roster";
+    await sidebar.updateComplete;
+    sidebar.querySelector<HTMLButtonElement>(".sidebar-workspace-header__main")?.click();
+    await sidebar.updateComplete;
+    const all = sidebar.querySelector<HTMLElement>('[value="scope:all"]');
+    await expect.poll(() => document.activeElement).toBe(all);
+    expect(all?.getAttribute("aria-current")).toBe("true");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(sidebar.querySelector('[value="agent:main"]'));
   });
 
   it.each([

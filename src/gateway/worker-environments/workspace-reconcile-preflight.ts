@@ -2,13 +2,20 @@ import fs from "node:fs/promises";
 import { root as openFsSafeRoot } from "../../infra/fs-safe.js";
 import { hasNodeErrorCode } from "../../infra/path-guards.js";
 import { createStagedInputPathMatcher } from "../../media/staged-inputs.js";
+import { getOrCreatePromise } from "../../shared/lazy-promise.js";
+import { isManagedSandboxSkillsPath } from "../../shared/sandbox-workspace-paths.js";
+import { MAX_WORKSPACE_INVENTORY_ENTRIES } from "./workspace-inventory-limits.js";
 import {
   hasPathAncestor,
   manifestNodes,
   sameEntry,
   type WorkspaceNode,
 } from "./workspace-manifest-comparison.js";
-import { MAX_RECONCILIATION_ENTRIES, type WorkerWorkspaceManifest } from "./workspace-manifest.js";
+import type {
+  WorkspaceManifestValueInputs,
+  WorkspaceManifestValueOutputs,
+} from "./workspace-manifest-computation.js";
+import { workspacePathAncestors } from "./workspace-path-ancestors.js";
 import { isDerivedWorkspacePath } from "./workspace-path-exclusions.js";
 import {
   directoryContainsOnlyDerivedWorkspaceEntries,
@@ -22,6 +29,7 @@ async function localWorkspaceDescendantPaths(
   root: string,
   entryPaths: readonly string[],
   isRetainedInput: ReturnType<typeof createStagedInputPathMatcher>,
+  nonDirectoryReplacements: ReadonlySet<string>,
 ): Promise<string[]> {
   const paths: string[] = [];
   const pending = [...entryPaths];
@@ -33,7 +41,7 @@ async function localWorkspaceDescendantPaths(
     for await (const entry of await fs.opendir(localPath(root, directory))) {
       names.push(entry.name);
       enumeratedEntries += 1;
-      if (enumeratedEntries > MAX_RECONCILIATION_ENTRIES) {
+      if (enumeratedEntries > MAX_WORKSPACE_INVENTORY_ENTRIES) {
         throw new Error("Gateway workspace manifest has too many entries");
       }
     }
@@ -42,6 +50,14 @@ async function localWorkspaceDescendantPaths(
       pathBytes += Buffer.byteLength(childPath);
       if (pathBytes > MAX_RECONCILIATION_PATH_BYTES) {
         throw new Error("Gateway workspace manifest paths exceed their byte limit");
+      }
+      if (isManagedSandboxSkillsPath(childPath)) {
+        // Runtime projections are excluded edits, not disposable cache children.
+        // Surface their presence as a conflict before replacing an ancestor.
+        if (hasPathAncestor(nonDirectoryReplacements, childPath)) {
+          paths.push(childPath);
+        }
+        continue;
       }
       if (isDerivedWorkspacePath(childPath, await isRetainedInput(childPath))) {
         continue;
@@ -56,15 +72,9 @@ async function localWorkspaceDescendantPaths(
   return paths;
 }
 
-export async function preflightWorkspaceApplyImpl(params: {
-  root: string;
-  base: WorkerWorkspaceManifest;
-  current: WorkerWorkspaceManifest;
-}): Promise<{
-  applyPaths: Set<string>;
-  conflictPaths: string[];
-  blockingConflictPaths: string[];
-}> {
+export async function preflightWorkspaceApplyImpl(
+  params: Omit<WorkspaceManifestValueInputs["workspace.reconcile.preflight"], "hashes">,
+): Promise<WorkspaceManifestValueOutputs["workspace.reconcile.preflight"]["value"]> {
   const isRetainedInput = createStagedInputPathMatcher(await openFsSafeRoot(params.root));
   const baseNodes = manifestNodes(params.base);
   const currentNodes = manifestNodes(params.current);
@@ -97,6 +107,7 @@ export async function preflightWorkspaceApplyImpl(params: {
     params.root,
     localStructuralRoots,
     isRetainedInput,
+    new Set(structuralRoots.filter((entryPath) => currentNodes.has(entryPath))),
   );
   const paths = [...new Set([...changed, ...localStructuralPaths])].toSorted();
   const applyPaths = new Set<string>();
@@ -105,15 +116,8 @@ export async function preflightWorkspaceApplyImpl(params: {
   // Node snapshots may be shared only inside this pass. Separate preflight
   // calls are concurrency fences and must stat paths again.
   const localNodes = new Map<string, Promise<WorkspaceNode>>();
-  const localNode = (entryPath: string): Promise<WorkspaceNode> => {
-    const existing = localNodes.get(entryPath);
-    if (existing) {
-      return existing;
-    }
-    const node = localWorkspaceNode(params.root, entryPath);
-    localNodes.set(entryPath, node);
-    return node;
-  };
+  const localNode = (entryPath: string): Promise<WorkspaceNode> =>
+    getOrCreatePromise(localNodes, entryPath, () => localWorkspaceNode(params.root, entryPath));
   for (const entryPath of paths) {
     if (hasPathAncestor(blockingConflicts, entryPath)) {
       continue;
@@ -132,10 +136,9 @@ export async function preflightWorkspaceApplyImpl(params: {
       // unchanged ancestor. Do not turn that convergence into a conflict.
       continue;
     }
-    const segments = entryPath.split("/");
     let localAncestorConflict = false;
-    for (let index = 1; index < segments.length; index += 1) {
-      const ancestor = segments.slice(0, index).join("/");
+    let replacedBaseAncestor = false;
+    for (const ancestor of workspacePathAncestors(entryPath)) {
       const baseAncestor = baseNodes.get(ancestor);
       const currentAncestor = currentNodes.get(ancestor);
       if (!baseAncestor && !currentAncestor) {
@@ -149,39 +152,25 @@ export async function preflightWorkspaceApplyImpl(params: {
         continue;
       }
       const localAncestor = await localNode(ancestor);
-      const localStructurallyMatchesBase =
-        localAncestor?.type === "directory" && baseAncestor?.type === "directory"
-          ? true
-          : sameEntry(localAncestor, baseAncestor);
-      const localStructurallyMatchesCurrent =
-        localAncestor?.type === "directory" && currentAncestor?.type === "directory"
-          ? true
-          : sameEntry(localAncestor, currentAncestor);
-      if (!localStructurallyMatchesBase && !localStructurallyMatchesCurrent) {
+      if (!sameEntry(localAncestor, baseAncestor) && !sameEntry(localAncestor, currentAncestor)) {
         conflicts.add(ancestor);
         blockingConflicts.add(ancestor);
         localAncestorConflict = true;
         break;
+      }
+      if (
+        baseAncestor &&
+        baseAncestor.type !== "directory" &&
+        !sameEntry(baseAncestor, currentAncestor) &&
+        sameEntry(localAncestor, baseAncestor)
+      ) {
+        replacedBaseAncestor = true;
       }
     }
     if (localAncestorConflict) {
       continue;
     }
     let local: WorkspaceNode;
-    let replacedBaseAncestor = false;
-    for (let index = 1; index < segments.length; index += 1) {
-      const ancestor = segments.slice(0, index).join("/");
-      const baseAncestor = baseNodes.get(ancestor);
-      if (
-        baseAncestor &&
-        baseAncestor.type !== "directory" &&
-        !sameEntry(baseAncestor, currentNodes.get(ancestor)) &&
-        sameEntry(await localNode(ancestor), baseAncestor)
-      ) {
-        replacedBaseAncestor = true;
-        break;
-      }
-    }
     if (replacedBaseAncestor) {
       local = undefined;
     } else {
@@ -214,13 +203,10 @@ export async function preflightWorkspaceApplyImpl(params: {
       }
     }
   }
-  // Replacing a directory with a file/symlink would erase every descendant in
-  // one filesystem operation. Lift a descendant conflict to that replacement.
-  const initialConflictPaths = Array.from(conflicts);
-  for (const conflictPath of initialConflictPaths) {
-    const segments = conflictPath.split("/");
-    for (let index = 1; index < segments.length; index += 1) {
-      const ancestor = segments.slice(0, index).join("/");
+  // Lift descendant conflicts before a file/symlink replacement can erase them.
+  const conflictsBeforeLifting = [...conflicts];
+  for (const conflictPath of conflictsBeforeLifting) {
+    for (const ancestor of workspacePathAncestors(conflictPath)) {
       const workerNode = currentNodes.get(ancestor);
       if (changed.has(ancestor) && workerNode && workerNode.type !== "directory") {
         conflicts.add(ancestor);

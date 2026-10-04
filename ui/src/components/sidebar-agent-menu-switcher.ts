@@ -1,5 +1,5 @@
 import { html, nothing } from "lit";
-import type { AgentIdentityResult } from "../api/types.ts";
+import type { AgentIdentityResult, GatewayAgentRow } from "../api/types.ts";
 import { t } from "../i18n/index.ts";
 import { normalizeAgentLabel } from "../lib/agents/display.ts";
 import { resolveAgentAvatarUrl } from "../lib/avatar.ts";
@@ -8,16 +8,11 @@ import { renderAgentSelectAvatar, renderAgentSelectCopy } from "./agent-select.t
 
 export const AGENT_VALUE_PREFIX = "agent:";
 
-type AgentMenuAgent = {
-  id: string;
-  name?: string;
-  identity?: { name?: string; emoji?: string; avatar?: string; avatarUrl?: string };
-};
-
 export type SidebarAgentMenuSwitcherParams = {
   activeId: string;
   allAgentsScope: boolean;
-  agents: readonly AgentMenuAgent[];
+  openMode: "hover" | "click";
+  agents: readonly GatewayAgentRow[];
   identities: ReadonlyMap<string, AgentIdentityResult>;
   pinnedAgentIds: readonly string[];
   resolveAvatarUrl: (url: string) => string | null;
@@ -26,16 +21,11 @@ export type SidebarAgentMenuSwitcherParams = {
 };
 
 function sidebarAgentMenuRows(params: {
-  agents: readonly AgentMenuAgent[];
+  agents: readonly GatewayAgentRow[];
   pinnedAgentIds: readonly string[];
 }) {
   const { agents } = params;
-  const availableIds = new Set(agents.map((agent) => normalizeAgentId(agent.id)));
-  const pinnedIds = new Set(
-    params.pinnedAgentIds
-      .map((agentId) => normalizeAgentId(agentId))
-      .filter((agentId) => availableIds.has(agentId)),
-  );
+  const pinnedIds = new Set(params.pinnedAgentIds.map(normalizeAgentId));
   return agents.toSorted((a, b) => {
     const aPinned = pinnedIds.has(normalizeAgentId(a.id)) ? 0 : 1;
     const bPinned = pinnedIds.has(normalizeAgentId(b.id)) ? 0 : 1;
@@ -43,7 +33,7 @@ function sidebarAgentMenuRows(params: {
   });
 }
 
-function renderAgentAvatar(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherParams) {
+function renderAgentAvatar(agent: GatewayAgentRow, params: SidebarAgentMenuSwitcherParams) {
   const agentId = normalizeAgentId(agent.id);
   const identity = params.identities.get(agentId) ?? null;
   const avatarUrl = resolveAgentAvatarUrl(agent, identity);
@@ -56,7 +46,7 @@ function renderAgentAvatar(agent: AgentMenuAgent, params: SidebarAgentMenuSwitch
 }
 
 function renderAgentGroupAvatar(
-  agents: readonly AgentMenuAgent[],
+  agents: readonly GatewayAgentRow[],
   params: SidebarAgentMenuSwitcherParams,
 ) {
   const visibleAgents = agents.slice(0, agents.length > 4 ? 3 : 4);
@@ -84,7 +74,11 @@ function renderAgentGroupAvatar(
   `;
 }
 
-function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherParams) {
+function renderAgentRow(
+  agent: GatewayAgentRow,
+  params: SidebarAgentMenuSwitcherParams,
+  autofocus: boolean,
+) {
   const agentId = normalizeAgentId(agent.id);
   const identity = params.identities.get(agentId) ?? null;
   const label = normalizeAgentLabel(agent, identity);
@@ -98,6 +92,7 @@ function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherP
       }"
       value=${`${AGENT_VALUE_PREFIX}${encodeURIComponent(agentId)}`}
       aria-current=${active ? "true" : nothing}
+      ?autofocus=${autofocus}
     >
       <span class="sidebar-agent-menu__agent-tile">
         <span class="sidebar-agent-menu__agent-avatar"> ${renderAgentAvatar(agent, params)} </span>
@@ -120,6 +115,11 @@ function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherP
 
 export function renderSidebarAgentMenuSwitcher(params: SidebarAgentMenuSwitcherParams) {
   const agents = sidebarAgentMenuRows(params);
+  const autofocusAll = params.openMode === "click" && params.allAgentsScope && agents.length > 1;
+  const autofocusAgent =
+    params.openMode === "click" && !autofocusAll
+      ? (agents.find((agent) => normalizeAgentId(agent.id) === params.activeId) ?? agents[0])
+      : undefined;
   return html`
     ${
       params.agents.length > 0
@@ -135,6 +135,7 @@ export function renderSidebarAgentMenuSwitcher(params: SidebarAgentMenuSwitcherP
                         }"
                         value="scope:all"
                         aria-current=${params.allAgentsScope ? "true" : nothing}
+                        ?autofocus=${autofocusAll}
                       >
                         <span class="sidebar-agent-menu__agent-tile">
                           ${renderAgentGroupAvatar(agents, params)}
@@ -148,7 +149,7 @@ export function renderSidebarAgentMenuSwitcher(params: SidebarAgentMenuSwitcherP
                     `
                   : nothing
               }
-              ${agents.map((entry) => renderAgentRow(entry, params))}
+              ${agents.map((entry) => renderAgentRow(entry, params, entry === autofocusAgent))}
             </div>
           `
         : nothing

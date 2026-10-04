@@ -2,15 +2,16 @@ import type { DatabaseSync } from "node:sqlite";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { assertSqliteIntegrity } from "../infra/sqlite-integrity.js";
 import {
+  assertSqliteSchemaContains,
   collectSqliteSchemaIssues,
   createSqliteTableContractReader,
   type SqliteTableContractReader,
 } from "../infra/sqlite-schema-contract.js";
 import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import { hasLegacyCronRunLogs } from "../infra/state-migrations.cron-run-logs.js";
-import { VERSION } from "../version.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "./openclaw-state-db-contract.js";
 import { assertOpenClawStateDatabaseForMaintenance } from "./openclaw-state-db-maintenance.js";
+import { OpenClawStateDatabaseSchemaMigrationRequiredError } from "./openclaw-state-db-schema-migration-required.js";
 import {
   assertCanonicalStateSchemaShape,
   detectOpenClawStateDatabaseSchemaMigrationsFromDatabase,
@@ -25,16 +26,23 @@ import {
   STATE_PERSISTENT_SCHEMA_COMPATIBILITY,
 } from "./openclaw-state-schema-compatibility.js";
 
-export function needsOpenClawStateDatabaseSchemaRepair(pathname: string): boolean {
+export function needsOpenClawStateDatabaseSchemaRepair(
+  pathname: string,
+  scope: "automatic" | "doctor" = "automatic",
+): boolean {
   let database: DatabaseSync | undefined;
   try {
     database = openNodeSqliteDatabase(pathname, { readOnly: true });
     assertSupportedStateSchemaVersion(database, pathname);
     const needsRepair =
       readStateSchemaMigrationVersion(database) !== OPENCLAW_STATE_SCHEMA_VERSION ||
+      hasLegacyCronRunLogs(database) ||
       detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(database, pathname).length > 0;
     if (!needsRepair) {
       assertCurrentStateRuntimeSchema(database, pathname);
+      if (scope === "doctor") {
+        assertSqliteIntegrity(database, pathname);
+      }
     }
     return needsRepair;
   } catch {
@@ -52,6 +60,20 @@ export function assertCurrentStateRuntimeSchema(
 ): void {
   assertCanonicalStateSchemaShape(database, pathname);
   assertOpenClawStateDatabaseForMaintenance(database, { pathname }, readTable);
+  assertSqliteSchemaContains(
+    database,
+    pathname,
+    getOpenClawStateRuntimeSchema({ includeVersionLazyAdditiveTables: false }),
+    STATE_PERSISTENT_SCHEMA_COMPATIBILITY,
+    readTable,
+  );
+}
+
+/** Catalog presence is enough to refuse retired history without reading or rewriting its rows. */
+export function assertNoLegacyStateRuntimeRepair(database: DatabaseSync, pathname: string): void {
+  if (hasLegacyCronRunLogs(database)) {
+    throw new OpenClawStateDatabaseSchemaMigrationRequiredError("legacy-cron-run-logs", pathname);
+  }
 }
 
 export function isOpenClawStateSchemaFastPathEligible(
@@ -76,13 +98,7 @@ export function isOpenClawStateSchemaFastPathEligible(
     if (startupRepairRequired) {
       return false;
     }
-    if (hasLegacyCronRunLogs(database)) {
-      return false;
-    }
-    // app_version commits only after this release's repairs; same-build writes are canonical.
-    const metadata = database
-      .prepare("SELECT app_version FROM schema_meta WHERE meta_key = 'primary' LIMIT 1")
-      .get();
-    return metadata?.app_version === VERSION;
+    assertNoLegacyStateRuntimeRepair(database, pathname);
+    return true;
   });
 }

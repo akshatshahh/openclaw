@@ -7,11 +7,12 @@ import {
   invalidateSessionAutomationIndex,
   registerSessionAutomationSource,
 } from "./session-automation-index.js";
+import { ready } from "./session-row-projection-record.js";
 import { createSessionRowProjection } from "./session-row-projection.js";
 
 it("rebuilds only changed automation bindings and preserves complete unrelated rows", async () => {
   await withOpenClawTestState({ scenario: "minimal" }, async () => {
-    const cfg = { agents: { list: [{ id: "main", default: true }] } };
+    const cfg = { agents: { entries: { main: {} } } };
     const keys = ["agent:main:bound", "agent:main:next", "agent:main:parent", "agent:main:other"];
     for (const [index, sessionKey] of keys.entries()) {
       replaceSessionEntrySync(
@@ -26,7 +27,11 @@ it("rebuilds only changed automation bindings and preserves complete unrelated r
     const jobs: CronJob[] = [];
     registerSessionAutomationSource({ getJobs: () => jobs, getDefaultAgentId: () => "main" });
     const projection = await createSessionRowProjection({ cfg });
-    const snapshot = () => projection.select().map((row) => projection.present(row, { now: 1 }));
+    const snapshot = () =>
+      projection
+        .selectEntries()
+        .filter(ready)
+        .map((row) => projection.present(row, { now: 1 }));
     try {
       await projection.ensureMaterialized();
       const before = snapshot();
@@ -80,7 +85,7 @@ it("keeps automation aliases scoped to their logical agent in a shared store", a
     const storePath = `${stateDir}/shared-sessions.json`;
     const cfg = {
       session: { store: storePath, scope: "global" as const },
-      agents: { list: [{ id: "main", default: true }, { id: "work" }] },
+      agents: { entries: { main: {}, work: {} }, defaults: { sessionStore: { agentId: "main" } } },
     };
     for (const agentId of ["main", "work"]) {
       replaceSessionEntrySync(

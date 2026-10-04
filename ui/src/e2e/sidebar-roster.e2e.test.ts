@@ -1,11 +1,22 @@
 import type { LitElement } from "lit";
 import type { Locator } from "playwright";
 import { expect, it } from "vitest";
-import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "../api/types.ts";
+import type {
+  AgentsListResult,
+  CronJob,
+  GatewaySessionRow,
+  SessionsListResult,
+} from "../api/types.ts";
 import type { AppSidebarSessionNavigationElement } from "../components/app-sidebar-session-navigation.ts";
 import { installMockGateway, waitForControlUiRoute } from "../test-helpers/control-ui-e2e.ts";
+import { cronListResponseFixture } from "../test-helpers/cron.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 import { captureSidebarUiProof } from "./sidebar-customization.test-support.ts";
+import {
+  chooseSidebarOwner,
+  closeSidebarMenu,
+  openSidebarMenu,
+} from "./sidebar-session-menu.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Control UI sidebar agent roster" });
 
@@ -71,7 +82,7 @@ suite.define(() => {
             ],
           ),
         } satisfies SessionsListResult;
-        const jobs = ["main", "forge"].map((agentId) => ({
+        const jobs = ["main", "forge"].map((agentId): CronJob => ({
           id: `${agentId}-daily`,
           agentId,
           configRevision: `${agentId}-revision`,
@@ -93,6 +104,12 @@ suite.define(() => {
           limit: 50,
           hasMore: false,
           nextOffset: null,
+        });
+        await page.addInitScript(() => {
+          localStorage.setItem(
+            "openclaw:control-ui:community-invite:v2",
+            JSON.stringify({ dismissedAtMs: Date.now() }),
+          );
         });
         const gateway = await installMockGateway(page, {
           sessions: sessions.sessions,
@@ -117,15 +134,13 @@ suite.define(() => {
               thinkingLevel: null,
             },
             "sessions.list": sessions,
-            "cron.list": {
-              cases: [
-                ...["main", "forge"].map((agentId) => ({
-                  match: { agentId },
-                  response: jobList(agentId),
-                })),
-                { match: {}, response: jobList() },
-              ],
-            },
+            "cron.list": cronListResponseFixture([
+              ...["main", "forge"].map((agentId) => ({
+                match: { agentId },
+                response: jobList(agentId),
+              })),
+              { match: {}, response: jobList() },
+            ]),
           },
         });
         await page.goto(`${suite.server.baseUrl}chat`);
@@ -172,8 +187,13 @@ suite.define(() => {
         );
         for (const agent of agentsList.agents) {
           const group = sidebar.locator(`[data-agent-group="${agent.id}"]`);
+          const pin = sidebar.locator(
+            `.sidebar-nav [data-session-key="agent:${agent.id}:project"]`,
+          );
+          expect(await pin.count()).toBe(1);
+          expect(await pin.textContent()).toContain(`${agent.name} project`);
+          expect(await pin.locator(".identity-avatar--agent").count()).toBe(1);
           expect(await group.locator(".sidebar-recent-session").allTextContents()).toEqual([
-            expect.stringContaining(`${agent.name} project`),
             expect.stringContaining(`${agent.name} notes`),
           ]);
           expect(
@@ -193,6 +213,16 @@ suite.define(() => {
         expect(
           (await headers.first().locator(".sidebar-agent-roster__copy").textContent())?.trim(),
         ).toBe("Harbor");
+        expect(await headers.first().getAttribute("aria-current")).toBe("page");
+        for (const row of await sessionRows.all()) {
+          const lead = await row.locator(".sidebar-session-indicator .session-glyph").boundingBox();
+          const title = await row.locator(".sidebar-recent-session__name").boundingBox();
+          expect(lead).not.toBeNull();
+          expect(title).not.toBeNull();
+          // The renderer reports fractional layout values; allow 0.01 px of rounding.
+          expect(title!.x - (lead!.x + lead!.width)).toBeGreaterThanOrEqual(8 - 0.01);
+        }
+        await page.mouse.move(600, 60);
         await captureSidebarUiProof(suite, page, "sidebar-roster-after.png");
 
         const activityQuery = {
@@ -283,6 +313,10 @@ suite.define(() => {
         expect(new URL(page.url()).searchParams.get("agent")).toBe("scout");
         await sidebar.locator('[data-agent-id="forge"]').click();
         await waitForControlUiRoute(page, { routeId: "chat", pathname: "/chat/forge" });
+        await expect
+          .poll(() => sidebar.locator('[data-agent-id="forge"]').getAttribute("aria-current"))
+          .toBe("page");
+        expect(await sidebar.locator('[data-session-key="agent:forge:main"]').count()).toBe(0);
         await sidebar.getByRole("link", { name: "Automations", exact: true }).click();
         await waitForControlUiRoute(page, { routeId: "cron" });
         await expect.poll(() => page.locator(".cron-table__row").count()).toBe(2);
@@ -301,14 +335,22 @@ suite.define(() => {
         await expectWorkspace();
         await expect.poll(() => sessionRows.count()).toBe(8);
         await sidebar.locator(".sidebar-session-sort").click();
+        await openSidebarMenu(page);
         expect(
-          await sidebar.locator('.sidebar-session-sort-menu [value^="grouping:"]').count(),
+          await sidebar
+            .locator(".sidebar-session-sort-menu")
+            .locator("#sidebar-sessions-group")
+            .count(),
         ).toBe(0);
         expect(
-          await sidebar.locator('.sidebar-session-sort-menu [value="hide-empty-groups"]').count(),
+          await sidebar
+            .locator(".sidebar-session-sort-menu")
+            .getByRole("radiogroup", { name: "Hide empty groups", exact: true })
+            .count(),
         ).toBe(0);
-        await sidebar.locator(".sidebar-session-sort-menu .sidebar-session-owner-submenu").hover();
-        await sidebar.locator('.sidebar-session-sort-menu [value="owner:profile-riley"]').click();
+        await openSidebarMenu(page);
+        await chooseSidebarOwner(page, "owner:profile-riley");
+        await closeSidebarMenu(page);
         await expect.poll(() => sessionRows.count()).toBe(4);
         expect(await sessionRows.allTextContents()).toEqual([
           expect.stringContaining("Harbor project"),
@@ -317,11 +359,13 @@ suite.define(() => {
           expect.stringContaining("Bloom project"),
         ]);
         await sidebar.locator(".sidebar-session-sort").click();
-        await sidebar.locator('.sidebar-session-sort-menu [value="owner:"]').click();
+        await openSidebarMenu(page);
+        await chooseSidebarOwner(page, "all");
+        await closeSidebarMenu(page);
         await expect.poll(() => sessionRows.count()).toBe(8);
 
         await sidebar.locator('[data-agent-collapse="bloom"]').click();
-        await expect.poll(() => sessionRows.count()).toBe(6);
+        await expect.poll(() => sessionRows.count()).toBe(7);
         expect(new URL(page.url()).pathname).toBe("/chat/forge/notes");
         await page.reload();
         await expect.poll(() => headers.count()).toBe(4);
@@ -330,7 +374,7 @@ suite.define(() => {
             sidebar.locator('[data-agent-collapse="bloom"]').getAttribute("aria-expanded"),
           )
           .toBe("false");
-        await expect.poll(() => sessionRows.count()).toBe(6);
+        await expect.poll(() => sessionRows.count()).toBe(7);
         await expectWorkspace();
         const forgeGroup = sidebar.locator('[data-agent-group="forge"]');
         const actions = forgeGroup.locator(".sidebar-agent-roster__actions");
@@ -441,22 +485,36 @@ suite.define(() => {
               { id: "forge", name: "Forge" },
             ],
           };
+          const rows = [
+            { key: "agent:main:main", kind: "direct", agentId: "main", isMain: true, icon: "home" },
+            {
+              key: mainKey,
+              kind: "direct",
+              agentId: "forge",
+              isMain: true,
+              hasActiveRun: true,
+              status: "running",
+              unread: true,
+              incognito: touch ? true : undefined,
+              owner: { actor: { type: "human", id: "profile-riley", label: "Riley" } },
+            },
+          ] satisfies GatewaySessionRow[];
           await installMockGateway(page, {
-            sessions: [
-              { key: "agent:main:main", kind: "direct", agentId: "main", isMain: true },
-              {
-                key: mainKey,
-                kind: "direct",
-                agentId: "forge",
-                isMain: true,
-                hasActiveRun: true,
-                status: "running",
-                unread: true,
-                incognito: true,
-                owner: { actor: { type: "human", id: "profile-riley", label: "Riley" } },
-              },
-            ],
-            methodResponses: { "agents.list": agentsList },
+            sessions: rows,
+            methodResponses: {
+              "agents.list": agentsList,
+              "sessions.list": {
+                ts: Date.now(),
+                path: "",
+                count: rows.length,
+                defaults: { model: null, modelProvider: null, contextTokens: null },
+                owners: [
+                  { type: "human", id: "profile-riley", label: "Riley" },
+                  { type: "human", id: "profile-devon", label: "Devon" },
+                ],
+                sessions: rows,
+              } satisfies SessionsListResult,
+            },
           });
           await page.goto(`${suite.server.baseUrl}chat`);
           await waitForControlUiRoute(page, { routeId: "chat" });
@@ -473,10 +531,18 @@ suite.define(() => {
             '[data-agent-group="forge"] .sidebar-agent-roster__header',
           );
           await headerLocator.waitFor({ state: "visible" });
+          const quietHeader = sidebar.locator(
+            '[data-agent-group="main"] .sidebar-agent-roster__header',
+          );
+          expect(await quietHeader.locator(".sidebar-session-indicator").count()).toBe(0);
+          expect(await quietHeader.locator(".sidebar-agent-roster__signals").isVisible()).toBe(
+            false,
+          );
           const selectors = [".session-glyph--running", ".session-unread-dot"];
           const expectSignals = async () => {
             for (const selector of selectors) {
               await expect.poll(() => headerLocator.locator(selector).isVisible()).toBe(true);
+              expect(await headerLocator.locator(selector).count()).toBe(1);
             }
           };
           await page.mouse.move(389, 899);
@@ -486,21 +552,18 @@ suite.define(() => {
           await expectSignals();
           const boxes = await sidebar.evaluate(async (sidebarElement, key) => {
             const host = sidebarElement as AppSidebarSessionNavigationElement;
-            const main = host.rosterMainSessions.get(key);
-            if (!main) {
-              throw new Error("Missing projected Forge main session");
-            }
-            // The shell owns draft/outbox callbacks. Supply their projected facts
-            // at the renderer boundary to exercise dense metadata geometry.
-            host.sessionOwnershipVisible = true;
-            host.rosterMainSessions = new Map(host.rosterMainSessions).set(key, {
-              ...main,
-              hasComposerDraft: true,
-              outboxAttentionCount: 2,
-              pullRequest: { numbers: [103], state: "open" },
+            // Feed the shell-owned outbox summary, not a replacement row projection.
+            host.storedOutboxes = {
+              total: 2,
+              attentionCountForSession: (sessionKey) => (sessionKey === key ? 2 : 0),
+              hasSessionDraft: (sessionKey) => sessionKey === key,
+            };
+            host.sessionDataContext!.sessions.setPullRequestSummary(key, {
+              numbers: [103],
+              state: "open",
             });
+            await host.updateComplete;
             const roster = host.querySelector<LitElement>("openclaw-sidebar-agent-roster")!;
-            roster.requestUpdate();
             await roster.updateComplete;
             const header = roster.querySelector(
               '[data-agent-group="forge"] .sidebar-agent-roster__header',
@@ -539,10 +602,9 @@ suite.define(() => {
           expect(boxes.badges.map((badge) => badge.label)).toEqual(
             expect.arrayContaining([
               "Created by Riley",
-              "Incognito session",
               "#103 · Open",
               "2 messages need attention",
-              "Unsent draft",
+              touch ? "Incognito session" : "Unsent draft",
             ]),
           );
           for (const badge of boxes.badges) {
