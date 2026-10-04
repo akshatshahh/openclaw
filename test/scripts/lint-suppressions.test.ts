@@ -230,6 +230,8 @@ describe("production lint suppressions", () => {
         "src/config/sessions/transcript-json.ts|unicorn/prefer-structured-clone|1",
         // Intl.Collator.compare is a getter returning a bound function.
         "src/cron/service/list-page-sort.ts|typescript/unbound-method|1",
+        // The SQLite spy preserves the original method and restores its database receiver with call.
+        "src/gateway/cli-session-history-lookup.test-support.ts|typescript/unbound-method|1",
         "src/gateway/test-helpers.server.ts|typescript/no-unnecessary-type-parameters|1",
         "src/hooks/module-loader.ts|typescript/no-unnecessary-type-parameters|1",
         "src/infra/device-pairing-store.ts|typescript/no-unnecessary-type-parameters|1",
@@ -242,7 +244,8 @@ describe("production lint suppressions", () => {
         "src/node-host/invoke-payload.ts|typescript/no-unnecessary-type-parameters|1",
         "src/node-host/mcp.ts|unicorn/prefer-add-event-listener|1",
         "src/plugin-sdk/channel-config-helpers.ts|typescript/no-unnecessary-type-parameters|1",
-        "src/plugin-sdk/channel-entry-contract.ts|typescript/no-unnecessary-type-parameters|1",
+        // Direct and optional dynamic export loaders both carry caller-supplied return types.
+        "src/plugin-sdk/channel-entry-contract.ts|typescript/no-unnecessary-type-parameters|2",
         "src/plugin-sdk/facade-loader.ts|typescript/no-unnecessary-type-parameters|1",
         "src/plugin-sdk/facade-runtime.ts|typescript/no-unnecessary-type-parameters|3",
         "src/plugin-sdk/json-store.ts|typescript-eslint/no-unnecessary-type-parameters|1",
@@ -257,7 +260,8 @@ describe("production lint suppressions", () => {
         "src/plugins/plugin-return-value.ts|typescript/prefer-promise-reject-errors|1",
         "src/plugins/plugin-return-value.ts|typescript/unbound-method|1",
         "src/plugins/plugin-return-value.ts|unicorn/no-thenable|1",
-        "src/plugins/provider-auth-persistence.ts|preserve-caught-error|2",
+        // Rollback and lock-release aggregates retain cleanup errors and the initiating cause.
+        "src/plugins/provider-auth-persistence.ts|preserve-caught-error|3",
         "src/plugins/public-surface-loader.ts|typescript/no-unnecessary-type-parameters|3",
         // Admission records original factory identities; executable views bind their receivers.
         "src/plugins/registry-registrars-memory.ts|typescript/unbound-method|1",
