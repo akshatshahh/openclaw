@@ -249,7 +249,11 @@ export function prepareGitHubPublicationWorkspaceOwner(
 export function prepareGitHubPublicationWorkspaceOwner(
   params: PublicationSessionIdentity,
   options: { allowMissingWorkspace: true },
-): Promise<PreparedGitHubPublicationWorkspaceOwner<GitHubPublicationWorkspace | GitHubCredentialOnlyWorkspace>>;
+): Promise<
+  PreparedGitHubPublicationWorkspaceOwner<
+    GitHubPublicationWorkspace | GitHubCredentialOnlyWorkspace
+  >
+>;
 export async function prepareGitHubPublicationWorkspaceOwner(
   params: PublicationSessionIdentity,
   options?: { allowMissingWorkspace: true },
@@ -270,7 +274,9 @@ export async function prepareGitHubPublicationWorkspaceOwner(
   const prepared = workspaceId
     ? await getSessionRepositoryWorkspaceStore().prepare(workspaceId)
     : undefined;
-  const validate = <T extends GitHubPublicationWorkspace | GitHubCredentialOnlyWorkspace>(owner: T): T => {
+  const validate = <T extends GitHubPublicationWorkspace | GitHubCredentialOnlyWorkspace>(
+    owner: T,
+  ): T => {
     context.admission.assertCurrent();
     if (owner.loaded.entry.repositoryWorkspaceId !== workspaceId) {
       throw new GitHubPublicationSessionChangedError();
@@ -281,8 +287,8 @@ export async function prepareGitHubPublicationWorkspaceOwner(
     const currentSession = readPublicationSessionOwner(identity);
     return validate(
       options?.allowMissingWorkspace &&
-      !currentSession.entry.repositoryWorkspaceId &&
-      !currentSession.entry.worktree
+        !currentSession.entry.repositoryWorkspaceId &&
+        !currentSession.entry.worktree
         ? { kind: "none" as const, loaded: currentSession }
         : resolveGitHubPublicationWorkspaceOwner(currentSession, prepared),
     );
