@@ -451,18 +451,16 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
       channel: delivery.channel,
     });
   }
+  // A continuation is the conversation's reply: channel heartbeat toggles govern polls,
+  // and a quiet outcome stays quiet.
   const visibility =
-    delivery.channel !== "none"
-      ? {
-          ...resolveHeartbeatVisibility({
-            cfg,
-            channel: delivery.channel,
-            accountId: delivery.accountId,
-          }),
-          // A quiet continuation stays quiet; heartbeat OK acknowledgments belong to polls.
-          ...(preflight.conversationRoute ? { showOk: false } : {}),
-        }
-      : { showOk: false, showAlerts: true, useIndicator: true };
+    delivery.channel === "none" || preflight.conversationRoute
+      ? { showOk: false, showAlerts: true, useIndicator: true }
+      : resolveHeartbeatVisibility({
+          cfg,
+          channel: delivery.channel,
+          accountId: delivery.accountId,
+        });
   const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
   const replyPrefix = createReplyPrefixContext({
     cfg,

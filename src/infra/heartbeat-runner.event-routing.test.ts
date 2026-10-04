@@ -558,6 +558,13 @@ describe("Heartbeat event routing", () => {
       reply: "printed",
       sends: true,
     },
+    {
+      name: "heartbeat alerts off",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "printed",
+      sends: true,
+    },
   ])(
     "answers a forum topic's own background command under target none ($name)",
     async ({ name, isolatedSession, trigger, reply, sends }) => {
@@ -577,7 +584,13 @@ describe("Heartbeat event routing", () => {
             lastThreadId: 42,
             chatType: "group",
           });
-          cfg.channels!.telegram = { allowFrom: ["*"], heartbeatVisibility: { showOk: true } };
+          cfg.channels!.telegram = {
+            allowFrom: ["*"],
+            heartbeatVisibility:
+              name === "heartbeat alerts off"
+                ? { showOk: false, showAlerts: false, useIndicator: false }
+                : { showOk: true },
+          };
           replySpy.mockResolvedValue({
             text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
           });
