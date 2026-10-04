@@ -41,6 +41,7 @@ export const runtimeProcessEntrypoints = {
   boardStore: runtimeProcessEntrypoint("boards/sqlite-board-store.worker"),
   progressCardStore: runtimeProcessEntrypoint("session-cards/progress-card-store.worker"),
   sessionSharingStore: runtimeProcessEntrypoint("config/sessions/session-sharing-store.worker"),
+  sessionForkDomain: runtimeProcessEntrypoint("config/sessions/session-fork-domain.worker"),
   sessionLifecyclePlanningDomain: runtimeProcessEntrypoint(
     "config/sessions/session-lifecycle-projection.worker",
   ),

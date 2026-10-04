@@ -4,6 +4,12 @@ import { AuthProfileStoreUnreadableError } from "../agents/auth-profiles/store-u
 import { McpOAuthStoreCorruptionError } from "../agents/mcp-oauth-store-error.js";
 import { WorkspaceAliasRepointedError } from "../agents/workspace-state-identity.js";
 import {
+  SessionWorktreeLifecycleError,
+  SessionWorktreeSourceChangedError,
+  WorktreeRemovalContentionError,
+  WorktreeRemovalLockError,
+} from "../agents/worktrees/errors.js";
+import {
   SESSION_GOAL_OPERATION_ERROR_CODES,
   SessionGoalOperationError,
   type SessionGoalOperationErrorCode,
@@ -53,6 +59,7 @@ type StateMigrationKind = ConstructorParameters<
 >[0];
 
 const MESSAGE_ONLY_ERRORS = {
+  "worktree-source-changed": SessionWorktreeSourceChangedError,
   "model-account-authority": ModelAccountConnectAuthorityError,
   "duplicate-agent": DuplicateAgentError,
   "model-selection-locked": ModelSelectionLockedError,
@@ -74,6 +81,13 @@ function isMessageOnlyErrorIdentity(node: { type?: unknown }): node is MessageOn
 }
 
 export type ErrorIdentity =
+  | { type: "session-worktree-owner-mismatch" }
+  | {
+      type: "worktree-removal-contention";
+      kind: "busy" | "finalized";
+      blockedByRun?: { worktreeId: string; pid: number };
+    }
+  | { type: "worktree-removal-lock"; kind: "busy" | "foreign-lock" }
   | { type: "secret-store-validation"; secretCode: SecretStoreValidationError["code"] }
   | MessageOnlyErrorIdentity
   | { type: "session-goal-operation"; goalCode: SessionGoalOperationErrorCode }
@@ -119,6 +133,19 @@ export type ErrorIdentity =
 export function identifyError(error: Error): ErrorIdentity {
   if (error instanceof AuthProfileStoreUnreadableError) {
     return { type: "auth-profile-store-unreadable", databasePath: error.databasePath };
+  }
+  if (error instanceof SessionWorktreeLifecycleError && error.reason === "owner-mismatch") {
+    return { type: "session-worktree-owner-mismatch" };
+  }
+  if (error instanceof WorktreeRemovalContentionError) {
+    return {
+      type: "worktree-removal-contention",
+      kind: error.kind,
+      ...(error.blockedByRun ? { blockedByRun: error.blockedByRun } : {}),
+    };
+  }
+  if (error instanceof WorktreeRemovalLockError) {
+    return { type: "worktree-removal-lock", kind: error.kind };
   }
   if (error instanceof PluginStateStoreError) {
     return {
@@ -269,6 +296,35 @@ export function parseIdentity(node: Record<string, unknown>): ErrorIdentity | un
     return { type: node.type };
   }
   switch (node.type) {
+    case "session-worktree-owner-mismatch":
+      return { type: node.type };
+    case "worktree-removal-contention": {
+      if (node.kind !== "busy" && node.kind !== "finalized") {
+        return undefined;
+      }
+      if (node.blockedByRun === undefined) {
+        return { type: node.type, kind: node.kind };
+      }
+      const blocked = node.blockedByRun;
+      if (
+        !isRecord(blocked) ||
+        typeof blocked.worktreeId !== "string" ||
+        typeof blocked.pid !== "number" ||
+        !Number.isSafeInteger(blocked.pid) ||
+        blocked.pid <= 0
+      ) {
+        return undefined;
+      }
+      return {
+        type: node.type,
+        kind: node.kind,
+        blockedByRun: { worktreeId: blocked.worktreeId, pid: blocked.pid },
+      };
+    }
+    case "worktree-removal-lock":
+      return node.kind === "busy" || node.kind === "foreign-lock"
+        ? { type: node.type, kind: node.kind }
+        : undefined;
     case "plugin-state": {
       const codes: readonly PluginStateStoreError["code"][] = [
         "PLUGIN_STATE_SQLITE_UNAVAILABLE",
@@ -424,6 +480,12 @@ export function createError(node: ErrorIdentity & { message: string }): Error {
     return new ErrorType(node.message);
   }
   switch (node.type) {
+    case "session-worktree-owner-mismatch":
+      return new SessionWorktreeLifecycleError(node.message, "owner-mismatch");
+    case "worktree-removal-contention":
+      return new WorktreeRemovalContentionError(node.kind, node.message, node.blockedByRun);
+    case "worktree-removal-lock":
+      return new WorktreeRemovalLockError(node.kind, node.message);
     case "plugin-state":
       return new PluginStateStoreError(node.message, {
         code: node.stateCode,
