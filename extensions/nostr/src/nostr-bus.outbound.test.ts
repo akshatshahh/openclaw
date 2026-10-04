@@ -177,7 +177,9 @@ describe("Nostr outbound relay failover", () => {
         expect(initiating).toBe(true);
         return originalPublish.call(this, event);
       });
-      const initiate = vi.fn(async <T>(effect: () => T | Promise<T>): Promise<T> => {
+      let initiations = 0;
+      const initiate = async <T>(effect: () => T | Promise<T>): Promise<T> => {
+        initiations++;
         preparing.resolve();
         await prepared.promise;
         if (!allowed) {
@@ -190,7 +192,7 @@ describe("Nostr outbound relay failover", () => {
           initiating = false;
           handedOff = true;
         }
-      });
+      };
       effectInput.current = { active: true, run: (run) => run(), initiate };
       const completion = bus.sendDm(RECIPIENT_PUBKEY, "prepared relay publish");
       try {
@@ -211,7 +213,7 @@ describe("Nostr outbound relay failover", () => {
           first.acknowledgeAll();
           await expect(completion).resolves.toBe(first.events[0]!.id);
         }
-        expect(initiate).toHaveBeenCalledOnce();
+        expect(initiations).toBe(1);
         expect(second.events).toEqual([]);
       } finally {
         prepared.resolve();
