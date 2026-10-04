@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { resetProcessRegistryForTests } from "../agents/bash-process-registry.test-support.js";
+import { createExecTool } from "../agents/bash-tools.exec-run.js";
 import type { InternalGetReplyOptions } from "../auto-reply/reply/get-reply.types.js";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import { getReplySystemEventContext } from "../auto-reply/reply/system-event-session-key.js";
@@ -528,6 +530,84 @@ describe("Heartbeat event routing", () => {
       }
     }, false);
   });
+
+  it.each([
+    { name: "isolated", isolatedSession: true, routeTopic: 42, answers: true },
+    { name: "shared", isolatedSession: false, routeTopic: 42, answers: true },
+    { name: "another topic's route", isolatedSession: true, routeTopic: 77, answers: false },
+  ])(
+    "answers a forum topic's own background command under target none ($name)",
+    async ({ isolatedSession, routeTopic, answers }) => {
+      await withRouting(
+        async ({ cfg, storePath, replySpy, sendTelegram }) => {
+          const sessionKey = "agent:main:telegram:group:-100155462274:topic:42";
+          const topic = (id: number) => `telegram:-100155462274:topic:${id}`;
+          await writeTelegramSessionStore(storePath, sessionKey, {
+            sessionId: "topic-conversation",
+            lastTo: topic(42),
+            lastThreadId: 42,
+            chatType: "group",
+          });
+          replySpy.mockResolvedValue({ text: "The job printed RESULT-7F3A." });
+          const completionRun = createDeferred<Awaited<ReturnType<typeof runHeartbeatOnce>>>();
+          const runner = startHeartbeatRunner({
+            cfg,
+            runOnce: (opts) => {
+              const run = runHeartbeatOnce({
+                ...opts,
+                cfg,
+                deps: { getReplyFromConfig: replySpy, telegram: sendTelegram },
+              });
+              completionRun.resolve(run);
+              return run;
+            },
+          });
+          onTestFinished(() => {
+            runner.stop();
+            resetProcessRegistryForTests();
+          });
+          const exec = createExecTool({
+            host: "gateway",
+            security: "full",
+            ask: "off",
+            allowBackground: true,
+            timeoutSec: 10,
+            agentId: "main",
+            sessionKey,
+            messageProvider: "telegram",
+            currentChannelId: topic(routeTopic),
+            currentThreadTs: String(routeTopic),
+          });
+          await exec.execute("call-background", { command: "echo RESULT-7F3A", background: true });
+          await expect(completionRun.promise).resolves.toMatchObject({ status: "ran" });
+
+          const ctx = getFirstReplyContext(replySpy);
+          const options = mockCallAt(replySpy, 0, "completion turn")[1] as InternalGetReplyOptions;
+          if (!answers) {
+            expect(ctx.SessionKey).toBe(`${sessionKey}:heartbeat`);
+            expect(ctx.Body).not.toContain("RESULT-7F3A");
+            expect(sendTelegram).not.toHaveBeenCalled();
+            return;
+          }
+          expect(ctx).toMatchObject({ SessionKey: sessionKey, InternalTurnSource: "exec" });
+          expect(ctx.Body).toContain("RESULT-7F3A");
+          expect(options.bootstrapContextMode).toBeUndefined();
+          expect(sendTelegram).toHaveBeenCalledOnce();
+          expect(mockCallAt(sendTelegram, 0, "topic send").slice(0, 2)).toEqual([
+            topic(42),
+            "The job printed RESULT-7F3A.",
+          ]);
+          expect(peekSystemEvents(sessionKey)).toEqual([]);
+        },
+        isolatedSession,
+        {
+          target: "none",
+          lightContext: true,
+          activeHours: { start: "00:00", end: "00:01", timezone: "UTC" },
+        },
+      );
+    },
+  );
 });
 
 describe("Heartbeat cron and exec event ownership", () => {

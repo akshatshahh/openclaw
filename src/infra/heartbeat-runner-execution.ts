@@ -396,7 +396,9 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
     cfg,
     agentId,
     entry: conversationEntry,
-    heartbeat,
+    // The heartbeat target, recipient and direct-chat policy govern heartbeat output.
+    // A conversation's own command completion answers in that conversation.
+    heartbeat: preflight.conversationRoute ? { target: "last" } : heartbeat,
     currentSessionKey: sessionKey,
     // A base queue's route stays excluded; events on the actual isolated queue
     // own their route, including exec completion after the base route moves.
