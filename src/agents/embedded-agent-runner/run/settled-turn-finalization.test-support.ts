@@ -178,6 +178,7 @@ export function projectSettledProviderFailureAttempt(
     getItemLifecycle: () => base.itemLifecycle,
     getLastAssistantTextMessageIndex: () => undefined,
     getInputAnswer: () => undefined,
+    getKeptAnswer: () => undefined,
     getLastCompactionTokensAfter: () => undefined,
     getLastToolError: () => undefined,
     getLatestMcpAppChannelView: () => undefined,

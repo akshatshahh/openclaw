@@ -106,10 +106,12 @@ export type EmbeddedAgentSubscribeState = {
     messageEnd: number;
     finalMessageStart: number;
     lastAssistant: AssistantMessage;
-    answer?: CompletedAssistantAnswer;
+    keptAnswer?: CompletedAssistantAnswer;
   }>;
-  /** Latest response-ending answer to the current input; a later NO_REPLY does not revoke it. */
+  /** Latest response-ending answer to the current input. */
   inputAnswer?: CompletedAssistantAnswer;
+  /** That answer while the latest assistant message added no reply of its own: the turn's reply. */
+  keptAnswer?: CompletedAssistantAnswer;
   toolMetas: Array<{
     toolName?: string;
     toolCallId?: string;

@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createResponsesAssistantOutput } from "../../packages/ai/src/providers/openai-responses-shared.js";
 import { processResponsesStream } from "../../packages/ai/src/transports/openai-responses-stream-internal.js";
+import { failTransportStream } from "../../packages/ai/src/transports/transport-stream-shared.js";
 import { markdownToIR } from "../../packages/markdown-core/src/ir.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
@@ -12,7 +13,12 @@ import { createBlockReplyDeliveryHandler } from "../auto-reply/reply/reply-deliv
 import { createTypingSignaler } from "../auto-reply/reply/typing-mode.js";
 import { createTypingController } from "../auto-reply/reply/typing.js";
 import { runAgentLoop } from "../plugin-sdk/agent-core.js";
-import { buildEmbeddedRunPayloads } from "./embedded-agent-runner/run/payloads.js";
+import { createTestAdmittedRunContext } from "./admitted-run-context.test-support.js";
+import { buildAgentRunTerminalReplySnapshot } from "./agent-run-terminal-reply.js";
+import type { EmbeddedRunAttemptWithReceiptEvidence } from "./embedded-agent-runner/run/attempt-result.js";
+import { createEmbeddedRunContextRecoveryState } from "./embedded-agent-runner/run/context-recovery-state.js";
+import { prepareEmbeddedRunTerminal } from "./embedded-agent-runner/run/terminal-preparation.js";
+import { createUsageAccumulator } from "./embedded-agent-runner/usage-accumulator.js";
 import {
   createSubscribedSessionHarness,
   emitAssistantTextDelta,
@@ -25,6 +31,7 @@ import {
   createOpenAiResponsesTextEvent,
   type OpenAiResponsesTextEventPhase,
 } from "./embedded-agent-subscribe.openai-responses.test-helpers.js";
+import type { AgentMessage } from "./runtime/index.js";
 import { textAssistant } from "./test-helpers/sparse-transcript.test-support.js";
 
 type Options = Omit<Parameters<typeof createSubscribedSessionHarness>[0], "runId">;
@@ -341,8 +348,24 @@ describe("Responses final delivery", () => {
       content: [{ type: "output_text", text, annotations: [] }],
     });
     type WireItem = typeof lookupCall | ReturnType<typeof finalAnswer>;
+    type Request =
+      | string
+      | readonly WireItem[]
+      | { readonly items: readonly WireItem[]; readonly endTurn: false }
+      | { readonly failed: { readonly code: string; readonly message: string } };
     // Each model request is a real Responses wire stream through the shipped transport.
-    function responsesStream(id: string, items: WireItem[]) {
+    function responsesStream(id: string, request: Request) {
+      const failed =
+        typeof request === "object" && "failed" in request ? request.failed : undefined;
+      const items: readonly WireItem[] =
+        typeof request === "string"
+          ? [finalAnswer(`msg_${id}`, request)]
+          : "failed" in request
+            ? []
+            : "items" in request
+              ? request.items
+              : request;
+      const endTurn = typeof request === "object" && "endTurn" in request ? request.endTurn : true;
       async function* wire() {
         for (const [outputIndex, item] of items.entries()) {
           if (item.type === "message") {
@@ -365,7 +388,12 @@ describe("Responses final delivery", () => {
           }
           yield { type: "response.output_item.done", output_index: outputIndex, item };
         }
-        yield { type: "response.completed", response: { id, status: "completed", output: items } };
+        yield failed
+          ? { type: "response.failed", response: { id, status: "failed", error: failed } }
+          : {
+              type: "response.completed",
+              response: { id, status: "completed", output: items, end_turn: endTurn },
+            };
       }
       const output = createResponsesAssistantOutput(model);
       const response = new AssistantMessageEventStream();
@@ -381,28 +409,30 @@ describe("Responses final delivery", () => {
           });
           response.end();
         },
-        (error: unknown) => {
-          response.end({ ...output, stopReason: "error", errorMessage: String(error) });
-        },
+        (error: unknown) => failTransportStream({ stream: response, output, error }),
       );
       return response;
     }
 
+    const answered = [lookupCall, finalAnswer("msg_answer", "Use counter B.")];
     const answeredTail = ["toolUse:toolCall", "stop:text", "stop:text"];
+    const keptReply = { disposition: "visible", text: "Use counter B." } as const;
     it.each([
       {
         name: "a later NO_REPLY keeps the completed answer",
         delivery: "deferred",
-        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "NO_REPLY"],
+        requests: [answered, "NO_REPLY"],
         transcript: answeredTail,
         delivered: ["Use counter B."],
+        reply: keptReply,
       },
       {
         name: "a heartbeat turn without block streaming keeps the completed answer",
         delivery: "off",
-        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "NO_REPLY"],
+        requests: [answered, "NO_REPLY"],
         transcript: answeredTail,
         delivered: ["Use counter B."],
+        reply: keptReply,
         heartbeat: true,
       },
       {
@@ -418,6 +448,7 @@ describe("Responses final delivery", () => {
         ],
         transcript: ["toolUse:toolCall", "stop:text+text", "stop:text"],
         delivered: ["First part.", "Second part."],
+        reply: { disposition: "visible", text: "First part.\nSecond part." },
       },
       {
         name: "live blocks of a two-item terminal answer are not resent",
@@ -427,23 +458,30 @@ describe("Responses final delivery", () => {
         ],
         transcript: ["stop:text+text"],
         delivered: ["First part.", "Second part."],
+        reply: { disposition: "visible", text: "First part.\nSecond part." },
       },
       {
         name: "a repeated answer is delivered once",
         delivery: "deferred",
-        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "Use counter B."],
+        requests: [answered, "Use counter B."],
         transcript: answeredTail,
         delivered: ["Use counter B."],
+        reply: keptReply,
       },
       {
         name: "a later answer supersedes the completed answer",
         delivery: "deferred",
-        requests: [
-          [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
-          "Correction: use counter C.",
-        ],
+        requests: [answered, "Correction: use counter C."],
         transcript: answeredTail,
         delivered: ["Correction: use counter C."],
+        reply: { disposition: "visible", text: "Correction: use counter C." },
+      },
+      {
+        name: "a later silent attachment supersedes the completed answer",
+        delivery: "deferred",
+        requests: [answered, "NO_REPLY\nMEDIA:/tmp/openclaw/tts-a/voice-a.opus"],
+        transcript: answeredTail,
+        delivered: ["/tmp/openclaw/tts-a/voice-a.opus"],
       },
       {
         name: "a later NO_REPLY keeps pre-tool progress silent",
@@ -451,29 +489,62 @@ describe("Responses final delivery", () => {
         requests: [[finalAnswer("msg_progress", "Checking counter B."), lookupCall], "NO_REPLY"],
         transcript: ["toolUse:text+toolCall", "stop:", "stop:text"],
         delivered: [],
+        reply: { disposition: "silent" },
+      },
+      {
+        name: "a later NO_REPLY keeps an interim stop that continued the turn silent",
+        delivery: "deferred",
+        requests: [
+          { items: [finalAnswer("msg_interim", "Starting the export now.")], endTurn: false },
+          "NO_REPLY",
+        ],
+        transcript: ["stop:text", "stop:text"],
+        delivered: [],
+        reply: { disposition: "silent" },
       },
       {
         name: "quiet mode keeps the completed answer private",
         delivery: "deferred",
-        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "NO_REPLY"],
+        requests: [answered, "NO_REPLY"],
         transcript: answeredTail,
         delivered: ["Sent with the message tool."],
+        reply: keptReply,
         quiet: true,
+      },
+      {
+        name: "an overflow compaction retry keeps the completed answer",
+        delivery: "deferred",
+        requests: [
+          answered,
+          {
+            failed: {
+              code: "context_length_exceeded",
+              message: "Your input exceeds the context window of this model.",
+            },
+          },
+          "NO_REPLY",
+        ],
+        transcript: ["toolUse:toolCall", "stop:text", "error:", "stop:text"],
+        delivered: ["Use counter B."],
+        reply: keptReply,
+        compactionRetry: true,
       },
     ] as const)("$name", async ({ delivery, requests, transcript, delivered, ...row }) => {
       const heartbeat = "heartbeat" in row;
       const quiet = "quiet" in row;
       const sent: string[] = [];
+      const show = (payload: { text?: string; mediaUrl?: string }) =>
+        payload.text ?? payload.mediaUrl ?? "";
       const blockStreamingEnabled = delivery !== "off";
       const pipeline = createBlockReplyPipeline({
         onBlockReply: (payload) => {
-          sent.push(payload.text ?? "");
+          sent.push(show(payload));
         },
         timeoutMs: 5000,
       });
       const handler = createBlockReplyDeliveryHandler({
         onBlockReply: (payload) => {
-          sent.push(payload.text ?? "");
+          sent.push(show(payload));
         },
         normalizeStreamingText: (payload) => ({ text: payload.text, skip: false }),
         applyReplyToMode: (payload) => payload,
@@ -497,50 +568,61 @@ describe("Responses final delivery", () => {
         details: {},
       }));
       const pending = requests.map(
-        (items, index) => () =>
-          responsesStream(
-            `resp_${index}`,
-            typeof items === "string" ? [finalAnswer("msg_next", items)] : [...items],
-          ),
+        (request, index) => () => responsesStream(`resp_${index}`, request),
       );
-      const messages = await runAgentLoop(
+      const run = (prompts: AgentMessage[], history: AgentMessage[]) =>
+        runAgentLoop(
+          prompts,
+          {
+            systemPrompt: "",
+            messages: history,
+            tools: [
+              {
+                name: "lookup",
+                label: "lookup",
+                description: "lookup",
+                parameters: Type.Object({}),
+                execute: lookup,
+              },
+            ],
+          },
+          {
+            model,
+            convertToLlm: (messages) =>
+              messages.filter(
+                (message): message is Message =>
+                  message.role === "user" ||
+                  message.role === "assistant" ||
+                  message.role === "toolResult",
+              ),
+          },
+          async (event) => {
+            h.emit(event);
+            await h.subscription.waitForPendingEvents();
+          },
+          undefined,
+          () => {
+            const next = pending.shift();
+            if (!next) {
+              throw new Error("unexpected model request");
+            }
+            return next();
+          },
+        );
+      const messages = await run(
         [{ role: "user", content: "Where do I store my bag?", timestamp: 1 }],
-        {
-          systemPrompt: "",
-          messages: [],
-          tools: [
-            {
-              name: "lookup",
-              label: "lookup",
-              description: "lookup",
-              parameters: Type.Object({}),
-              execute: lookup,
-            },
-          ],
-        },
-        {
-          model,
-          convertToLlm: (history) =>
-            history.filter(
-              (message): message is Message =>
-                message.role === "user" ||
-                message.role === "assistant" ||
-                message.role === "toolResult",
-            ),
-        },
-        async (event) => {
-          h.emit(event);
-          await h.subscription.waitForPendingEvents();
-        },
-        undefined,
-        () => {
-          const next = pending.shift();
-          if (!next) {
-            throw new Error("unexpected model request");
-          }
-          return next();
-        },
+        [],
       );
+      if ("compactionRetry" in row) {
+        // Session overflow recovery compacts, drops the failed request and continues the transcript.
+        h.emit({
+          type: "compaction_end",
+          reason: "overflow",
+          outcome: { status: "completed", tokensBefore: 100, tokensAfter: 50, willRetry: true },
+        });
+        await h.subscription.waitForPendingEvents();
+        messages.push(...(await run([], messages.slice(0, -1))));
+      }
       await h.subscription.waitForPendingEvents();
       await pipeline.flush({ force: true });
       expect(pending).toEqual([]);
@@ -557,36 +639,80 @@ describe("Responses final delivery", () => {
             : [],
         ),
       ).toEqual(transcript);
-      const current = h.subscription.getCurrentAttemptAssistant();
-      const payloads = buildEmbeddedRunPayloads({
+      const completed = h.subscription.getCurrentAttemptAssistant();
+      const attempt: EmbeddedRunAttemptWithReceiptEvidence = {
+        terminal: { kind: "ok" },
+        sessionIdUsed: "session",
+        messagesSnapshot: messages,
         assistantTexts: h.subscription.assistantTexts,
         answerSegments: h.subscription.answerSegments,
         inputAnswer: h.subscription.getInputAnswer(),
-        assistantMessageIndex: h.subscription.getLastAssistantTextMessageIndex(),
-        lastAssistant: current,
-        currentAssistant: current ?? null,
-        sessionKey: "agent:main:telegram:direct:astra",
-        isHeartbeatTrigger: heartbeat,
+        keptAnswer: h.subscription.getKeptAnswer(),
+        lastAssistantTextMessageIndex: h.subscription.getLastAssistantTextMessageIndex(),
+        toolMetas: [],
+        lastAssistant: completed,
+        currentAttemptAssistant: completed,
+        currentAttemptCompletedAssistant: completed,
+        didSendViaMessagingTool: quiet,
+        messagingToolSentTexts: [],
+        messagingToolSentMediaUrls: [],
+        messagingToolSentTargets: [],
         ...(quiet
-          ? {
-              sourceReplyDeliveryMode: "message_tool_only" as const,
-              didSendViaMessagingTool: true,
-              messagingToolSourceReplyPayloads: [{ text: "Sent with the message tool." }],
-            }
+          ? { messagingToolSourceReplyPayloads: [{ text: "Sent with the message tool." }] }
           : {}),
+        cloudCodeAssistFormatError: false,
+        replayMetadata: { hadPotentialSideEffects: false, replaySafe: true },
+        itemLifecycle: { startedCount: 0, completedCount: 0, activeCount: 0 },
+      };
+      const prepared = prepareEmbeddedRunTerminal({
+        runParams: {
+          admittedRunContext: createTestAdmittedRunContext("run"),
+          sessionId: "session",
+          sessionKey: "agent:main:telegram:direct:astra",
+          runId: "run",
+          workspaceDir: "/tmp/openclaw-test",
+          prompt: "Where do I store my bag?",
+          timeoutMs: 60_000,
+          trigger: heartbeat ? "heartbeat" : "user",
+          ...(quiet ? { sourceReplyDeliveryMode: "message_tool_only" as const } : {}),
+        },
+        attempt,
+        currentAttemptCompletedAssistant: completed,
+        provider: "openai",
+        model: model.id,
+        activeErrorContext: { provider: "openai", model: model.id },
+        authProfileStore: { version: 1, profiles: {} },
+        sessionIdUsed: "session",
+        outerContextTokenMeta: {},
+        usageAccumulator: createUsageAccumulator(),
+        contextRecoveryState: createEmbeddedRunContextRecoveryState(),
+        resolvedToolResultFormat: "markdown",
+        terminalState: {
+          outcome: { reason: "completed", status: "ok", stopReason: "stop" },
+          signalOwnedInterruption: false,
+        },
       });
       if (heartbeat) {
-        expect(resolveHeartbeatReplyPayload(payloads)?.text).toBe("Use counter B.");
+        expect(resolveHeartbeatReplyPayload(prepared.payloads)?.text).toBe("Use counter B.");
       }
       const { replyPayloads } = await buildReplyPayloads({
-        payloads,
+        payloads: prepared.payloads,
         isHeartbeat: heartbeat,
         didLogHeartbeatStrip: false,
         blockStreamingEnabled,
         blockReplyPipeline: pipeline,
         replyToMode: "off",
       });
-      expect([...sent, ...replyPayloads.map((payload) => payload.text)]).toEqual(delivered);
+      expect([...sent, ...replyPayloads.map(show)]).toEqual(delivered);
+      if ("reply" in row) {
+        // Sub-agent completion and A2A forwarding read the terminal reply, not the payloads.
+        expect(
+          buildAgentRunTerminalReplySnapshot({
+            visibleText: prepared.finalAssistantVisibleText,
+            rawText: prepared.finalAssistantRawText,
+          }),
+        ).toEqual(row.reply);
+      }
     });
   });
 });

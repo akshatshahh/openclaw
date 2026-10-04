@@ -21,6 +21,7 @@ export function createSubscriptionMock(): SubscriptionMock {
     hasSuccessfulModelResponse: () => false,
     getLastAssistantTextMessageIndex: () => undefined,
     getInputAnswer: () => undefined,
+    getKeptAnswer: () => undefined,
     getLatestMcpAppChannelView: () => undefined,
     getLatestMcpConnectAction: () => undefined,
     toolMetas: [] as SubscriptionMock["toolMetas"],

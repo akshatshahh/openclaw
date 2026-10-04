@@ -1,9 +1,12 @@
 // Full-entry coverage for retrying an already-capped mid-turn transcript.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTextToolResult } from "../../../test/helpers/text-tool-result.js";
+import { makeUserMessage } from "../../../test/helpers/user-message.js";
+import { createSubscribedSessionHarness } from "../embedded-agent-subscribe.e2e-harness.js";
 import { buildEmbeddedRunnerAssistant } from "../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import { makeCompactionSuccess, makeOverflowError } from "./run.overflow-compaction.fixture.js";
 import {
+  mockedBuildEmbeddedRunPayloads,
   mockedCompactDirect,
   mockedRunEmbeddedAttempt,
   resetSharedRunIntegrationHarnessMocks,
@@ -411,5 +414,67 @@ describe("runEmbeddedAgent mid-turn precheck retry", () => {
       kind: "compaction_failure",
       message: expect.stringContaining("compaction unavailable"),
     });
+  });
+
+  it("keeps the input's completed answer when the overflow retry ends silently", async () => {
+    const { buildEmbeddedRunPayloads } =
+      await vi.importActual<typeof import("./run/payloads.js")>("./run/payloads.js");
+    mockedBuildEmbeddedRunPayloads.mockImplementation(buildEmbeddedRunPayloads);
+    const attempts = [
+      [
+        buildEmbeddedRunnerAssistant({
+          content: [{ type: "toolCall", id: "call-lookup", name: "lookup", arguments: {} }],
+          stopReason: "toolUse",
+        }),
+        buildEmbeddedRunnerAssistant({ content: [{ type: "text", text: "Use counter B." }] }),
+        buildEmbeddedRunnerAssistant({
+          stopReason: "error",
+          errorMessage: makeOverflowError().message,
+        }),
+      ],
+      [buildEmbeddedRunnerAssistant({ content: [{ type: "text", text: "NO_REPLY" }] })],
+    ];
+    // Each attempt owns a real subscription; the run loop alone carries state between them.
+    for (const messages of attempts) {
+      mockedRunEmbeddedAttempt.mockImplementationOnce(async (params) => {
+        params.onUserMessagePersisted?.(makeUserMessage(params.prompt, 1));
+        const { emit, subscription } = createSubscribedSessionHarness({
+          runId: params.runId,
+          initialInputAnswer: params.initialInputAnswer,
+        });
+        for (const message of messages) {
+          emit({ type: "message_start", message });
+          emit({ type: "message_end", message });
+        }
+        await subscription.waitForPendingEvents();
+        const completed = subscription.getCurrentAttemptAssistant();
+        subscription.unsubscribe();
+        return session.makeAttemptResult({
+          assistantTexts: subscription.assistantTexts,
+          answerSegments: subscription.answerSegments,
+          inputAnswer: subscription.getInputAnswer(),
+          keptAnswer: subscription.getKeptAnswer(),
+          lastAssistantTextMessageIndex: subscription.getLastAssistantTextMessageIndex(),
+          lastAssistant: completed,
+          currentAttemptAssistant: completed,
+          currentAttemptCompletedAssistant: completed,
+          messagesSnapshot: messages,
+        });
+      });
+    }
+    mockedCompactDirect.mockResolvedValueOnce(
+      makeCompactionSuccess({ summary: "Compacted the lookup result", tokensBefore: 210_000 }),
+    );
+
+    const result = await runEmbeddedAgent({
+      ...session.runParams,
+      runId: "run-overflow-retry-kept-answer",
+    });
+
+    expect(mockedCompactDirect).toHaveBeenCalledOnce();
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expectRetryContinuesFromTranscript();
+    expect(result.payloads?.map((payload) => payload.text)).toEqual(["Use counter B."]);
+    expect(result.meta.finalAssistantVisibleText).toBe("Use counter B.");
   });
 });
