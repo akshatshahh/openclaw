@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { bindCronJobAdmittedRun, resetCronActiveJobs } from "../cron/active-jobs.js";
@@ -11,7 +12,10 @@ import {
   loadedCronStoreFromRows,
   upsertCronJobRow,
 } from "../cron/store/row-codec.js";
-import { releaseLocalCronRunReceiptOwnership } from "../cron/store/run-receipt-store.js";
+import {
+  finishCronRunReceiptAsync,
+  releaseLocalCronRunReceiptOwnership,
+} from "../cron/store/run-receipt-store.js";
 import { claimCronRunReceiptForTest } from "../cron/store/run-receipt-store.test-support.js";
 import type { CronStoredJob } from "../cron/types.js";
 import { buildCronExecOperationBinding } from "../gateway/operator-approval-standing-grants.js";
@@ -31,6 +35,7 @@ import { updateExecApprovals } from "../infra/exec-approvals-store.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import * as workerAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
+import { getProcessSupervisor } from "../process/supervisor/index.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -40,7 +45,9 @@ import {
 } from "../state/openclaw-state-db.js";
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
 import { observeMainThreadSql } from "../test-utils/main-thread-sql-spies.test-support.js";
+import { resetProcessRegistryForTests } from "./bash-process-registry.test-support.js";
 import { processGatewayAllowlist } from "./bash-tools.exec-host-gateway.js";
+import { runExecProcess } from "./bash-tools.exec-runtime.js";
 
 const commitExecAuthorizationMock = vi.hoisted(() =>
   vi.fn<typeof import("../infra/exec-approvals.js").commitExecAuthorizationLocked>(),
@@ -131,7 +138,10 @@ function runGatewayAllowlist(
 
 describe("cron standing grants", () => {
   const CRON_STORE_KEY = "/tmp/openclaw-exec-host-cron-store";
-  const grantCommand = "run-nightly-backup --verbose";
+  const grantCommand =
+    process.platform === "win32"
+      ? "Add-Content -Encoding utf8 -Path cron-native-effects.txt -Value cron-native-launch"
+      : "printf 'cron-native-launch\\n' >> cron-native-effects.txt";
   let stateDirBackup: string | undefined;
   let hadStateDirBackup = false;
   let workdir: string;
@@ -146,6 +156,9 @@ describe("cron standing grants", () => {
     const stateDir = fs.realpathSync(grantTempDirs.make("openclaw-cron-grant-state-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
     workdir = fs.realpathSync(grantTempDirs.make("openclaw-cron-grant-cwd-"));
+    if (process.platform !== "win32") {
+      vi.stubEnv("SHELL", "/bin/sh");
+    }
     resetGatewayWorkAdmission();
     resetDiagnosticEventsForTest();
     commitExecAuthorizationMock.mockReset();
@@ -163,6 +176,7 @@ describe("cron standing grants", () => {
       runOwner?.close();
       runOwner = undefined;
       resetCronActiveJobs();
+      resetProcessRegistryForTests();
       await closeOpenClawStateDatabaseAsync();
       closeOpenClawStateDatabaseForTest();
       if (hadStateDirBackup) {
@@ -171,6 +185,7 @@ describe("cron standing grants", () => {
         delete process.env.OPENCLAW_STATE_DIR;
       }
       resetGatewayWorkAdmission();
+      vi.unstubAllEnvs();
       cleanup();
     }),
   );
@@ -308,6 +323,7 @@ describe("cron standing grants", () => {
       jobName: "Nightly backup",
       standingGrantAuthority: runOwner.standingGrantAuthority,
     });
+    return { job, receipt };
   }
 
   async function runCron() {
@@ -325,48 +341,117 @@ describe("cron standing grants", () => {
     return result;
   }
 
+  async function runNativeCron(approval: Awaited<ReturnType<typeof runCron>>) {
+    const scopeKey = `cron-native:${workdir}`;
+    const closeScope = getProcessSupervisor().acquireScopeCleanup(scopeKey, {
+      processTree: "owned-only",
+    });
+    try {
+      const run = await runExecProcess({
+        command: grantCommand,
+        execCommand: approval.execCommandOverride ?? grantCommand,
+        workdir,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: workdir,
+          ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        },
+        usePty: false,
+        warnings: [],
+        maxOutput: 1000,
+        pendingMaxOutput: 1000,
+        notifyOnExit: false,
+        timeoutSec: 10,
+        scopeKey,
+        startupSignal: controller.signal,
+        beforeSpawn: approval.revalidateBeforeExecution,
+        assertCurrent: approval.assertCurrent,
+        initiateSpawn: approval.initiateSpawn,
+        releaseSpawn: approval.releaseSpawn,
+      });
+      return await run.promise;
+    } finally {
+      await closeScope();
+    }
+  }
+
+  function readNativeEffects() {
+    return fs
+      .readFileSync(path.join(workdir, "cron-native-effects.txt"), "utf8")
+      .replace(/^\uFEFF/, "")
+      .trim();
+  }
+
   it("executes a cron occurrence via a standing grant without prompting", async () => {
     await prepareCronRun(true);
     const security = captureSecurityEvents();
     const sql = observeMainThreadSql();
     sql.calibrate();
+    let result: Awaited<ReturnType<typeof runCron>>;
     try {
-      const result = await runCron();
+      result = await runCron();
       expect(result.pendingResult).toBeUndefined();
       expect(result.deniedResult).toBeUndefined();
       expect(callGatewayToolMock).not.toHaveBeenCalled();
       expect(result.revalidateBeforeExecution).toBeDefined();
       await expect(result.revalidateBeforeExecution?.()).resolves.toBeUndefined();
-      const launch = vi.fn();
-      result.initiateSpawn?.(launch);
-      expect(launch).toHaveBeenCalledOnce();
       sql.expectIdle();
     } finally {
       sql.restore();
       security.stop();
     }
+    await expect(runNativeCron(result)).resolves.toMatchObject({
+      status: "completed",
+      exitCode: 0,
+    });
+    expect(readNativeEffects()).toBe("cron-native-launch");
+    await expect(runNativeCron(result)).rejects.toThrow("exec denied by final preflight");
+    expect(readNativeEffects()).toBe("cron-native-launch");
     expect(JSON.stringify(security.events)).toContain("standing-grant");
     expect(readGrantUseCounts()).toEqual([1]);
   });
 
-  it("denies at the spawn boundary when the grant is invalidated after consult", async () => {
-    await prepareCronRun(true);
-    const security = captureSecurityEvents();
-    const result = await runCron();
-    expect(result.pendingResult).toBeUndefined();
-    expect(result.deniedResult).toBeUndefined();
-    expect(result.revalidateBeforeExecution).toBeDefined();
-    const [grant] = await listCronStandingGrants();
-    await revokeCronStandingGrant({ grantId: grant!.grantId, revokedBy: "operator" });
-    const denied = await result.revalidateBeforeExecution?.();
-    security.stop();
-    expect(denied?.details.status).toBe("failed");
-    expect(denied?.content[0]).toMatchObject({
-      text: expect.stringContaining("standing grant no longer valid"),
-    });
-    expect(readGrantUseCounts()).toEqual([0]);
-    expect(JSON.stringify(security.events)).toContain("standing-grant-invalidated");
-  });
+  it.each(["revoked grant", "finished receipt", "replacement receipt"] as const)(
+    "prevents native I/O after consult with a %s",
+    async (invalidation) => {
+      const { job, receipt } = await prepareCronRun(true);
+      const security = captureSecurityEvents();
+      const result = await runCron();
+      expect(result.pendingResult).toBeUndefined();
+      expect(result.deniedResult).toBeUndefined();
+      expect(result.revalidateBeforeExecution).toBeDefined();
+      if (invalidation === "revoked grant") {
+        const [grant] = await listCronStandingGrants();
+        await revokeCronStandingGrant({ grantId: grant!.grantId, revokedBy: "operator" });
+      } else {
+        await finishCronRunReceiptAsync({
+          handle: receipt,
+          status: "ok",
+          finishedAtMs: Date.now(),
+        });
+        if (invalidation === "replacement receipt") {
+          const successor = claimCronRunReceiptForTest(CRON_STORE_KEY, job, Date.now());
+          releases.push(() => releaseLocalCronRunReceiptOwnership(successor));
+          expect(successor.receiptId).not.toBe(receipt.receiptId);
+        }
+      }
+      await expect(runNativeCron(result)).rejects.toMatchObject({
+        message: "exec denied by final preflight",
+        result: {
+          details: { status: "failed" },
+          content: [
+            expect.objectContaining({
+              text: expect.stringContaining("standing grant no longer valid"),
+            }),
+          ],
+        },
+      });
+      security.stop();
+      expect(fs.existsSync(path.join(workdir, "cron-native-effects.txt"))).toBe(false);
+      expect(readGrantUseCounts()).toEqual([0]);
+      expect(JSON.stringify(security.events)).toContain("standing-grant-invalidated");
+    },
+  );
 
   it.each([
     "revoke",
@@ -427,7 +512,10 @@ describe("cron standing grants", () => {
         expect(() => result.initiateSpawn?.(launch)).toThrow("synthetic native launch failure");
         expect(launch).toHaveBeenCalledOnce();
         expect((await result.revalidateBeforeExecution?.())?.details.status).toBe("failed");
-      } else if (intervention === "cancel" || intervention.startsWith("policy")) {
+      } else if (intervention.startsWith("policy")) {
+        await expect(runNativeCron(result)).rejects.toThrow("exec denied by final preflight");
+        expect(fs.existsSync(path.join(workdir, "cron-native-effects.txt"))).toBe(false);
+      } else if (intervention === "cancel") {
         expect(() => result.initiateSpawn?.(launch)).toThrow();
         expect(launch).not.toHaveBeenCalled();
       } else {

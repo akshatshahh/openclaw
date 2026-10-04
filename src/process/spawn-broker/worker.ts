@@ -172,7 +172,12 @@ async function launch(
   starting.set(message.id, pending);
   let spawnedChild: ChildProcess | undefined;
   const assertActive = () => {
-    if (stopping || !process.connected || pending.canceled || pending.signal) {
+    // Ordinary queued commands still settle cancellation through their native process result.
+    if (
+      stopping ||
+      !process.connected ||
+      (message.type === "prepare-spawn" && (pending.canceled || pending.signal))
+    ) {
       throw new Error("Spawn broker is stopping");
     }
   };
