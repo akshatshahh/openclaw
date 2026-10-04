@@ -392,20 +392,24 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
   // a new session ID (empty transcript) each run, avoiding the cost of
   // sending the full conversation history (~100K tokens) to the LLM.
   // Delivery routing uses the selected conversation, not the fresh execution row.
-  const resolvedDelivery = await resolveHeartbeatDeliveryTargetWithSessionRoute({
-    cfg,
-    agentId,
-    entry: conversationEntry,
-    // The heartbeat target, recipient and direct-chat policy govern heartbeat output.
-    // A conversation's own command completion answers in that conversation.
-    heartbeat: preflight.conversationRoute ? { target: "last" } : heartbeat,
-    currentSessionKey: sessionKey,
-    // A base queue's route stays excluded; events on the actual isolated queue
-    // own their route, including exec completion after the base route moves.
-    turnSource: preflight.session.inspectsRunQueue
-      ? preflight.turnSourceDeliveryContext
-      : undefined,
-  });
+  const resolveDeliveryFor = (heartbeatPolicy: typeof heartbeat) =>
+    resolveHeartbeatDeliveryTargetWithSessionRoute({
+      cfg,
+      agentId,
+      entry: conversationEntry,
+      heartbeat: heartbeatPolicy,
+      currentSessionKey: sessionKey,
+      // A base queue's route stays excluded; events on the actual isolated queue
+      // own their route, including exec completion after the base route moves.
+      turnSource: preflight.session.inspectsRunQueue
+        ? preflight.turnSourceDeliveryContext
+        : undefined,
+    });
+  // The heartbeat target, recipient and direct-chat policy govern heartbeat output.
+  // A conversation's own command completion answers in that conversation.
+  const resolvedDelivery = await resolveDeliveryFor(
+    preflight.conversationRoute ? { target: "last" } : heartbeat,
+  );
   // Operator-chosen suppression is the resolver's verdict, not a config string:
   // an explicit target that never resolves to a route also reports `target-none`.
   // Gate here so neither the relay prompt nor the session publication path can
@@ -461,6 +465,20 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
           channel: delivery.channel,
           accountId: delivery.accountId,
         });
+  // The continuation authorizes the model's reply, not the runner's synthesized failure
+  // notice: that notice keeps the heartbeat target and alert toggle that governed it (#153573).
+  const heartbeatDelivery = preflight.conversationRoute
+    ? await resolveDeliveryFor(heartbeat)
+    : undefined;
+  const quietFailureNotice =
+    heartbeatDelivery !== undefined &&
+    (heartbeatDelivery.channel === "none" ||
+      !heartbeatDelivery.to ||
+      !resolveHeartbeatVisibility({
+        cfg,
+        channel: heartbeatDelivery.channel,
+        accountId: heartbeatDelivery.accountId,
+      }).showAlerts);
   const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
   const replyPrefix = createReplyPrefixContext({
     cfg,
@@ -608,6 +626,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
     runSessionKey,
     outboundPolicySessionKey,
     internalProjection,
+    quietFailureNotice,
     ...heartbeatRunPrompt,
     // Selected work outranks a coalesced wake; periodic tasks own their prompt even on an exec wake.
     useHeartbeatFailureCopy:

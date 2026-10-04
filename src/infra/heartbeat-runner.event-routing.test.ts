@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resetProcessRegistryForTests } from "../agents/bash-process-registry.test-support.js";
 import { createExecTool } from "../agents/bash-tools.exec-run.js";
+import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../agents/failover/user-copy.js";
 import type { InternalGetReplyOptions } from "../auto-reply/reply/get-reply.types.js";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import { getReplySystemEventContext } from "../auto-reply/reply/system-event-session-key.js";
@@ -27,6 +28,7 @@ import { runHeartbeatOnce, startHeartbeatRunner } from "./heartbeat-runner.js";
 import {
   type HeartbeatReplySpy,
   type HeartbeatReplyContext,
+  setHeartbeatAgentTurnStatus,
   heartbeatTestConfig,
   getFirstReplyContext,
   mockCallAt,
@@ -582,9 +584,28 @@ describe("Heartbeat event routing", () => {
       stored: { lastAccountId: "default" },
       accountId: "work",
     },
+    // A continuation authorizes the model's reply; the runner's generic failure notice
+    // keeps the heartbeat target and alert toggle that governed it on main (#153573).
+    { name: "failed turn", isolatedSession: true, trigger: "user", reply: "failed", sends: false },
+    {
+      name: "failed turn, heartbeat alerts off",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "failed",
+      sends: false,
+      target: "last",
+    },
+    {
+      name: "failed turn, visible heartbeat",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "failed",
+      sends: true,
+      target: "last",
+    },
   ])(
-    "answers a forum topic's own background command under target none ($name)",
-    async ({ name, isolatedSession, trigger, reply, sends, stored, accountId }) => {
+    "answers a forum topic's own background command under quiet heartbeats ($name)",
+    async ({ name, isolatedSession, trigger, reply, sends, stored, accountId, target }) => {
       await withRouting(
         async ({ cfg, storePath, replySpy, sendTelegram }) => {
           const sessionKey =
@@ -604,14 +625,20 @@ describe("Heartbeat event routing", () => {
           });
           cfg.channels!.telegram = {
             allowFrom: ["*"],
-            heartbeatVisibility:
-              name === "heartbeat alerts off"
-                ? { showOk: false, showAlerts: false, useIndicator: false }
-                : { showOk: true },
+            heartbeatVisibility: name.endsWith("heartbeat alerts off")
+              ? { showOk: false, showAlerts: false, useIndicator: false }
+              : { showOk: true },
           };
-          replySpy.mockResolvedValue({
-            text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
-          });
+          if (reply === "failed") {
+            replySpy.mockImplementation(async (_ctx, options) => {
+              setHeartbeatAgentTurnStatus(options, "failed");
+              return { text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT, isError: true };
+            });
+          } else {
+            replySpy.mockResolvedValue({
+              text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
+            });
+          }
           const completionRun = createDeferred<Awaited<ReturnType<typeof runHeartbeatOnce>>>();
           const runner = startHeartbeatRunner({
             cfg,
@@ -646,7 +673,9 @@ describe("Heartbeat event routing", () => {
           // An empty success still wakes Telegram turns; the model's NO_REPLY must stay silent.
           const command = reply === "NO_REPLY" ? "true" : "echo RESULT-7F3A";
           await exec.execute("call-background", { command, background: true });
-          await expect(completionRun.promise).resolves.toMatchObject({ status: "ran" });
+          await expect(completionRun.promise).resolves.toMatchObject({
+            status: reply === "failed" ? "failed" : "ran",
+          });
 
           const ctx = getFirstReplyContext(replySpy);
           const options = mockCallAt(replySpy, 0, "completion turn")[1] as InternalGetReplyOptions;
@@ -658,16 +687,20 @@ describe("Heartbeat event routing", () => {
             return;
           }
           expect(ctx).toMatchObject({ SessionKey: sessionKey, InternalTurnSource: "exec" });
-          expect(ctx.Body?.includes("RESULT-7F3A")).toBe(sends);
+          expect(ctx.Body?.includes("RESULT-7F3A")).toBe(reply !== "NO_REPLY");
           expect(options.bootstrapContextMode).toBeUndefined();
+          const sent =
+            reply === "failed" ? GENERIC_EXTERNAL_RUN_FAILURE_TEXT : "The job printed RESULT-7F3A.";
           expect(sendTelegram.mock.calls.map((call) => call.slice(0, 2))).toEqual(
-            sends ? [[topic, "The job printed RESULT-7F3A."]] : [],
+            sends ? [[topic, sent]] : [],
           );
-          expect(peekSystemEvents(resolveSystemEventQueueKey(sessionKey, "main"))).toEqual([]);
+          if (reply !== "failed") {
+            expect(peekSystemEvents(resolveSystemEventQueueKey(sessionKey, "main"))).toEqual([]);
+          }
         },
         isolatedSession,
         {
-          target: "none",
+          target: target ?? "none",
           lightContext: true,
           activeHours: { start: "00:00", end: "00:01", timezone: "UTC" },
         },

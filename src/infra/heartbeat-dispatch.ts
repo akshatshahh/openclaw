@@ -440,7 +440,11 @@ async function prepareHeartbeatDispatchReply(
     }
   }
   const noChannelTarget = !prepared.internalProjection && (!channel || !delivery.to);
-  if (noChannelTarget || !visibility.showAlerts || (failed && outcome.shouldSkipMain)) {
+  if (
+    noChannelTarget ||
+    !visibility.showAlerts ||
+    (failed && (outcome.shouldSkipMain || prepared.quietFailureNotice))
+  ) {
     if (!failed) {
       await unconfirmed(noChannelTarget ? (delivery.reason ?? "no-target") : "alerts-disabled");
       if (!visibility.showAlerts) {
