@@ -171,10 +171,10 @@ export function buildEmbeddedRunPayloads(params: {
     const answerStands =
       answer !== undefined &&
       terminalAnswer !== undefined &&
-      (terminalAnswer.isSilent ||
-        (!terminalAnswer.text.trim() &&
-          !terminalAnswer.mediaUrls?.length &&
-          !terminalAssistant?.openclawDelivery?.tts?.text?.trim()));
+      (terminalAnswer.isSilent || !terminalAnswer.text.trim()) &&
+      !terminalAnswer.mediaUrls?.length &&
+      !terminalAnswer.audioAsVoice &&
+      !terminalAssistant?.openclawDelivery?.tts?.text?.trim();
     const assistantForPayload = answerStands ? answer.assistant : terminalAssistant;
     const assistantMessageIndex = answerStands ? answer.messageIndex : terminalMessageIndex;
     // Pre-upgrade recovered messages have no stored facts, and recovery intentionally does not
