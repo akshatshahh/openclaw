@@ -18,7 +18,6 @@ import {
   buildCronEventPrompt,
   buildExecEventPrompt,
   isCronSystemEvent,
-  isConversationExecCompletion,
   isExecCompletionEvent,
   isHeartbeatDeliveryAwarenessEvent,
   isRelayableExecCompletionEvent,
@@ -82,7 +81,8 @@ function resolveConversationCompletionRoute(
   return route &&
     events.every(
       (event) =>
-        isConversationExecCompletion(event) &&
+        event.fromConversationTurn === true &&
+        isExecCompletionEvent(event.text) &&
         channelRouteTargetsMatchExact({ left: event.deliveryContext, right: route }),
     ) &&
     isStoredConversationRoute({ ...route, entry })
