@@ -110,15 +110,17 @@ On Agents home, **Manage agents** opens `/settings/agents`. **New agent** opens 
 agent creation flow when available, or agent settings otherwise. `/agents` now
 opens the roster; agent configuration remains at `/settings/agents`.
 
-To browse sessions across agents, choose the **All agents** tile in the identity
-menu’s agent switcher. This enables **team mode**, a browser preference that is off by
+To browse sessions across agents, choose the **Show all** tile in the identity
+menu’s agent switcher. It appears with two or more agents and groups their own
+avatars: two overlap diagonally, three or four form a two-column grid, and five
+or more show three avatars plus a remaining-agent count. This enables **team mode**, a browser preference that is off by
 default. The top row becomes a workspace header with the configured Gateway display
 name, or **OpenClaw**, and a static OpenClaw mark matching the size and vertical alignment of the agent avatar in that row.
 Both modes use the same menu. Below the switcher, **New agent** and
 **See all agents** apply to your roster. A divider separates actions for the
 active agent: **What can Harbor do?** and **Harbor settings**, using that agent’s
 name. **See all agents** opens `/agents`; the named settings action opens the
-active agent’s configuration. The selected agent or **All agents** tile has a ring
+active agent’s configuration. The selected agent or **Show all** tile has a ring
 in the switcher. Documentation, help,
 community, and changelog links remain under **Help** in the account menu at the
 bottom of the sidebar. Sessions appear under agent headers in configured roster order,
@@ -131,10 +133,10 @@ the same order as the groups; choosing an agent opens New session for that agent
 Each group's **+** does this directly, appearing on hover or keyboard focus and remaining visible on touch devices. Selecting a session switches the active
 agent for chat. Choose an agent in the workspace menu to leave team mode with
 that agent selected, restoring the agent chip, Home row, and direct New session
-button. The **All agents** tile is selected while team mode is on; choosing an
+button. The **Show all** tile is selected while team mode is on; choosing an
 agent leaves team mode and selects that agent.
 
-Choosing the **All agents** tile also defaults the shared page scope to **All agents**.
+Choosing the **Show all** tile also defaults the shared page scope to **All agents**.
 That scope, including an explicit **All agents** selection, is saved in this browser
 for each gateway. It survives reloads and switching to another gateway and back,
 even if you open a different agent's chat in team mode. Choosing an agent tile

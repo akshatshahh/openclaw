@@ -5,6 +5,78 @@ import "../test-helpers/load-styles.ts";
 afterEach(() => document.body.replaceChildren());
 
 describe.runIf("__vitest_browser__" in globalThis)("sidebar agent menu layout", () => {
+  it("shows the same mixed avatars in count-aware groups without a backing circle", async () => {
+    await import("./app-sidebar.ts");
+    const { render } = await import("lit");
+    const { renderSidebarAgentMenuSwitcher } = await import("./sidebar-agent-menu-switcher.ts");
+    const image =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR7sAAAAASUVORK5CYII=";
+    const agents = Array.from({ length: 8 }, (_, index) => ({
+      id: "agent-" + index,
+      name: "Agent " + index,
+      identity: {
+        avatarUrl: index === 0 ? image : undefined,
+        emoji: index === 1 ? "🧭" : undefined,
+      },
+    }));
+    const root = document.createElement("div");
+    root.className = "sidebar-agent-menu";
+    root.style.width = "320px";
+    document.body.append(root);
+    for (const count of [0, 1, 2, 3, 4, 5, 8]) {
+      render(
+        renderSidebarAgentMenuSwitcher({
+          activeId: agents[0]!.id,
+          allAgentsScope: true,
+          agents: agents.slice(0, count),
+          identities: new Map(),
+          pinnedAgentIds: [],
+          resolveAvatarUrl: (url) => url,
+          avatarErrorHandler: () => () => {},
+          agentUnreadCount: () => 0,
+        }),
+        root,
+      );
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+      const all = root.querySelector('[value="scope:all"]');
+      if (count < 2) {
+        expect(all).toBeNull();
+        continue;
+      }
+      expect(all?.getAttribute("aria-current")).toBe("true");
+      expect(all?.querySelector(".agent-select__option-label")?.textContent?.trim()).toBe(
+        "Show all",
+      );
+      const group = all!.querySelector<HTMLElement>(".sidebar-agent-menu__avatar-group")!;
+      const items = [...group.querySelectorAll<HTMLElement>(".sidebar-agent-menu__group-item")];
+      expect(items).toHaveLength(Math.min(count, 4));
+      expect(getComputedStyle(group).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      expect(group.querySelector("img")?.getAttribute("src")).toBe(image);
+      expect(group.querySelector('[data-avatar="🧭"]')).not.toBeNull();
+      expect(group.querySelector(".sidebar-agent-menu__group-count")?.textContent?.trim()).toBe(
+        count > 4 ? String(count - 3) + "+" : undefined,
+      );
+      const boxes = items.map((item) => item.getBoundingClientRect());
+      expect(boxes[0]!.width).toBeGreaterThan(0);
+      if (count === 2) {
+        expect(boxes[1]!.left).toBeGreaterThan(boxes[0]!.left);
+        expect(boxes[1]!.top).toBeGreaterThan(boxes[0]!.top);
+        expect(boxes[1]!.left).toBeLessThan(boxes[0]!.right);
+        expect(boxes[1]!.top).toBeLessThan(boxes[0]!.bottom);
+      } else {
+        expect(boxes[1]!.top).toBe(boxes[0]!.top);
+        expect(boxes[2]!.left).toBe(boxes[0]!.left);
+        expect(boxes[2]!.top).toBeGreaterThanOrEqual(boxes[0]!.bottom);
+        if (count >= 4) {
+          expect(boxes[3]!.left).toBe(boxes[1]!.left);
+          expect(boxes[3]!.top).toBe(boxes[2]!.top);
+        }
+      }
+    }
+  });
+
   it("centers short and wrapped names under active and inactive avatars", async () => {
     await import("./app-sidebar.ts");
     const { createGatewayHarness, createSessions, mountSidebar } =

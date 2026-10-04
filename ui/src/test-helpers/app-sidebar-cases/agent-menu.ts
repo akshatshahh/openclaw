@@ -519,103 +519,37 @@ describe("AppSidebar agent chip", () => {
     expect(sidebar.querySelector(".sidebar-agent-menu")).toBe(firstMenu);
   });
 
-  it("keeps the plain roster without a filter at six agents or fewer", async () => {
-    const gateway = createGateway({} as GatewayBrowserClient);
-    const { sidebar } = await mountSidebar(
-      gateway,
-      createSessions("agent-1", ["agent:agent-1:main"]),
-      "panel",
-      manyAgents(6),
-    );
-    sidebar.connected = true;
-    await sidebar.updateComplete;
-
-    sidebar.querySelector<HTMLButtonElement>(".sidebar-agent-card__main")?.click();
-    await sidebar.updateComplete;
-    expect(sidebar.querySelector(".sidebar-agent-menu__filter")).toBeNull();
-    expect(
-      sidebar.querySelectorAll('.sidebar-agent-menu wa-dropdown-item[value^="agent:"]'),
-    ).toHaveLength(6);
-  });
-
-  it("keeps pinned agents first in large scrollable rosters without a filter", async () => {
-    const gateway = createGateway({} as GatewayBrowserClient);
-    const { sidebar, context } = await mountSidebar(
-      gateway,
-      createSessions("agent-1", ["agent:agent-1:main"]),
-      "panel",
-      manyAgents(12),
-    );
-    sidebar.connected = true;
-    sidebar.pinnedAgentIds = ["agent-7", "agent-12"];
-    // Pins sort first, but the scrollable grid keeps every configured agent reachable.
-    context.agentSelection.state.selectedId = "agent-1";
-    await sidebar.updateComplete;
-
-    sidebar.querySelector<HTMLButtonElement>(".sidebar-agent-card__main")?.click();
-    await sidebar.updateComplete;
-    expect(sidebar.querySelector(".sidebar-agent-menu__filter")).toBeNull();
-    // Pinned agents sort first without hiding the remaining roster.
-    const labels = () =>
-      [
-        ...sidebar.querySelectorAll(
-          '.sidebar-agent-menu wa-dropdown-item[value^="agent:"] .agent-select__option-label',
-        ),
-      ].map((el) => el.textContent?.trim());
-    expect(labels()).toEqual([
-      "agent-7",
-      "agent-12",
-      "agent-1",
-      "agent-2",
-      "agent-3",
-      "agent-4",
-      "agent-5",
-      "agent-6",
-      "agent-8",
-      "agent-9",
-      "agent-10",
-      "agent-11",
-    ]);
-  });
-
-  it("keeps the full large roster scrollable when nothing is pinned", async () => {
-    const gateway = createGateway({} as GatewayBrowserClient);
-    const { sidebar } = await mountSidebar(
-      gateway,
-      createSessions("agent-1", ["agent:agent-1:main"]),
-      "panel",
-      manyAgents(12),
-    );
-    sidebar.connected = true;
-    await sidebar.updateComplete;
-
-    sidebar.querySelector<HTMLButtonElement>(".sidebar-agent-card__main")?.click();
-    await sidebar.updateComplete;
-    expect(sidebar.querySelector(".sidebar-agent-menu__filter")).toBeNull();
-    expect(
-      sidebar.querySelectorAll('.sidebar-agent-menu wa-dropdown-item[value^="agent:"]'),
-    ).toHaveLength(12);
-    expect(sidebar.querySelector(".sidebar-agent-menu__agent-grid")).not.toBeNull();
-  });
-
-  it("ignores stale pins when choosing the large-roster fallback", async () => {
-    const gateway = createGateway({} as GatewayBrowserClient);
-    const { sidebar } = await mountSidebar(
-      gateway,
-      createSessions("agent-1", ["agent:agent-1:main"]),
-      "panel",
-      manyAgents(12),
-    );
-    sidebar.connected = true;
-    sidebar.pinnedAgentIds = ["deleted-agent"];
-    await sidebar.updateComplete;
-
-    sidebar.querySelector<HTMLButtonElement>(".sidebar-agent-card__main")?.click();
-    await sidebar.updateComplete;
-    expect(
-      sidebar.querySelectorAll('.sidebar-agent-menu wa-dropdown-item[value^="agent:"]'),
-    ).toHaveLength(12);
-  });
+  it.each([
+    { count: 6, pins: [], order: [1, 2, 3, 4, 5, 6] },
+    { count: 12, pins: ["agent-7", "agent-12"], order: [7, 12, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11] },
+    { count: 12, pins: [], order: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+    { count: 12, pins: ["deleted-agent"], order: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+  ])(
+    "keeps all $count agents in pin order without a filter (pins=$pins)",
+    async ({ count, pins, order }) => {
+      const { sidebar, context } = await mountSidebar(
+        createGateway({} as GatewayBrowserClient),
+        createSessions("agent-1", ["agent:agent-1:main"]),
+        "panel",
+        manyAgents(count),
+      );
+      sidebar.connected = true;
+      sidebar.pinnedAgentIds = pins;
+      context.agentSelection.set("agent-1");
+      await sidebar.updateComplete;
+      sidebar.querySelector<HTMLButtonElement>(".sidebar-agent-card__main")?.click();
+      await sidebar.updateComplete;
+      expect(sidebar.querySelector(".sidebar-agent-menu__filter")).toBeNull();
+      expect(sidebar.querySelector(".sidebar-agent-menu__agent-grid")).not.toBeNull();
+      expect(
+        [
+          ...sidebar.querySelectorAll(
+            '.sidebar-agent-menu wa-dropdown-item[value^="agent:"] .agent-select__option-label',
+          ),
+        ].map((item) => item.textContent?.trim()),
+      ).toEqual(order.map((id) => "agent-" + id));
+    },
+  );
 
   it("loads switcher avatar tiles through the authenticated avatar loader", async () => {
     const avatarRoute = "/avatar/research?v=140879";

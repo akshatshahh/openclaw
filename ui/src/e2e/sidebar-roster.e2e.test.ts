@@ -1,4 +1,5 @@
 import type { LitElement } from "lit";
+import type { Locator } from "playwright";
 import { expect, it } from "vitest";
 import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "../api/types.ts";
 import type { AppSidebarSessionNavigationElement } from "../components/app-sidebar-session-navigation.ts";
@@ -93,12 +94,6 @@ suite.define(() => {
           hasMore: false,
           nextOffset: null,
         });
-        await page.addInitScript(() => {
-          localStorage.setItem(
-            "openclaw:control-ui:community-invite",
-            JSON.stringify({ dismissedAtMs: Date.now() }),
-          );
-        });
         const gateway = await installMockGateway(page, {
           sessions: sessions.sessions,
           methodResponses: {
@@ -154,15 +149,11 @@ suite.define(() => {
         await expect.poll(() => allAgentsTile.isVisible()).toBe(true);
         expect(await allAgentsTile.getAttribute("aria-current")).toBeNull();
         const activeAgentTile = sidebar.locator(".sidebar-agent-menu__agent-switch--active");
-        const expectAgentMenuFocus = () =>
-          expect
-            .poll(() => activeAgentTile.evaluate((el) => el === document.activeElement))
-            .toBe(true);
-        await expectAgentMenuFocus();
+        const expectFocused = (locator: Locator) =>
+          expect.poll(() => locator.evaluate((el) => el === document.activeElement)).toBe(true);
+        await expectFocused(activeAgentTile);
         await page.keyboard.press("Home");
-        await expect
-          .poll(() => allAgentsTile.evaluate((el) => el === document.activeElement))
-          .toBe(true);
+        await expectFocused(allAgentsTile);
         await page.keyboard.press("Enter");
 
         const headers = sidebar.locator(".sidebar-agent-roster__row");
@@ -269,23 +260,15 @@ suite.define(() => {
         const agentTiles = workspaceMenu.locator(
           ".sidebar-agent-menu__agent-grid wa-dropdown-item",
         );
-        await expect
-          .poll(() => agentTiles.first().evaluate((element) => element === document.activeElement))
-          .toBe(true);
+        await expectFocused(agentTiles.first());
         await page.keyboard.press("ArrowDown");
-        await expect
-          .poll(() => agentTiles.nth(1).evaluate((element) => element === document.activeElement))
-          .toBe(true);
+        await expectFocused(agentTiles.nth(1));
         await page.keyboard.press("End");
-        await expect
-          .poll(() => workspaceMenuItems.last().evaluate((el) => el === document.activeElement))
-          .toBe(true);
+        await expectFocused(workspaceMenuItems.last());
         await captureSidebarUiProof(suite, page, "sidebar-team-workspace-menu.png");
         await page.keyboard.press("Escape");
         await expect.poll(() => workspaceMenu.count()).toBe(0);
-        await expect
-          .poll(() => workspace.evaluate((element) => element === document.activeElement))
-          .toBe(true);
+        await expectFocused(workspace);
 
         await sidebar.locator(".sidebar-brand__new-thread").click();
         const newMenu = sidebar.locator(".sidebar-brand .sidebar-new-session-menu");
@@ -353,12 +336,10 @@ suite.define(() => {
         const actions = forgeGroup.locator(".sidebar-agent-roster__actions");
         await forgeGroup.locator(".sidebar-agent-roster__row").focus();
         await page.keyboard.press("Tab");
-        await expect
-          .poll(() => actions.locator("a").evaluate((el) => el === document.activeElement))
-          .toBe(true);
+        await expectFocused(actions.locator("a"));
         await page.keyboard.press("Tab");
         const options = actions.getByRole("button", { name: "Options for Forge" });
-        await expect.poll(() => options.evaluate((el) => el === document.activeElement)).toBe(true);
+        await expectFocused(options);
         await page.keyboard.press("Space");
         await actions.getByRole("menuitem", { name: "All sessions", exact: true }).waitFor();
         expect(await actions.locator("wa-dropdown-item").allTextContents()).toEqual([
@@ -368,21 +349,11 @@ suite.define(() => {
         ]);
         const overflowItems = actions.locator("wa-dropdown-item");
         expect(await overflowItems.locator('[slot="icon"] svg').count()).toBe(3);
-        await expect
-          .poll(() =>
-            overflowItems.first().evaluate((element) => element === document.activeElement),
-          )
-          .toBe(true);
+        await expectFocused(overflowItems.first());
         await page.keyboard.press("ArrowDown");
-        await expect
-          .poll(() =>
-            overflowItems.nth(1).evaluate((element) => element === document.activeElement),
-          )
-          .toBe(true);
+        await expectFocused(overflowItems.nth(1));
         await page.keyboard.press("Escape");
-        await expect
-          .poll(() => options.evaluate((element) => element === document.activeElement))
-          .toBe(true);
+        await expectFocused(options);
         await options.press("Enter");
         await actions.getByRole("menuitem", { name: "All sessions", exact: true }).click();
         await waitForControlUiRoute(page, { routeId: "sessions", pathname: "/sessions" });
@@ -428,7 +399,7 @@ suite.define(() => {
         expect(
           await sidebar.locator(".sidebar-agent-menu__agent-grid wa-dropdown-item").count(),
         ).toBe(5);
-        await expectAgentMenuFocus();
+        await expectFocused(activeAgentTile);
         await page.keyboard.press("Escape");
         await expect.poll(() => workspaceMenu.count()).toBe(0);
         await page.setViewportSize({ width: 390, height: 844 });
@@ -444,13 +415,11 @@ suite.define(() => {
           }
           await trigger.press("Enter");
           await expect.poll(() => allAgentsTile.isVisible()).toBe(true);
-          await expectAgentMenuFocus();
+          await expectFocused(activeAgentTile);
           await page.keyboard.press("Escape");
           await expect.poll(() => workspaceMenu.count()).toBe(0);
           expect(await sidebar.isVisible()).toBe(true);
-          await expect
-            .poll(() => trigger.evaluate((el) => el === document.activeElement))
-            .toBe(true);
+          await expectFocused(trigger);
         }
       },
     );

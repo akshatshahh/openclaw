@@ -47,9 +47,26 @@ describe("AppSidebar agent menu scope", () => {
     },
   );
 
-  it.each(["chip", "roster"] as const)(
-    "opens See all agents without changing the agent, scope, or %s mode",
-    async (mode) => {
+  it.each(
+    (["chip", "roster"] as const).flatMap((mode) => [
+      {
+        mode,
+        value: "agents-directory",
+        label: "See all agents",
+        route: "agents-home",
+        options: undefined,
+      },
+      {
+        mode,
+        value: "agent-settings",
+        label: "research settings",
+        route: "agents",
+        options: { pathname: "/settings/agents/research" },
+      },
+    ]),
+  )(
+    "opens $label without changing the agent, scope, or $mode mode",
+    async ({ mode, value, label, route, options }) => {
       const { sidebar, context } = await mountSidebar(
         createGateway({} as GatewayBrowserClient),
         createSessions("main", ["agent:main:main"]),
@@ -64,7 +81,6 @@ describe("AppSidebar agent menu scope", () => {
       context.agentSelection.setScope(null);
       sidebar.sidebarAgentsMode = mode;
       await sidebar.updateComplete;
-
       sidebar
         .querySelector<HTMLButtonElement>(
           ".sidebar-agent-card__main, .sidebar-workspace-header__main",
@@ -72,53 +88,16 @@ describe("AppSidebar agent menu scope", () => {
         ?.click();
       await sidebar.updateComplete;
       const item = sidebar.querySelector<HTMLElement>(
-        '.sidebar-agent-menu [value="command:agents-directory"]',
+        '.sidebar-agent-menu [value="command:' + value + '"]',
       );
-      expect(item?.textContent?.trim()).toBe("See all agents");
+      expect(item?.textContent?.trim()).toBe(label);
       expect(item?.hasAttribute("aria-checked")).toBe(false);
       item?.click();
       await sidebar.updateComplete;
-
-      expect(onNavigate).toHaveBeenCalledExactlyOnceWith("agents-home", undefined);
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(route, options);
       expect(sidebar.querySelector(".sidebar-agent-menu")).toBeNull();
       expect(context.agentSelection.state).toEqual({ selectedId: "research", scopeId: null });
       expect(sidebar.sidebarAgentsMode).toBe(mode);
-    },
-  );
-
-  it.each(["chip", "roster"] as const)(
-    "opens the active agent's settings in %s mode",
-    async (mode) => {
-      const gateway = createGateway({} as GatewayBrowserClient);
-      const { sidebar, context } = await mountSidebar(
-        gateway,
-        createSessions("main", ["agent:main:main"]),
-        "panel",
-        TWO_AGENTS,
-      );
-      const onNavigate = vi.fn();
-      sidebar.connected = true;
-      sidebar.onNavigate = onNavigate;
-      sidebar.activeRouteId = "skills";
-      context.agentSelection.set("research");
-      context.agentSelection.setScope(null);
-      sidebar.sidebarAgentsMode = mode;
-      await sidebar.updateComplete;
-
-      sidebar
-        .querySelector<HTMLButtonElement>(
-          ".sidebar-agent-card__main, .sidebar-workspace-header__main",
-        )
-        ?.click();
-      await sidebar.updateComplete;
-      const actionRow = sidebar.querySelector<HTMLElement>(
-        '.sidebar-agent-menu [value="command:agent-settings"]',
-      );
-      expect(actionRow?.textContent?.trim()).toBe("research settings");
-      actionRow?.click();
-      await sidebar.updateComplete;
-      expect(onNavigate).toHaveBeenCalledWith("agents", { pathname: "/settings/agents/research" });
-      expect(sidebar.querySelector(".sidebar-agent-menu")).toBeNull();
     },
   );
 

@@ -5,7 +5,6 @@ import { normalizeAgentLabel } from "../lib/agents/display.ts";
 import { resolveAgentAvatarUrl } from "../lib/avatar.ts";
 import { normalizeAgentId } from "../lib/sessions/session-key.ts";
 import { renderAgentSelectAvatar, renderAgentSelectCopy } from "./agent-select.ts";
-import { icons } from "./icons.ts";
 
 export const AGENT_VALUE_PREFIX = "agent:";
 
@@ -44,6 +43,47 @@ function sidebarAgentMenuRows(params: {
   });
 }
 
+function renderAgentAvatar(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherParams) {
+  const agentId = normalizeAgentId(agent.id);
+  const identity = params.identities.get(agentId) ?? null;
+  const avatarUrl = resolveAgentAvatarUrl(agent, identity);
+  return renderAgentSelectAvatar(
+    { value: agentId, label: normalizeAgentLabel(agent, identity), agent },
+    identity,
+    avatarUrl ? params.resolveAvatarUrl(avatarUrl) : null,
+    avatarUrl ? params.avatarErrorHandler(avatarUrl) : undefined,
+  );
+}
+
+function renderAgentGroupAvatar(
+  agents: readonly AgentMenuAgent[],
+  params: SidebarAgentMenuSwitcherParams,
+) {
+  const visibleAgents = agents.slice(0, agents.length > 4 ? 3 : 4);
+  const remaining = agents.length - visibleAgents.length;
+  return html`
+    <span
+      class="sidebar-agent-menu__agent-avatar sidebar-agent-menu__avatar-group ${
+        agents.length === 2 ? "sidebar-agent-menu__avatar-group--pair" : ""
+      }"
+      aria-hidden="true"
+    >
+      ${visibleAgents.map(
+        (agent) => html`<span class="sidebar-agent-menu__group-item"
+          >${renderAgentAvatar(agent, params)}</span
+        >`,
+      )}
+      ${
+        remaining > 0
+          ? html`<span class="sidebar-agent-menu__group-item sidebar-agent-menu__group-count"
+              >${remaining}+</span
+            >`
+          : nothing
+      }
+    </span>
+  `;
+}
+
 function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherParams) {
   const agentId = normalizeAgentId(agent.id);
   const identity = params.identities.get(agentId) ?? null;
@@ -51,8 +91,6 @@ function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherP
   const active = agentId === params.activeId && !params.allAgentsScope;
   const unread = agentId === params.activeId ? 0 : params.agentUnreadCount(agentId);
   const option = { value: agentId, label, agent };
-  const avatarUrl = resolveAgentAvatarUrl(agent, identity);
-  const resolvedAvatarUrl = avatarUrl ? params.resolveAvatarUrl(avatarUrl) : null;
   return html`
     <wa-dropdown-item
       class="sidebar-customize-menu__item sidebar-agent-menu__agent-switch agent-select__option ${
@@ -62,14 +100,7 @@ function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherP
       aria-current=${active ? "true" : nothing}
     >
       <span class="sidebar-agent-menu__agent-tile">
-        <span class="sidebar-agent-menu__agent-avatar">
-          ${renderAgentSelectAvatar(
-            option,
-            identity,
-            resolvedAvatarUrl,
-            avatarUrl ? params.avatarErrorHandler(avatarUrl) : undefined,
-          )}
-        </span>
+        <span class="sidebar-agent-menu__agent-avatar"> ${renderAgentAvatar(agent, params)} </span>
         ${renderAgentSelectCopy(option)}
         <span class="sidebar-agent-menu__agent-status">
           ${
@@ -88,6 +119,7 @@ function renderAgentRow(agent: AgentMenuAgent, params: SidebarAgentMenuSwitcherP
 }
 
 export function renderSidebarAgentMenuSwitcher(params: SidebarAgentMenuSwitcherParams) {
+  const agents = sidebarAgentMenuRows(params);
   return html`
     ${
       params.agents.length > 0
@@ -105,14 +137,10 @@ export function renderSidebarAgentMenuSwitcher(params: SidebarAgentMenuSwitcherP
                         aria-current=${params.allAgentsScope ? "true" : nothing}
                       >
                         <span class="sidebar-agent-menu__agent-tile">
-                          <span
-                            class="sidebar-agent-menu__agent-avatar sidebar-agent-menu__workspace-mark"
-                            aria-hidden="true"
-                            >${icons.lobster}</span
-                          >
+                          ${renderAgentGroupAvatar(agents, params)}
                           <span class="agent-select__option-copy"
                             ><span class="agent-select__option-label"
-                              >${t("agentScope.allAgents")}</span
+                              >${t("agentChip.showAll")}</span
                             ></span
                           >
                         </span>
@@ -120,7 +148,7 @@ export function renderSidebarAgentMenuSwitcher(params: SidebarAgentMenuSwitcherP
                     `
                   : nothing
               }
-              ${sidebarAgentMenuRows(params).map((entry) => renderAgentRow(entry, params))}
+              ${agents.map((entry) => renderAgentRow(entry, params))}
             </div>
           `
         : nothing
