@@ -527,6 +527,21 @@ describe("Responses final delivery", () => {
         delivered: ["/tmp/openclaw/tts-a/voice-a.opus"],
       },
       {
+        name: "a NO_REPLY after a superseding silent attachment does not restore the earlier answer",
+        delivery: "deferred",
+        requests: [
+          answered,
+          [
+            { ...lookupCall, id: "fc_lookup_2", call_id: "call_lookup_2" },
+            finalAnswer("msg_media", "NO_REPLY\nMEDIA:/tmp/openclaw/tts-a/voice-a.opus"),
+          ],
+          "NO_REPLY",
+        ],
+        transcript: ["toolUse:toolCall", "stop:text", "toolUse:toolCall", "stop:text", "stop:text"],
+        delivered: ["/tmp/openclaw/tts-a/voice-a.opus"],
+        reply: { disposition: "silent" },
+      },
+      {
         name: "a later voice NO_REPLY that persistence normalized first supersedes the completed answer",
         delivery: "deferred",
         requests: [answered, "NO_REPLY [[audio_as_voice]]"],
