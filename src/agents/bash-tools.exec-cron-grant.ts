@@ -1,7 +1,5 @@
-import {
-  CronReceiptAuthorityRefusal,
-  type CronReceiptAuthorityUse,
-} from "../cron/store/receipt-authority-owner.js";
+import { CronReceiptAuthorityRefusal } from "../cron/store/receipt-authority-error.js";
+import type { CronReceiptAuthorityUse } from "../cron/store/receipt-authority-owner.js";
 import { buildCronExecOperationBinding } from "../gateway/operator-approval-standing-grants.js";
 import type {
   ConsumeCronStandingGrantResult,

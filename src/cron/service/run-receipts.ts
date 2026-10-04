@@ -152,6 +152,21 @@ export function markServiceCronJobActive(
           signal,
         }),
     };
+    marker.prepareMessageUse = (sourceSensitive, assertCurrent, signal) =>
+      observation.acquireUse({
+        permission: sourceSensitive ? "source" : "message",
+        signal,
+        assertCurrent(current) {
+          assertCurrent();
+          assertCronRunReceiptCurrentFacts({
+            handle: runReceipt,
+            facts: current,
+            resolveAgentId: (currentJob) => resolveCronRunReceiptAgentId(state, currentJob),
+            isAgentAvailable: state.deps.isAgentAvailable,
+            env: context.environment,
+          });
+        },
+      });
     onCronJobInactive(marker, () => observation.release());
   }
   return marker;

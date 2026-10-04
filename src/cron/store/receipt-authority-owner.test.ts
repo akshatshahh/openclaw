@@ -23,6 +23,7 @@ import {
 import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import * as workerCpu from "../../infra/worker-cpu.js";
 import { AsyncWorkScope, getAsyncWorkSignal } from "../../shared/async-work-scope.js";
+import { captureEffectAuthority, withEffectPreparation } from "../../shared/effect-authority.js";
 import { closeOpenClawStateDatabaseAsync } from "../../state/openclaw-state-db-cache.js";
 import { executeExistingOpenClawStateRead } from "../../state/openclaw-state-db-readonly.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
@@ -37,9 +38,9 @@ import { runCronRuntimeMutation } from "../service/runtime-mutation.js";
 import { loadCronStore, saveCronStore } from "../store.js";
 import type { CronStoredJob } from "../types.js";
 import { cronStoreKey } from "./key.js";
+import { CronReceiptAuthorityRefusal } from "./receipt-authority-error.js";
 import {
   beginCronReceiptAuthorityClose,
-  CronReceiptAuthorityRefusal,
   drainCronReceiptAuthority,
   observeCronReceiptAuthority,
   startCronReceiptAuthorityHost,
@@ -642,6 +643,20 @@ it("holds message authority through preparation and releases at initiation befor
     const owner = await seed(fixture);
     const providerResponse = createDeferred<string>();
     const options = { permission: "message" as const, assertCurrent() {} };
+    const retained = await withEffectPreparation(
+      () => owner.observation.acquireUse(options),
+      async () => {
+        const effect = captureEffectAuthority();
+        await effect.initiate(() => undefined);
+        return effect;
+      },
+    );
+    const lateEffect = vi.fn();
+    await expect(retained.initiate(lateEffect)).rejects.toThrow(
+      "Effect authority is no longer active",
+    );
+    expect(lateEffect).not.toHaveBeenCalled();
+    // The operation ended; the same receipt still admits a fresh use below.
     const use = await owner.observation.acquireUse(options);
     let acknowledged = false;
     const saving = saveCronStore(owner.storePath, {
@@ -688,56 +703,65 @@ it("holds message authority through preparation and releases at initiation befor
   });
 });
 
-it("retires uses on close while joining accepted work borrowed from their exact gate", async () => {
-  await withOpenClawTestState({ label: "cron-held-use-close" }, async (fixture) => {
-    const owner = await seed(fixture);
-    const options = { permission: "execution" as const, assertCurrent() {} };
-    const use = await owner.observation.acquireUse(options);
-    const entered = createDeferred();
-    const settle = createDeferred();
-    const scheduler = new AsyncWorkScope();
-    const borrowing = scheduler.track(() =>
-      use.mutate(async (mutation) => {
-        mutation.assertCurrent();
+it.each(["mutation", "other database"] as const)(
+  "retires uses on close while joining accepted %s work",
+  async (kind) => {
+    await withOpenClawTestState({ label: "cron-held-use-close" }, async (fixture) => {
+      const owner = await seed(fixture);
+      const options = { permission: "execution" as const, assertCurrent() {} };
+      const use = await owner.observation.acquireUse(options);
+      const entered = createDeferred();
+      const settle = createDeferred();
+      const scheduler = new AsyncWorkScope();
+      const work = async (assertCurrent: () => void) => {
+        assertCurrent();
+        if (kind === "other database") {
+          expect(owner.observation.readForPreparation().messageRevoked).toBe(false);
+        }
         expect(getAsyncWorkSignal()).not.toBe(scheduler.signal);
         entered.resolve();
         await settle.promise;
         expect(getAsyncWorkSignal()?.aborted).toBe(false);
-        expect(() => mutation.assertCurrent()).toThrow(CronReceiptAuthorityRefusal);
+        expect(() => assertCurrent()).toThrow(CronReceiptAuthorityRefusal);
         return "settled";
-      }),
-    );
-    await entered.promise;
-    const queued = owner.observation.acquireUse(options);
-    void queued.catch(() => {});
-    let drained = false;
-    try {
-      expect(() => use.initiate(() => undefined)).toThrow(/busy/);
-      beginCronReceiptAuthorityClose();
-      scheduler.beginClose();
-      const draining = drainCronReceiptAuthority().then(() => {
-        drained = true;
-      });
-      expect(() => use.assertCurrent()).toThrow(CronReceiptAuthorityRefusal);
-      await expect(owner.observation.acquireUse(options)).rejects.toMatchObject({
-        reason: "retired",
-      });
-      expect(drained).toBe(false);
-      settle.resolve();
-      await expect(borrowing).resolves.toBe("settled");
-      await expect(queued).rejects.toMatchObject({ reason: "retired" });
-      await draining;
-      expect(drained).toBe(true);
-    } finally {
-      settle.resolve();
-      use.release();
-      await Promise.allSettled([borrowing, queued]);
-      await owner.close();
-      await closeOpenClawStateDatabaseAsync();
-      startCronReceiptAuthorityHost();
-    }
-  });
-});
+      };
+      const borrowing = scheduler.track(() =>
+        kind === "mutation"
+          ? use.mutate((mutation) => work(mutation.assertCurrent))
+          : use.persist(work),
+      );
+      await entered.promise;
+      const queued = owner.observation.acquireUse(options);
+      void queued.catch(() => {});
+      let drained = false;
+      try {
+        expect(() => use.initiate(() => undefined)).toThrow(/busy/);
+        beginCronReceiptAuthorityClose();
+        scheduler.beginClose();
+        const draining = drainCronReceiptAuthority().then(() => {
+          drained = true;
+        });
+        expect(() => use.assertCurrent()).toThrow(CronReceiptAuthorityRefusal);
+        await expect(owner.observation.acquireUse(options)).rejects.toMatchObject({
+          reason: "retired",
+        });
+        expect(drained).toBe(false);
+        settle.resolve();
+        await expect(borrowing).resolves.toBe("settled");
+        await expect(queued).rejects.toMatchObject({ reason: "retired" });
+        await draining;
+        expect(drained).toBe(true);
+      } finally {
+        settle.resolve();
+        use.release();
+        await Promise.allSettled([borrowing, queued]);
+        await owner.close();
+        await closeOpenClawStateDatabaseAsync();
+        startCronReceiptAuthorityHost();
+      }
+    });
+  },
+);
 
 it.each([false, true])(
   "joins native initiation acknowledgement after a throwing launch: %s",

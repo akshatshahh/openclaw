@@ -15,6 +15,7 @@ import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { registerOpenClawStateDatabaseAsyncResource } from "../../state/openclaw-state-db-cache.js";
 import { executeExistingOpenClawStateRead } from "../../state/openclaw-state-db-readonly.js";
 import type { OpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.types.js";
+import { CronReceiptAuthorityRefusal } from "./receipt-authority-error.js";
 import type {
   CronReceiptAuthorityAttachment,
   CronReceiptAuthorityPublication,
@@ -48,22 +49,14 @@ type AuthorityOwner = {
     | { origin: "native-initiation"; error: Error };
 };
 
-export class CronReceiptAuthorityRefusal extends Error {
-  constructor(
-    readonly reason: "retired" | "unavailable" | "permission" | "spent" | "busy",
-    options?: ErrorOptions,
-  ) {
-    super(`Cron effect authority ${reason}; prepare a new use from the live occurrence.`, options);
-    this.name = "CronReceiptAuthorityRefusal";
-  }
-}
-
 export type CronReceiptAuthorityUse = {
   assertCurrent: () => void;
   /** Invoke only the synchronous native initiation, never an async preparation wrapper. */
   /** Remote initiation settles at native acknowledgement or proven actor retirement. */
   initiate: <T>(effect: () => T, settlement?: Promise<unknown>) => T;
   release: () => void;
+  /** Other database owners keep this interval until their accepted write settles. */
+  persist: <T>(run: (assertCurrent: () => void) => Promise<T>) => Promise<T>;
   /** Borrow this exact gate for consumption; accepted persistence settles before release. */
   mutate: <T>(run: (mutation: CronReceiptAuthorityMutation) => Promise<T>) => Promise<T>;
 };
@@ -340,6 +333,16 @@ function acquireUse(
   const use: CronReceiptAuthorityUse = {
     assertCurrent,
     release,
+    async persist(run) {
+      assertCurrent();
+      borrowing = true;
+      try {
+        return await runOutsideAsyncWorkScope(() => owner.work.track(() => run(assertAuthority)));
+      } finally {
+        borrowing = false;
+        release();
+      }
+    },
     initiate(effect, settlement) {
       try {
         assertCurrent();
