@@ -36,10 +36,11 @@ import {
   claimCronRunReceiptForTest,
   makeCronReceiptJob,
 } from "./store/run-receipt-store.test-support.js";
+import type { CronStoredJob } from "./types.js";
 
 it("keeps claimed revision separate from current message and grant facts in worker replies", async () => {
   await withOpenClawTestState({ label: "cron-receipt-authority-facts" }, async (fixture) => {
-    const job = makeCronReceiptJob("separate-authority-revisions");
+    const job: CronStoredJob = makeCronReceiptJob("separate-authority-revisions");
     job.payload = {
       kind: "agentTurn",
       message: "read synthetic messages",

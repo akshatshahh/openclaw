@@ -247,7 +247,7 @@ describe("agent deletion database cleanup authority", () => {
               { env: f.options.env },
             );
           } else {
-            deletion[retire]();
+            await deletion[retire]();
           }
         } finally {
           resume.resolve();
@@ -521,7 +521,7 @@ describe("agent deletion database cleanup authority", () => {
               { env: f.options.env },
             );
           } else {
-            deletion[retire]();
+            await deletion[retire]();
           }
         } finally {
           release.resolve();

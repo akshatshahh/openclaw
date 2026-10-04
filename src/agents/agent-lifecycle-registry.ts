@@ -148,7 +148,7 @@ export function withAgentDeletion<T>(
       let closed = false;
       try {
         const begin = (
-          database: OpenClawStateDatabase,
+          journalDatabase: OpenClawStateDatabase,
           entry: AgentDeletionInput,
         ): AgentDeletionOperation => {
           if (closed || begun || normalizeAgentId(entry.agentId) !== id) {
@@ -158,7 +158,7 @@ export function withAgentDeletion<T>(
           const operationId = crypto.randomUUID();
           const cancelCronRuns = captureActiveCronJobAgentDeletion(
             id,
-            requireOpenClawStateDatabaseIdentity(database).key,
+            requireOpenClawStateDatabaseIdentity(journalDatabase).key,
           );
           const journal = beginAgentDeletionJournal(
             { ...entry, agentId: id, operationId, deleteFiles: entry.deleteFiles !== false },
@@ -166,7 +166,7 @@ export function withAgentDeletion<T>(
           );
           // Revoke before cleanup preparation can yield, but never for a rolled-back journal.
           if (
-            !stageSqliteTransactionState(database.db, {
+            !stageSqliteTransactionState(journalDatabase.db, {
               stage() {},
               rollback() {},
               commit: cancelCronRuns,
@@ -374,7 +374,7 @@ export function withAgentDeletion<T>(
             }, stateOptions),
           );
         };
-        return await run((entry) => transact((_database, begin) => begin(entry)), transact);
+        return await run((entry) => transact((_database, claim) => claim(entry)), transact);
       } finally {
         closed = true;
       }

@@ -164,10 +164,18 @@ async function gateWriter(fixture: OpenClawTestState) {
   const replied = createDeferred();
   const { port1, port2 } = new MessageChannel();
   port1.on("message", (phase) => {
-    if (phase === "granted") granted.resolve();
-    if (phase === "committed") committed.resolve();
-    if (phase === "stale") stale.resolve();
-    if (phase === "reply") replied.resolve();
+    if (phase === "granted") {
+      granted.resolve();
+    }
+    if (phase === "committed") {
+      committed.resolve();
+    }
+    if (phase === "stale") {
+      stale.resolve();
+    }
+    if (phase === "reply") {
+      replied.resolve();
+    }
   });
   const preload = fixture.path("authority-worker-gate.mjs");
   await fs.writeFile(
@@ -228,7 +236,9 @@ async function gateWriter(fixture: OpenClawTestState) {
   const factory = vi
     .spyOn(workerCpu, "createCpuTrackedWorker")
     .mockImplementation((filename, options) => {
-      if (selected || String(filename) !== url) return create(filename, options);
+      if (selected || String(filename) !== url) {
+        return create(filename, options);
+      }
       selected = true;
       worker = create(filename, {
         ...options,
@@ -250,11 +260,14 @@ async function gateWriter(fixture: OpenClawTestState) {
     arm: () => Atomics.store(gate, 0, 1),
     commit: () => release(1),
     holdNativeReceipt: () => Atomics.store(gate, 3, 0),
+    publish: () => release(3),
     holdStaleReceipt: () => Atomics.store(gate, 4, 0),
     currentReceipt: () => release(4),
     reply: () => release(2),
     async terminate() {
-      if (!worker) throw new Error("Expected the fixture's SQLite worker");
+      if (!worker) {
+        throw new Error("Expected the fixture's SQLite worker");
+      }
       await worker.terminate();
     },
     close() {
@@ -294,7 +307,9 @@ it("suspends through commit and reply gaps, ignores stale/duplicate facts, and k
               admit(request, grant);
               sql.expectIdle();
               checked = true;
-            } else admit(request, grant);
+            } else {
+              admit(request, grant);
+            }
           }, attachment);
           return admission;
         });
@@ -343,6 +358,51 @@ it("suspends through commit and reply gaps, ignores stale/duplicate facts, and k
       await pending?.catch(() => {});
       await first.close();
       await second.close();
+    }
+  });
+});
+
+it("joins a committed writer when database close seals publication admission", async ({
+  signal,
+}) => {
+  await withOpenClawTestState({ label: "cron-authority-database-close" }, async (fixture) => {
+    const gate = await gateWriter(fixture);
+    const owner = await seed(fixture);
+    let pending: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
+    try {
+      gate.arm();
+      gate.holdNativeReceipt();
+      pending = saveCronStore(owner.storePath, {
+        version: 1,
+        jobs: [{ ...owner.job, enabled: false }],
+      });
+      void pending.catch(() => {});
+      await withinTest(
+        awaitGateBeforeSettlement(gate.granted, pending, "Save missed the commit grant"),
+        signal,
+      );
+      gate.commit();
+      await withinTest(
+        awaitGateBeforeSettlement(gate.committed, pending, "Save missed native COMMIT"),
+        signal,
+      );
+      closing = closeOpenClawStateDatabaseAsync();
+      void closing.catch(() => {});
+      expect(() => owner.context.admission.assertCurrent()).toThrow("read admission is closed");
+      gate.publish();
+      gate.reply();
+      await expect(pending).rejects.toThrow("reconciliation failed");
+      await withinTest(closing, signal);
+      expect(() => owner.observation.readForPreparation()).toThrow();
+      expect((await loadCronStore(owner.storePath)).jobs[0]?.enabled).toBe(false);
+      await owner.close();
+    } finally {
+      gate.close();
+      await pending?.catch(() => {});
+      await closing?.catch(() => {});
+      owner.observation.release();
+      await gate.terminate();
     }
   });
 });
@@ -448,8 +508,9 @@ it.for(["before commit", "after commit"] as const)(
               !isRecord(request) ||
               request.type !== "execute" ||
               !(request.input instanceof Uint8Array)
-            )
+            ) {
               return false;
+            }
             const command: unknown = deserialize(request.input);
             return isRecord(command) && command.type === "cron.save";
           }),
@@ -473,7 +534,9 @@ it.each(["publication", "business notification"] as const)(
         const owner = await seed(fixture);
         const failure = new Error("Synthetic post-commit publication failure");
         const publish = vi.fn(() => {
-          if (failureSite === "business notification") throw failure;
+          if (failureSite === "business notification") {
+            throw failure;
+          }
         });
         let installed = 0;
         const observe = workerAdmission.observeSqliteWorkerCommittedFacts;

@@ -131,7 +131,7 @@ export function markServiceCronJobActive(
         deletionBlocked: false,
       },
     );
-    onCronJobInactive(marker, observation.release);
+    onCronJobInactive(marker, () => observation.release());
   }
   return marker;
 }

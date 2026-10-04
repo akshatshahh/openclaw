@@ -408,7 +408,7 @@ it.each([
         ),
       );
       // Redelivery and settlement's retained copy must not repeat installation.
-      admission.port.postMessage({ kind: "native-commit", committed: owner.committed });
+      admission.port.postMessage({ kind: "native-commit", committed: owner.committed }, []);
       settleSqliteWorkerOperationContext(owner, "completed");
       expect(events).toEqual([]);
       settleSqliteWorkerJob(job, undefined, { written: true });

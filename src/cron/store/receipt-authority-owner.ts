@@ -189,7 +189,7 @@ function install(observation: Observation, facts: CronRunReceiptCurrentFacts): v
   const receipt = facts.receipt;
   const oldJob = observation.facts.job;
   const job = facts.job;
-  observation.retired ||= Boolean(
+  observation.retired ||=
     !receipt ||
     receipt.receiptId !== expected.receiptId ||
     receipt.ownerPid !== expected.ownerPid ||
@@ -198,8 +198,7 @@ function install(observation: Observation, facts: CronRunReceiptCurrentFacts): v
     receipt.jobId !== expected.jobId ||
     receipt.agentId !== expected.agentId ||
     facts.deletionBlocked ||
-    !job,
-  );
+    !job;
   observation.messageRevoked ||=
     observation.retired ||
     (observation.admittedEnabled && !job?.enabled) ||
@@ -371,59 +370,75 @@ export function withCronReceiptAuthorityMutation<T>(
       }
       sequence = facts.sequence;
     };
+    let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {
-      return await run({
-        context: persistenceContext,
-        attachment,
-        assertCurrent() {
-          assertOwner(owner, context);
-          if (owner.closing && !options?.settlement) {
-            throw unavailable();
-          }
-        },
-        publish,
-        observe(admission, settlement) {
-          retained.push({ admission, owner: settlement });
-          observeSqliteWorkerCommittedFacts(admission, ({ facts }) => {
-            if (!isRecord(facts) || !isRecord(facts.receiptAuthority)) {
+      outcome = {
+        ok: true,
+        value: await run({
+          context: persistenceContext,
+          attachment,
+          assertCurrent() {
+            assertOwner(owner, context);
+            if (owner.closing && !options?.settlement) {
               throw unavailable();
             }
-            // SAFETY: The private command's canonical worker producer owns this envelope.
-            publish(facts.receiptAuthority as CronReceiptAuthorityPublication);
-          });
-        },
-      });
-    } finally {
-      try {
-        for (const operation of retained) {
-          const settled = await operation.owner.settled;
-          if (
-            settled.kind === "unknown" &&
-            !settled.nativeStopped &&
-            operation.admission.settlement?.kind !== "completed"
-          ) {
-            throw new SqliteWorkerError(
-              "Cron receipt writer has not confirmed native settlement or exit",
-              "outcome-unknown",
-            );
-          }
-          needsRebuild ||=
-            settled.kind === "unknown" ||
-            Boolean(operation.admission.failure) ||
-            Boolean(operation.admission.committed && sequence === 0);
-        }
-        if (needsRebuild) {
-          // Native settlement/worker exit precedes this read. Never replay the mutation.
-          await rebuild(owner, persistenceContext, observations);
-        }
-        owner.pending.delete(nonce);
-      } catch (error) {
-        owner.failure = error;
-        throw Object.assign(
-          new SqliteWorkerError("Cron receipt authority reconciliation failed", "outcome-unknown"),
-          { cause: error },
-        );
-      }
+          },
+          publish,
+          observe(admission, settlement) {
+            retained.push({ admission, owner: settlement });
+            observeSqliteWorkerCommittedFacts(admission, ({ facts }) => {
+              if (!isRecord(facts) || !isRecord(facts.receiptAuthority)) {
+                throw unavailable();
+              }
+              // SAFETY: The private command's canonical worker producer owns this envelope.
+              publish(facts.receiptAuthority as CronReceiptAuthorityPublication);
+            });
+          },
+        }),
+      };
+    } catch (error) {
+      outcome = { ok: false, error };
     }
+    let nativeSettled = false;
+    try {
+      for (const operation of retained) {
+        const settled = await operation.owner.settled;
+        if (
+          settled.kind === "unknown" &&
+          !settled.nativeStopped &&
+          operation.admission.settlement?.kind !== "completed"
+        ) {
+          throw new SqliteWorkerError(
+            "Cron receipt writer has not confirmed native settlement or exit",
+            "outcome-unknown",
+          );
+        }
+        needsRebuild ||=
+          settled.kind === "unknown" ||
+          Boolean(operation.admission.failure) ||
+          Boolean(operation.admission.committed && sequence === 0);
+      }
+      nativeSettled = true;
+      if (needsRebuild) {
+        // Native settlement/worker exit precedes this read. Never replay the mutation.
+        await rebuild(owner, persistenceContext, observations);
+      }
+      owner.pending.delete(nonce);
+    } catch (error) {
+      const failure = Object.assign(
+        new SqliteWorkerError("Cron receipt authority reconciliation failed", "outcome-unknown"),
+        { cause: error },
+      );
+      owner.failure = failure;
+      // Sealed read admission cannot rebuild, but settled writers still permit custody to close.
+      if (nativeSettled) {
+        owner.pending.delete(nonce);
+      }
+      throw failure;
+    }
+    if (!outcome.ok) {
+      throw outcome.error;
+    }
+    return outcome.value;
   });
 }
