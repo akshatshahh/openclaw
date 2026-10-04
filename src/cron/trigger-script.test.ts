@@ -44,7 +44,7 @@ function createPreparedRuntime(config: OpenClawConfig) {
     { config, agentId: "main", sessionKey: "cron:test:trigger" },
   );
   return {
-    createTools: () => [tool],
+    createTools: async () => [tool],
     context: { config, agentId: "main", sessionKey: "cron:test:trigger" },
   };
 }
@@ -97,7 +97,7 @@ describe("cron trigger script evaluator", () => {
     };
     const runtime = createCronScriptRuntime({
       config,
-      prepareRuntime: async () => ({ ...prepared, createTools: () => [gate] }),
+      prepareRuntime: async () => ({ ...prepared, createTools: async () => [gate] }),
       runHeadless: (params) => {
         context = params.ctx;
         return runCodeModeScriptHeadless(params);
@@ -731,7 +731,7 @@ describe("cron script runtime elapsed-time budgets", () => {
           config,
           prepareRuntime: async () => ({
             ...preparedRuntime,
-            createTools: () => [shiftClock, observeClock],
+            createTools: async () => [shiftClock, observeClock],
           }),
         });
         const sharedScript =

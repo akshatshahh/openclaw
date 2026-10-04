@@ -349,7 +349,7 @@ export async function handleInlineActions(params: {
       const rawArgs = (skillInvocation.args ?? "").trim();
       const { resolveSkillDispatchTools } = await skillToolDispatchRuntimeLoader.load();
       const dependencies = await import("../../agents/openclaw-tools.js");
-      const authorizedTools = resolveSkillDispatchTools(
+      const authorizedTools = await resolveSkillDispatchTools(
         {
           message: {
             surface: ctx.Surface,

@@ -18,7 +18,7 @@ import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.typ
 import { normalizeProviderTransportWithPlugin } from "../plugins/provider-runtime.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir, resolveSessionAgentId } from "./agent-scope.js";
-import { createOpenClawCodingToolsInternal } from "./agent-tools.js";
+import { createOpenClawCodingToolsInternalAsync } from "./agent-tools.js";
 import { resolveConversationCapabilityProfile } from "./conversation-capability-profile.js";
 import { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { resolveBundledStaticCatalogModel } from "./embedded-agent-runner/model.static-catalog.js";
@@ -300,9 +300,9 @@ export function resolveConfiguredModelCompat(params: {
 }
 
 /** Resolves the grouped effective tool inventory and user-visible filtering notices. */
-export function resolveEffectiveToolInventory(
+export async function resolveEffectiveToolInventory(
   params: ResolveEffectiveToolInventoryParams,
-): EffectiveToolInventoryResult {
+): Promise<EffectiveToolInventoryResult> {
   const agentId =
     params.agentId?.trim() ||
     resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg });
@@ -337,7 +337,7 @@ export function resolveEffectiveToolInventory(
       agentAccountId: params.accountId,
     });
   const diagnostics = createToolAccessDiagnostics({ profiles: capabilityProfile.policy.profiles });
-  const effectiveTools = createOpenClawCodingToolsInternal(
+  const effectiveTools = await createOpenClawCodingToolsInternalAsync(
     {
       ...params,
       conversationCapabilityProfile: capabilityProfile,

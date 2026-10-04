@@ -293,7 +293,7 @@ async function resolveBaseToolsEffectiveInventory(
     modelId: context.modelId,
   });
   try {
-    return acquired.run((runtimeModelContext) =>
+    return await acquired.run((runtimeModelContext) =>
       resolveEffectiveToolInventory({
         conversationCapabilityProfile: context.capabilityProfile,
         cfg: context.cfg,
@@ -434,7 +434,7 @@ async function projectMcpCatalog(params: {
     modelId: params.context.modelId,
   });
   try {
-    return acquired.run((runtimeModelContext) => {
+    return await acquired.run((runtimeModelContext) => {
       const mcpInventory = buildRuntimeCompatibleMcpToolInventory({
         tools: filteredMcpTools,
         cfg: params.context.cfg,

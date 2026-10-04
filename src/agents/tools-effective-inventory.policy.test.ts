@@ -106,9 +106,9 @@ describe("tool access diagnostics", () => {
     expect(exec).not.toHaveProperty("alsoAllowPath");
   });
 
-  it("observes actual inventory filtering and explicit profile repair", () => {
-    const inventory = (cfg: OpenClawConfig) =>
-      resolveEffectiveToolInventory({
+  it("observes actual inventory filtering and explicit profile repair", async () => {
+    const inventory = async (cfg: OpenClawConfig) =>
+      await resolveEffectiveToolInventory({
         cfg,
         agentId: "assistant",
         sessionKey: "agent:assistant:main",
@@ -117,7 +117,7 @@ describe("tool access diagnostics", () => {
         modelApi: null,
       });
 
-    const before = inventory(messagingAgentConfig());
+    const before = await inventory(messagingAgentConfig());
     expect(before.groups.flatMap((group) => group.tools.map((tool) => tool.id))).not.toContain(
       "exec",
     );
@@ -131,7 +131,7 @@ describe("tool access diagnostics", () => {
       excludedByMessagingProfile("exec"),
     );
 
-    const after = inventory({
+    const after = await inventory({
       tools: { profile: "full" },
       agents: {
         entries: {
@@ -149,46 +149,49 @@ describe("tool access diagnostics", () => {
     });
   });
 
-  it.each([false, true])("uses prepared inventory policy and session ceiling=%s", (ceiling) => {
-    const cfg = messagingAgentConfig();
-    const sessionKey = ceiling ? "agent:assistant:subagent:diagnostics" : "agent:assistant:main";
-    const conversationCapabilityProfile = resolveConversationCapabilityProfile({
-      config: cfg,
-      agentId: "assistant",
-      sessionKey,
-      ...(ceiling
-        ? {
-            workspaceDir: "/tmp/tool-access-workspace",
-            preparedSessionEntry: {
-              sessionKey,
-              entry: {
-                sessionId: "diagnostics-session",
-                spawnedBy: "agent:assistant:main",
-                spawnDepth: 1,
-                inheritedToolPolicyVersion: 1,
-                inheritedToolDeny: ["exec"],
+  it.each([false, true])(
+    "uses prepared inventory policy and session ceiling=%s",
+    async (ceiling) => {
+      const cfg = messagingAgentConfig();
+      const sessionKey = ceiling ? "agent:assistant:subagent:diagnostics" : "agent:assistant:main";
+      const conversationCapabilityProfile = resolveConversationCapabilityProfile({
+        config: cfg,
+        agentId: "assistant",
+        sessionKey,
+        ...(ceiling
+          ? {
+              workspaceDir: "/tmp/tool-access-workspace",
+              preparedSessionEntry: {
+                sessionKey,
+                entry: {
+                  sessionId: "diagnostics-session",
+                  spawnedBy: "agent:assistant:main",
+                  spawnDepth: 1,
+                  inheritedToolPolicyVersion: 1,
+                  inheritedToolDeny: ["exec"],
+                },
               },
-            },
-          }
-        : {}),
-    });
-    const result = resolveEffectiveToolInventory({
-      cfg: ceiling ? cfg : { tools: { profile: "full" } },
-      agentId: "assistant",
-      sessionKey,
-      workspaceDir: "/tmp/tool-access-workspace",
-      agentDir: "/tmp/tool-access-agent",
-      modelApi: null,
-      conversationCapabilityProfile,
-    });
-    expect(result.profile).toBe("messaging");
-    expect(result.groups.flatMap((group) => group.tools.map((tool) => tool.id))).not.toContain(
-      "exec",
-    );
-    if (ceiling) {
-      const exec = result.toolAccess?.tools.find((tool) => tool.id === "exec");
-      expect(exec?.reasons.map((reason) => reason.kind)).toEqual(["profile", "session"]);
-      expect(exec).not.toHaveProperty("alsoAllowPath");
-    }
-  });
+            }
+          : {}),
+      });
+      const result = await resolveEffectiveToolInventory({
+        cfg: ceiling ? cfg : { tools: { profile: "full" } },
+        agentId: "assistant",
+        sessionKey,
+        workspaceDir: "/tmp/tool-access-workspace",
+        agentDir: "/tmp/tool-access-agent",
+        modelApi: null,
+        conversationCapabilityProfile,
+      });
+      expect(result.profile).toBe("messaging");
+      expect(result.groups.flatMap((group) => group.tools.map((tool) => tool.id))).not.toContain(
+        "exec",
+      );
+      if (ceiling) {
+        const exec = result.toolAccess?.tools.find((tool) => tool.id === "exec");
+        expect(exec?.reasons.map((reason) => reason.kind)).toEqual(["profile", "session"]);
+        expect(exec).not.toHaveProperty("alsoAllowPath");
+      }
+    },
+  );
 });
