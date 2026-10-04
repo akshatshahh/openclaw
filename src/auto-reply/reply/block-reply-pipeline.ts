@@ -350,11 +350,23 @@ export function createBlockReplyPipeline(params: {
     await sendChain;
   };
 
+  // A final payload joins every text item of its assistant message, and each item streamed
+  // under its own consecutive index, so also match the item runs that end at the payload's index.
   const matchingAttempts = (payload: ReplyPayload) => {
     const index = getReplyPayloadMetadata(payload)?.assistantMessageIndex;
-    return index === undefined
-      ? blockAttemptsByMessage.values()
-      : [blockAttemptsByMessage.get(index) ?? []];
+    if (index === undefined) {
+      return blockAttemptsByMessage.values();
+    }
+    const runs: BlockAttempt[][] = [];
+    for (
+      let item = index, run: BlockAttempt[] = [];
+      blockAttemptsByMessage.get(item)?.length;
+      item--
+    ) {
+      run = [...(blockAttemptsByMessage.get(item) ?? []), ...run];
+      runs.push(run);
+    }
+    return runs;
   };
   const normalizeSource = (text: string) => text.replace(/\s+/g, "");
   const combinedSource = (attempts: BlockAttempt[]) =>

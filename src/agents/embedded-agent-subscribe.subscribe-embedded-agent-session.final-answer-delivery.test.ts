@@ -6,7 +6,11 @@ import { processResponsesStream } from "../../packages/ai/src/transports/openai-
 import { markdownToIR } from "../../packages/markdown-core/src/ir.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
-import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
+import { buildReplyPayloads } from "../auto-reply/reply/agent-runner-payloads.js";
+import { createBlockReplyPipeline } from "../auto-reply/reply/block-reply-pipeline.js";
+import { createBlockReplyDeliveryHandler } from "../auto-reply/reply/reply-delivery.js";
+import { createTypingSignaler } from "../auto-reply/reply/typing-mode.js";
+import { createTypingController } from "../auto-reply/reply/typing.js";
 import { runAgentLoop } from "../plugin-sdk/agent-core.js";
 import { buildEmbeddedRunPayloads } from "./embedded-agent-runner/run/payloads.js";
 import {
@@ -388,54 +392,117 @@ describe("Responses final delivery", () => {
     it.each([
       {
         name: "a later NO_REPLY keeps the completed answer",
-        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
-        continuation: "NO_REPLY",
+        delivery: "deferred",
+        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "NO_REPLY"],
         transcript: answeredTail,
-        expected: ["Use counter B."],
+        delivered: ["Use counter B."],
       },
       {
-        name: "a heartbeat turn dispatches the completed answer before NO_REPLY",
-        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
-        continuation: "NO_REPLY",
+        name: "a heartbeat turn without block streaming keeps the completed answer",
+        delivery: "off",
+        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "NO_REPLY"],
         transcript: answeredTail,
-        expected: ["Use counter B."],
+        delivered: ["Use counter B."],
         heartbeat: true,
       },
       {
+        name: "live blocks of a two-item answer are not resent after NO_REPLY",
+        delivery: "live",
+        requests: [
+          [
+            lookupCall,
+            finalAnswer("msg_first", "First part."),
+            finalAnswer("msg_second", "Second part."),
+          ],
+          "NO_REPLY",
+        ],
+        transcript: ["toolUse:toolCall", "stop:text+text", "stop:text"],
+        delivered: ["First part.", "Second part."],
+      },
+      {
+        name: "live blocks of a two-item terminal answer are not resent",
+        delivery: "live",
+        requests: [
+          [finalAnswer("msg_first", "First part."), finalAnswer("msg_second", "Second part.")],
+        ],
+        transcript: ["stop:text+text"],
+        delivered: ["First part.", "Second part."],
+      },
+      {
         name: "a repeated answer is delivered once",
-        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
-        continuation: "Use counter B.",
+        delivery: "deferred",
+        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "Use counter B."],
         transcript: answeredTail,
-        expected: ["Use counter B."],
+        delivered: ["Use counter B."],
       },
       {
         name: "a later answer supersedes the completed answer",
-        first: [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
-        continuation: "Correction: use counter C.",
+        delivery: "deferred",
+        requests: [
+          [lookupCall, finalAnswer("msg_answer", "Use counter B.")],
+          "Correction: use counter C.",
+        ],
         transcript: answeredTail,
-        expected: ["Correction: use counter C."],
+        delivered: ["Correction: use counter C."],
       },
       {
         name: "a later NO_REPLY keeps pre-tool progress silent",
-        first: [finalAnswer("msg_progress", "Checking counter B."), lookupCall],
-        continuation: "NO_REPLY",
+        delivery: "deferred",
+        requests: [[finalAnswer("msg_progress", "Checking counter B."), lookupCall], "NO_REPLY"],
         transcript: ["toolUse:text+toolCall", "stop:", "stop:text"],
-        expected: [],
+        delivered: [],
       },
-    ])("$name", async ({ first, continuation, transcript, expected, heartbeat = false }) => {
-      // Required user replies defer terminal delivery; optional heartbeat turns stream live.
+      {
+        name: "quiet mode keeps the completed answer private",
+        delivery: "deferred",
+        requests: [[lookupCall, finalAnswer("msg_answer", "Use counter B.")], "NO_REPLY"],
+        transcript: answeredTail,
+        delivered: ["Sent with the message tool."],
+        quiet: true,
+      },
+    ] as const)("$name", async ({ delivery, requests, transcript, delivered, ...row }) => {
+      const heartbeat = "heartbeat" in row;
+      const quiet = "quiet" in row;
+      const sent: string[] = [];
+      const blockStreamingEnabled = delivery !== "off";
+      const pipeline = createBlockReplyPipeline({
+        onBlockReply: (payload) => {
+          sent.push(payload.text ?? "");
+        },
+        timeoutMs: 5000,
+      });
+      const handler = createBlockReplyDeliveryHandler({
+        onBlockReply: (payload) => {
+          sent.push(payload.text ?? "");
+        },
+        normalizeStreamingText: (payload) => ({ text: payload.text, skip: false }),
+        applyReplyToMode: (payload) => payload,
+        typingSignals: createTypingSignaler({
+          typing: createTypingController({}),
+          mode: "never",
+          isHeartbeat: heartbeat,
+        }),
+        blockStreamingEnabled,
+        blockReplyPipeline: pipeline,
+        directBlockDeliveries: [],
+      });
+      // Required user replies defer terminal delivery; optional turns stream blocks live.
       const h = setup({
+        onBlockReply: handler,
         blockReplyBreak: "message_end",
-        ...(heartbeat ? {} : { onBeforeTerminalDelivery: async () => undefined }),
+        ...(delivery === "deferred" ? { onBeforeTerminalDelivery: async () => undefined } : {}),
       });
       const lookup = vi.fn(async () => ({
         content: [{ type: "text" as const, text: "Counter B is open." }],
         details: {},
       }));
-      const requests = [
-        () => responsesStream("resp_first", first),
-        () => responsesStream("resp_continuation", [finalAnswer("msg_next", continuation)]),
-      ];
+      const pending = requests.map(
+        (items, index) => () =>
+          responsesStream(
+            `resp_${index}`,
+            typeof items === "string" ? [finalAnswer("msg_next", items)] : [...items],
+          ),
+      );
       const messages = await runAgentLoop(
         [{ role: "user", content: "Where do I store my bag?", timestamp: 1 }],
         {
@@ -467,7 +534,7 @@ describe("Responses final delivery", () => {
         },
         undefined,
         () => {
-          const next = requests.shift();
+          const next = pending.shift();
           if (!next) {
             throw new Error("unexpected model request");
           }
@@ -475,8 +542,8 @@ describe("Responses final delivery", () => {
         },
       );
       await h.subscription.waitForPendingEvents();
-      expect(lookup).toHaveBeenCalledOnce();
-      expect(requests).toEqual([]);
+      await pipeline.flush({ force: true });
+      expect(pending).toEqual([]);
       // The call-free tail ended the provider response; only the call fragment uses tools.
       expect(
         messages.flatMap((message) =>
@@ -500,19 +567,26 @@ describe("Responses final delivery", () => {
         currentAssistant: current ?? null,
         sessionKey: "agent:main:telegram:direct:astra",
         isHeartbeatTrigger: heartbeat,
+        ...(quiet
+          ? {
+              sourceReplyDeliveryMode: "message_tool_only" as const,
+              didSendViaMessagingTool: true,
+              messagingToolSourceReplyPayloads: [{ text: "Sent with the message tool." }],
+            }
+          : {}),
       });
-      expect(payloads.map((payload) => payload.text)).toEqual(expected);
       if (heartbeat) {
         expect(resolveHeartbeatReplyPayload(payloads)?.text).toBe("Use counter B.");
-        // The live block and the final payload share one message identity, so delivery dedupes.
-        expect(h.texts()).toEqual(["Use counter B."]);
-        expect(getReplyPayloadMetadata(payloads[0] ?? {})?.assistantMessageIndex).toBe(
-          h.onBlockReply.mock.calls[0]?.[1]?.assistantMessageIndex,
-        );
-        return;
       }
-      // Deferred release supersedes earlier tail blocks; only the final message's block remains.
-      expect(h.texts()).toEqual(continuation === "NO_REPLY" ? [] : [continuation]);
+      const { replyPayloads } = await buildReplyPayloads({
+        payloads,
+        isHeartbeat: heartbeat,
+        didLogHeartbeatStrip: false,
+        blockStreamingEnabled,
+        blockReplyPipeline: pipeline,
+        replyToMode: "off",
+      });
+      expect([...sent, ...replyPayloads.map((payload) => payload.text)]).toEqual(delivered);
     });
   });
 });
