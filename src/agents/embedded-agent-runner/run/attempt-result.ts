@@ -38,21 +38,17 @@ export function createAttemptCarryover() {
   let latestMcpConnectAction: EmbeddedRunAttemptResult["latestMcpConnectAction"];
   let heartbeatToolResponse: EmbeddedRunAttemptResult["heartbeatToolResponse"];
   let modelAttempt: AgentRuntimeModelAttempt | undefined;
-  let inputAnswer: CompletedAssistantAnswer | undefined;
   return {
     apply(
       attempt: Pick<
-        EmbeddedRunAttemptWithReceiptEvidence,
+        EmbeddedRunAttemptResult,
         | "latestMcpAppChannelView"
         | "latestMcpConnectAction"
         | "heartbeatToolResponse"
         | "modelAttempt"
-        | "inputAnswer"
       >,
     ): void {
       modelAttempt = attempt.modelAttempt;
-      // A retry continues the transcript after this answer; seed it so a silent retry keeps it.
-      inputAnswer = attempt.inputAnswer;
       latestMcpAppChannelView = attempt.latestMcpAppChannelView ?? latestMcpAppChannelView;
       attempt.latestMcpAppChannelView = latestMcpAppChannelView;
       latestMcpConnectAction = attempt.latestMcpConnectAction ?? latestMcpConnectAction;
@@ -63,15 +59,11 @@ export function createAttemptCarryover() {
     get modelAttempt() {
       return modelAttempt;
     },
-    get inputAnswer() {
-      return inputAnswer;
-    },
   };
 }
 
 export type EmbeddedRunAttemptWithReceiptEvidence = EmbeddedRunAttemptResult & {
   answerSegments?: EmbeddedAttemptSubscription["answerSegments"];
-  inputAnswer?: CompletedAssistantAnswer;
   keptAnswer?: CompletedAssistantAnswer;
   successfulNestedToolNames?: string[];
 };
@@ -344,7 +336,6 @@ export function completeEmbeddedAttemptResult(
     bootstrapPromptWarningSignature: bootstrapPromptWarning.signature,
     assistantTexts,
     answerSegments: subscription.answerSegments,
-    inputAnswer: subscription.getInputAnswer(),
     keptAnswer: subscription.getKeptAnswer(),
     latestMcpAppChannelView: subscription.getLatestMcpAppChannelView(),
     latestMcpConnectAction: subscription.getLatestMcpConnectAction(),

@@ -3,7 +3,6 @@ import { Type } from "typebox";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createResponsesAssistantOutput } from "../../packages/ai/src/providers/openai-responses-shared.js";
 import { processResponsesStream } from "../../packages/ai/src/transports/openai-responses-stream-internal.js";
-import { failTransportStream } from "../../packages/ai/src/transports/transport-stream-shared.js";
 import { markdownToIR } from "../../packages/markdown-core/src/ir.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
@@ -31,7 +30,6 @@ import {
   createOpenAiResponsesTextEvent,
   type OpenAiResponsesTextEventPhase,
 } from "./embedded-agent-subscribe.openai-responses.test-helpers.js";
-import type { AgentMessage } from "./runtime/index.js";
 import { textAssistant } from "./test-helpers/sparse-transcript.test-support.js";
 
 type Options = Omit<Parameters<typeof createSubscribedSessionHarness>[0], "runId">;
@@ -351,20 +349,15 @@ describe("Responses final delivery", () => {
     type Request =
       | string
       | readonly WireItem[]
-      | { readonly items: readonly WireItem[]; readonly endTurn: false }
-      | { readonly failed: { readonly code: string; readonly message: string } };
+      | { readonly items: readonly WireItem[]; readonly endTurn: false };
     // Each model request is a real Responses wire stream through the shipped transport.
     function responsesStream(id: string, request: Request) {
-      const failed =
-        typeof request === "object" && "failed" in request ? request.failed : undefined;
       const items: readonly WireItem[] =
         typeof request === "string"
           ? [finalAnswer(`msg_${id}`, request)]
-          : "failed" in request
-            ? []
-            : "items" in request
-              ? request.items
-              : request;
+          : "items" in request
+            ? request.items
+            : request;
       const endTurn = typeof request === "object" && "endTurn" in request ? request.endTurn : true;
       async function* wire() {
         for (const [outputIndex, item] of items.entries()) {
@@ -388,12 +381,10 @@ describe("Responses final delivery", () => {
           }
           yield { type: "response.output_item.done", output_index: outputIndex, item };
         }
-        yield failed
-          ? { type: "response.failed", response: { id, status: "failed", error: failed } }
-          : {
-              type: "response.completed",
-              response: { id, status: "completed", output: items, end_turn: endTurn },
-            };
+        yield {
+          type: "response.completed",
+          response: { id, status: "completed", output: items, end_turn: endTurn },
+        };
       }
       const output = createResponsesAssistantOutput(model);
       const response = new AssistantMessageEventStream();
@@ -409,7 +400,9 @@ describe("Responses final delivery", () => {
           });
           response.end();
         },
-        (error: unknown) => failTransportStream({ stream: response, output, error }),
+        (error: unknown) => {
+          response.end({ ...output, stopReason: "error", errorMessage: String(error) });
+        },
       );
       return response;
     }
@@ -511,24 +504,6 @@ describe("Responses final delivery", () => {
         reply: keptReply,
         quiet: true,
       },
-      {
-        name: "an overflow compaction retry keeps the completed answer",
-        delivery: "deferred",
-        requests: [
-          answered,
-          {
-            failed: {
-              code: "context_length_exceeded",
-              message: "Your input exceeds the context window of this model.",
-            },
-          },
-          "NO_REPLY",
-        ],
-        transcript: ["toolUse:toolCall", "stop:text", "error:", "stop:text"],
-        delivered: ["Use counter B."],
-        reply: keptReply,
-        compactionRetry: true,
-      },
     ] as const)("$name", async ({ delivery, requests, transcript, delivered, ...row }) => {
       const heartbeat = "heartbeat" in row;
       const quiet = "quiet" in row;
@@ -570,59 +545,44 @@ describe("Responses final delivery", () => {
       const pending = requests.map(
         (request, index) => () => responsesStream(`resp_${index}`, request),
       );
-      const run = (prompts: AgentMessage[], history: AgentMessage[]) =>
-        runAgentLoop(
-          prompts,
-          {
-            systemPrompt: "",
-            messages: history,
-            tools: [
-              {
-                name: "lookup",
-                label: "lookup",
-                description: "lookup",
-                parameters: Type.Object({}),
-                execute: lookup,
-              },
-            ],
-          },
-          {
-            model,
-            convertToLlm: (messages) =>
-              messages.filter(
-                (message): message is Message =>
-                  message.role === "user" ||
-                  message.role === "assistant" ||
-                  message.role === "toolResult",
-              ),
-          },
-          async (event) => {
-            h.emit(event);
-            await h.subscription.waitForPendingEvents();
-          },
-          undefined,
-          () => {
-            const next = pending.shift();
-            if (!next) {
-              throw new Error("unexpected model request");
-            }
-            return next();
-          },
-        );
-      const messages = await run(
+      const messages = await runAgentLoop(
         [{ role: "user", content: "Where do I store my bag?", timestamp: 1 }],
-        [],
+        {
+          systemPrompt: "",
+          messages: [],
+          tools: [
+            {
+              name: "lookup",
+              label: "lookup",
+              description: "lookup",
+              parameters: Type.Object({}),
+              execute: lookup,
+            },
+          ],
+        },
+        {
+          model,
+          convertToLlm: (history) =>
+            history.filter(
+              (message): message is Message =>
+                message.role === "user" ||
+                message.role === "assistant" ||
+                message.role === "toolResult",
+            ),
+        },
+        async (event) => {
+          h.emit(event);
+          await h.subscription.waitForPendingEvents();
+        },
+        undefined,
+        () => {
+          const next = pending.shift();
+          if (!next) {
+            throw new Error("unexpected model request");
+          }
+          return next();
+        },
       );
-      if ("compactionRetry" in row) {
-        // Session overflow recovery compacts, drops the failed request and continues the transcript.
-        h.emit({
-          type: "compaction_end",
-          reason: "overflow",
-          outcome: { status: "completed", tokensBefore: 100, tokensAfter: 50, willRetry: true },
-        });
-        await h.subscription.waitForPendingEvents();
-        messages.push(...(await run([], messages.slice(0, -1))));
-      }
       await h.subscription.waitForPendingEvents();
       await pipeline.flush({ force: true });
       expect(pending).toEqual([]);
@@ -646,7 +606,6 @@ describe("Responses final delivery", () => {
         messagesSnapshot: messages,
         assistantTexts: h.subscription.assistantTexts,
         answerSegments: h.subscription.answerSegments,
-        inputAnswer: h.subscription.getInputAnswer(),
         keptAnswer: h.subscription.getKeptAnswer(),
         lastAssistantTextMessageIndex: h.subscription.getLastAssistantTextMessageIndex(),
         toolMetas: [],

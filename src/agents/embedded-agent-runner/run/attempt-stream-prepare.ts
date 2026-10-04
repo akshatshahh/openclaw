@@ -332,7 +332,6 @@ function prepareStream(
     lifecycleGeneration: attempt.lifecycleGeneration,
     messageChannel: input.runtimeChannel,
     initialReplayState: attempt.initialReplayState,
-    initialInputAnswer: attempt.initialInputAnswer,
     assistantErrorTranscript: attempt.assistantErrorTranscript,
     hookRunner: getGlobalHookRunner() ?? undefined,
     verboseLevel: attempt.verboseLevel,

@@ -258,7 +258,8 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
       state.visibleBlockReplyCount > 0;
     assistantTexts.length = 0;
     state.answerSegments.length = 0;
-    // The input's completed answer stays: the retry continues after it in the transcript.
+    state.inputAnswer = undefined;
+    state.keptAnswer = undefined;
     state.lastAssistant = undefined;
     state.lastAssistantTextMessageIndex = -1;
     state.lastAssistantTextContentIndex = undefined;
@@ -417,7 +418,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     assistantTexts,
     answerSegments: state.answerSegments,
     getCurrentAttemptAssistant,
-    getInputAnswer: () => state.inputAnswer,
     getKeptAnswer: () => state.keptAnswer,
     hasSuccessfulModelResponse,
     getLastAssistantTextMessageIndex: () =>
