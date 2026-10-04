@@ -270,7 +270,18 @@ export function handleMessageEnd(
   const silentExpectedWithoutSentinel =
     ctx.params.silentExpected && !isSilentReplyText(trimmedText, SILENT_REPLY_TOKEN);
   const finalAssistantText = silentExpectedWithoutSentinel ? "" : text;
-  const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
+  // Each streamed item rotates the text baseline, so hidden commentary after the answer would
+  // re-add the answer under the commentary's index. The last visible item's text is already
+  // recorded for this message in that case.
+  const lastVisibleItemRecorded =
+    lastSourceIndex !== undefined &&
+    ctx.state.lastAssistantTextMessageIndex >= ctx.state.assistantMessageStartIndex &&
+    resolveSourceIndex(
+      ctx.state.lastAssistantTextContentIndex,
+      ctx.state.lastAssistantTextItemId,
+    ) === lastSourceIndex;
+  const addedDuringMessage =
+    ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline || lastVisibleItemRecorded;
   const chunkerHasBuffered = Boolean(ctx.params.onBlockReply) && ctx.blockChunker.hasBuffered();
   ctx.finalizeAssistantTexts({
     text: finalAssistantText,
@@ -283,13 +294,6 @@ export function handleMessageEnd(
     assistantMessage.endTurn !== false &&
     !parsedText.isSilent &&
     Boolean(cleanedText.trim() || mediaUrls.length > 0);
-  if (answersInput) {
-    // Like the completed terminal, retain this run's prepared bytes; projections mutate the original.
-    ctx.state.inputAnswer = {
-      assistant: applyAssistantDeliveryDirectives(structuredClone(assistantMessage)),
-      messageIndex: ctx.state.assistantMessageIndex,
-    };
-  }
   // A NO_REPLY or empty stop without attachment or speech adds nothing to an answer this
   // input already completed, so that answer stays the turn's reply. Persistence may already
   // have moved voice and TTS directives into delivery facts.
@@ -347,6 +351,14 @@ export function handleMessageEnd(
         ctx.log.debug(`message_end block reply flush failed: ${String(err)}`);
       });
     }
+  }
+  if (answersInput) {
+    // Like the completed terminal, retain this run's prepared bytes (projections mutate the
+    // original) and index them by the last recorded text, which the flush above may add.
+    ctx.state.inputAnswer = {
+      assistant: applyAssistantDeliveryDirectives(structuredClone(assistantMessage)),
+      messageIndex: ctx.state.lastAssistantTextMessageIndex,
+    };
   }
 
   if (!shouldEmitReasoningBeforeAnswer) {
