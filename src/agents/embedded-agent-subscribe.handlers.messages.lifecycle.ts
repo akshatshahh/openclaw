@@ -98,6 +98,8 @@ export function handleMessageEnd(
     emitReasoningEnd(ctx);
   }
   ctx.noteLastAssistant(assistantMessage);
+  // Only a silent stop below can keep the earlier answer; any other message replaces it.
+  ctx.state.keptAnswer = undefined;
   if (suppressVisibleAssistantOutput) {
     appendRawStream(
       () => ({
