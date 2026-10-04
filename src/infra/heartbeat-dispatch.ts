@@ -12,6 +12,7 @@ import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS } from "../auto-reply/heartbeat.js";
 import {
   copyReplyPayloadMetadata,
   getReplyPayloadMetadata,
+  isReplyPayloadStatusNotice,
   markReplyPayloadForSourceSuppressionDelivery,
   setReplyPayloadMetadata,
   type ReplyPayload,
@@ -172,9 +173,11 @@ async function prepareHeartbeatDispatchReply(
     prepared;
   const replies = replyResult ? (Array.isArray(replyResult) ? replyResult : [replyResult]) : [];
   // A continuation under a quiet heartbeat posts the model's reply, never host-generated
-  // notices (failure notices, tool warnings); its terminal failure then stays silent.
+  // notices (failure notices, tool warnings, status lines); its terminal failure then stays silent.
   const selected = resolveHeartbeatReplyPayload(
-    prepared.quietHostNotices ? replies.filter((reply) => reply.isError !== true) : replyResult,
+    prepared.quietHostNotices
+      ? replies.filter((reply) => reply.isError !== true && !isReplyPayloadStatusNotice(reply))
+      : replyResult,
   );
   const execution = resolveReplyOperationAgentTurn(runState);
   const heartbeatResponse = selectHeartbeatToolResponse(replyResult);

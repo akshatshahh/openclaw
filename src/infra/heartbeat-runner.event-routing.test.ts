@@ -627,6 +627,13 @@ describe("Heartbeat event routing", () => {
       sends: true,
       target: "last",
     },
+    {
+      name: "answer with a trailing status notice",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "printed with status",
+      sends: true,
+    },
   ])(
     "answers a forum topic's own background command under quiet heartbeats ($name)",
     async ({ name, isolatedSession, trigger, reply, sends, stored, accountId, target }) => {
@@ -667,6 +674,12 @@ describe("Heartbeat event routing", () => {
                 lastToolError: toolError,
               }),
             );
+          } else if (reply === "printed with status") {
+            // Reply completion appends verbose plugin diagnostics after the answer.
+            replySpy.mockResolvedValue([
+              { text: "The job printed RESULT-7F3A." },
+              { text: "🧩 Active Memory: status=policy-disabled", isStatusNotice: true },
+            ]);
           } else {
             replySpy.mockResolvedValue({
               text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
