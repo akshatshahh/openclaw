@@ -295,15 +295,20 @@ src/agents/worktrees/checkout-apfs.ts
 src/agents/worktrees/checkout-git-config.ts
 src/agents/worktrees/checkout.ts
 src/agents/worktrees/errors.ts
+src/agents/worktrees/eviction.runtime.ts
 src/agents/worktrees/filesystem-apfs.native.ts
 src/agents/worktrees/filesystem-backend.ts
 src/agents/worktrees/filesystem-native.ts
 src/agents/worktrees/filesystem-refs.native.ts
+src/agents/worktrees/gc-dependencies.ts
+src/agents/worktrees/gc-fingerprint.runtime.ts
 src/agents/worktrees/git-path-inventory.ts
 src/agents/worktrees/git-worktree-operations.runtime.ts
 src/agents/worktrees/git.ts
 src/agents/worktrees/owner.ts
 src/agents/worktrees/provisioned-file-inspection.ts
+src/agents/worktrees/provisioned-snapshot-store.ts
+src/agents/worktrees/provisioned-snapshot.ts
 src/agents/worktrees/registry-read.kernel.ts
 src/agents/worktrees/registry-read.ts
 src/agents/worktrees/registry.ts
@@ -833,6 +838,7 @@ src/infra/git-exec.ts
 src/infra/git-network-retry.ts
 src/infra/git-operation-timing.ts
 src/infra/git-operation.worker.ts
+src/infra/git-path-quote.ts
 src/infra/git-read-operations.runtime.ts
 src/infra/git-root.ts
 src/infra/git-worker-context.ts
@@ -1173,6 +1179,7 @@ src/plugins/compat/plugin-sdk-subpath-records.ts
 src/plugins/compat/registry-records.ts
 src/plugins/compat/registry.ts
 src/plugins/compat/session-persistence-records.ts
+src/plugins/compat/tts-preferences-record.ts
 src/plugins/compat/watched-sessions.ts
 src/plugins/compat/workspace-mutation-guard.ts
 src/plugins/config-activation-shared.ts
