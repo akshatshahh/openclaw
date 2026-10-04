@@ -9,6 +9,7 @@ import {
 import { withSqlitePostCommitPublications } from "../../infra/sqlite-post-commit.js";
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
 import {
+  assertOpenClawAgentDatabaseIdentity,
   isOpenClawAgentDatabasePathCurrent,
   readOpenClawAgentDatabaseIdentity,
 } from "../../state/openclaw-agent-db-identity.js";
@@ -24,6 +25,7 @@ import { readSessionCreationSnapshotInDatabase } from "./session-accessor.sqlite
 import { readExactSessionEntryCandidatesInDatabase } from "./session-accessor.sqlite-entry-cache.js";
 import {
   listSessionEntriesReadOnly,
+  listSqliteSessionEntriesFromDatabase,
   readSelectedSessionEntriesInDatabase,
 } from "./session-accessor.sqlite-entry-list.read.js";
 import {
@@ -34,6 +36,7 @@ import {
 import { participantRecordsBySessionKey } from "./session-accessor.sqlite-participant-projection.js";
 import { readSessionEntryReplacementState } from "./session-accessor.sqlite-replacement-read.js";
 import { resolveSqliteSessionKey } from "./session-accessor.sqlite-scope-helpers.js";
+import { resolveSqliteScope } from "./session-accessor.sqlite-scope.js";
 import {
   hasSessionEntriesByStatus,
   readSessionEntriesByStatus,
@@ -62,6 +65,7 @@ import type {
   SessionRuntimeTargetWorkerResult,
 } from "./session-entry-read.types.js";
 import { listSessionMembersInDatabase } from "./session-sharing-store.kernel.js";
+import type { SessionStoreProjectionWorkerInput } from "./session-store-projection.types.js";
 import { runWithSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import {
   MAX_SESSION_ROW_FACTS_KEYS,
@@ -74,7 +78,48 @@ import {
   type SessionRowDatabaseFacts,
   type SessionRowFactsWorkerInput,
   type SessionRowFactsWorkerResult,
+  type SessionTranscriptWorkerValues,
 } from "./session-transcript-worker.types.js";
+
+/** Hydrate a newly admitted resident store using the projection lane's native reader. */
+export function readSessionStoreProjection(
+  request: SessionStoreProjectionWorkerInput,
+): SessionTranscriptWorkerValues["session-store-projection"] {
+  const env = cloneEnvWithPlatformSemantics(request.env);
+  const scope = {
+    agentId: request.database.agentId,
+    databaseAgentId: request.database.agentId,
+    storePath: request.database.path,
+    projection: "list" as const,
+    clone: false,
+    env,
+  };
+  const result = withOpenClawAgentDatabaseReadOnly(
+    (database) => {
+      assertOpenClawAgentDatabaseIdentity(database, request.expectedIdentity);
+      const source = readOpenClawAgentDatabaseIdentity(database);
+      if (typeof source.identity !== "string") {
+        throw new Error("Resident session projection requires a durable store");
+      }
+      const entries = listSqliteSessionEntriesFromDatabase(
+        database,
+        resolveSqliteScope({ ...scope, sessionKey: "" }),
+        scope,
+        { deferParticipants: true },
+      );
+      return {
+        entries,
+        source: {
+          identity: source.identity,
+          birthtime: source.birthtime,
+          filename: source.filename,
+        },
+      };
+    },
+    { ...request.database, env },
+  );
+  return { kind: "session-store-projection", ...(result.found ? result.value : { entries: [] }) };
+}
 
 /** Private entry and transcript-target reads share the same admitted reader and error codec. */
 export async function readSessionEntryWorkerRequest(
