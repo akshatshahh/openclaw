@@ -5,6 +5,10 @@ import { Agent, fetch as undiciFetch } from "undici/index.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { asTelegramClientFetch, createTelegramClientFetch } from "./client-fetch.js";
 import { TelegramRequestNotStartedError } from "./network-errors.js";
+import {
+  bindTelegramTransportAuthority,
+  findTelegramRequestAuthorityError,
+} from "./request-authority.js";
 
 const effectGate = vi.hoisted(() => ({ prepare: undefined as (() => Promise<void>) | undefined }));
 vi.mock("openclaw/plugin-sdk/fetch-runtime", async (importOriginal) => {
@@ -92,6 +96,74 @@ describe("Telegram client cancellation and custody", () => {
     });
   });
 
+  it.each(["active", "refused", "revoked"] as const)(
+    "settles a deferred %s transport handoff and closes rejected uploads",
+    async (authority) => {
+      const started = createDeferred<void>();
+      const release = createDeferred<void>();
+      const refusal = new Error("transport authority ended");
+      const cancelUpload = vi.fn();
+      let prepared = false;
+      effectGate.prepare = async () => {
+        started.resolve();
+        await release.promise;
+        prepared = true;
+        if (authority === "refused") {
+          throw refusal;
+        }
+      };
+      const guardedFetch = bindTelegramTransportAuthority(
+        undiciFetch as unknown as typeof globalThis.fetch,
+        () => {
+          if (prepared && authority === "revoked") {
+            throw refusal;
+          }
+        },
+      );
+      const init: RequestInit & { duplex: "half" } = {
+        method: "POST",
+        duplex: "half",
+        body: new ReadableStream<Uint8Array>({
+          start: (controller) => controller.enqueue(new TextEncoder().encode("{}")),
+          pull: (controller) => controller.close(),
+          cancel: cancelUpload,
+        }),
+      };
+      const sending = guardedFetch(`${apiRoot}/sendMessage`, init, dispatcher)
+        .then((response) => response.json())
+        .then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        );
+      try {
+        await Promise.race([
+          started.promise,
+          sending.then(() => {
+            throw new Error("transport settled before authority preparation");
+          }),
+        ]);
+        expect(requests).toEqual([]);
+        release.resolve();
+        const outcome = await sending;
+        if ("error" in outcome) {
+          expect(authority).not.toBe("active");
+          expect(findTelegramRequestAuthorityError(outcome.error)?.originalError).toBe(refusal);
+          expect(cancelUpload).toHaveBeenCalledExactlyOnceWith(outcome.error);
+          expect(requests).toEqual([]);
+        } else {
+          expect(authority).toBe("active");
+          expect(outcome.value).toEqual({ accepted: true });
+          expect(cancelUpload).not.toHaveBeenCalled();
+          expect(requests).toEqual(["/bot123:fixture/sendMessage"]);
+        }
+      } finally {
+        release.resolve();
+        await sending;
+        effectGate.prepare = undefined;
+      }
+    },
+  );
+
   it.each([
     { refuseAt: 1, rawCalls: 0, wireRequests: 0 },
     { refuseAt: 2, rawCalls: 1, wireRequests: 0 },
@@ -169,8 +241,14 @@ describe("Telegram client cancellation and custody", () => {
       hold = "body";
       const shutdown = new AbortController();
       const request = new AbortController();
+      const guardedFetch = bindTelegramTransportAuthority(
+        undiciFetch as unknown as typeof globalThis.fetch,
+        () => {},
+      );
+      const transportFetch: typeof globalThis.fetch = (input, init) =>
+        guardedFetch(input, init, dispatcher);
       const client = createTelegramClientFetch({
-        fetchImpl: asTelegramClientFetch(fetch),
+        fetchImpl: asTelegramClientFetch(transportFetch),
         shutdownSignal: shutdown.signal,
       })!;
       const response = await client(`${apiRoot}/getChat`, { signal: request.signal });

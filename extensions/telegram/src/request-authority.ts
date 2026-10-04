@@ -58,12 +58,20 @@ export function bindTelegramTransportAuthority(
     assertTelegramRequestAuthority(assertCurrent);
     const dispatcher = callerDispatcher ?? defaultDispatcher;
     if (dispatcher) {
+      const controller = new AbortController();
+      const callerSignal =
+        init?.signal === undefined && input instanceof Request ? input.signal : init?.signal;
+      const signal = callerSignal
+        ? AbortSignal.any([callerSignal, controller.signal])
+        : controller.signal;
       requestInit = {
         ...requestInit,
+        signal,
         dispatcher: dispatcher.compose((dispatch) => (options, handler) => {
           let initiated = false;
           void effect
             .initiate(() => {
+              signal.throwIfAborted();
               assertTelegramRequestAuthority(assertCurrent);
               initiated = true;
               return dispatch(options, handler);
@@ -71,10 +79,10 @@ export function bindTelegramTransportAuthority(
             .catch((error: unknown) => {
               const refusal = initiated
                 ? toErrorObject(error, "Telegram dispatch failed")
-                : new TelegramRequestAuthorityError(error);
-              // Undici's DNS interceptor also refuses before it has a controller.
-              // @ts-expect-error Undici permits a null controller before dispatch; its declaration omits it.
-              handler.onResponseError?.(null, refusal);
+                : (findTelegramRequestAuthorityError(error) ??
+                  new TelegramRequestAuthorityError(error));
+              // Fetch owns rejection and unread upload cleanup before dispatch starts.
+              controller.abort(refusal);
             });
           return true;
         }),
