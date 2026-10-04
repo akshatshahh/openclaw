@@ -221,7 +221,9 @@ export class RequestClient {
       const init = { method, headers, body, signal };
       const request = () => {
         assertCurrent?.();
-        return this.customFetch ? this.customFetch(url, init, assertCurrent) : fetch(url, init);
+        return this.customFetch && assertCurrent
+          ? this.customFetch(url, init, assertCurrent)
+          : (this.customFetch ?? fetch)(url, init);
       };
       const response = this.guardedEndpoint
         ? await effect.run(request)
