@@ -126,8 +126,8 @@ async function completePersistedInternalSourceReply(params: {
       attachSourceReplyMedia(result, acceptCompletion);
     },
   };
-  const replay = await withPreparedSourceReplyWrite(scope, (assertCurrent) =>
-    persistSessionTranscriptTurn(scope, { ...options, assertCurrent }),
+  const replay = await withPreparedSourceReplyWrite(scope, (assertWriteCurrent) =>
+    persistSessionTranscriptTurn(scope, { ...options, assertCurrent: assertWriteCurrent }),
   );
   if (replay.rejectedReason || replay.messages.length === 0) {
     throw new Error("Internal source reply no longer owns the active transcript");

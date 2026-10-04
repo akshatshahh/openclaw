@@ -45,9 +45,9 @@ export async function withEffectPreparation<T>(
           });
         },
         release: () => use.release(),
-        persist: (run) =>
+        persist: (write) =>
           use.persist((assertCurrent) =>
-            run(() => {
+            write(() => {
               assertOpen();
               assertCurrent();
             }),

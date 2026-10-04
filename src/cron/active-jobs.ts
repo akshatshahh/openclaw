@@ -92,13 +92,13 @@ function captureCronJobMessageAuthority(
     assertCurrent,
     prepare
       ? {
-          prepareUse: (assertCurrent?: () => void) => {
+          prepareUse: (assertCallerCurrent?: () => void) => {
             assertLocal();
             return prepare(
               sourceSensitive,
               () => {
                 assertLocal();
-                assertCurrent?.();
+                assertCallerCurrent?.();
               },
               owner?.signal,
             );
