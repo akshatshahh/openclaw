@@ -450,6 +450,22 @@ describe("Responses final delivery", () => {
         reply: { disposition: "visible", text: "First part.\nSecond part." },
       },
       {
+        name: "live blocks of a two-item answer split by commentary are not resent after NO_REPLY",
+        delivery: "live",
+        requests: [
+          [
+            lookupCall,
+            finalAnswer("msg_first", "First part."),
+            { ...finalAnswer("msg_note", "Checking the second part."), phase: "commentary" },
+            finalAnswer("msg_second", "Second part."),
+          ],
+          "NO_REPLY",
+        ],
+        transcript: ["toolUse:toolCall", "stop:text+text+text", "stop:text"],
+        delivered: ["First part.", "Second part."],
+        reply: { disposition: "visible", text: "First part.\nSecond part." },
+      },
+      {
         name: "live blocks of a two-item terminal answer are not resent",
         delivery: "live",
         requests: [
