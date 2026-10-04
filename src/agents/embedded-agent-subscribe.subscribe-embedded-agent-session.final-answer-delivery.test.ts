@@ -13,6 +13,8 @@ import { createTypingSignaler } from "../auto-reply/reply/typing-mode.js";
 import { createTypingController } from "../auto-reply/reply/typing.js";
 import { applyAssistantDeliveryDirectives } from "../config/sessions/transcript-assistant-delivery.js";
 import { runAgentLoop } from "../plugin-sdk/agent-core.js";
+import { attachSessionTranscriptRunId } from "../sessions/transcript-events.js";
+import { matchesTranscriptEvent } from "../sessions/transcript-visible-record.js";
 import { createTestAdmittedRunContext } from "./admitted-run-context.test-support.js";
 import { buildAgentRunTerminalReplySnapshot } from "./agent-run-terminal-reply.js";
 import type { EmbeddedRunAttemptWithReceiptEvidence } from "./embedded-agent-runner/run/attempt-result.js";
@@ -31,6 +33,8 @@ import {
   createOpenAiResponsesTextEvent,
   type OpenAiResponsesTextEventPhase,
 } from "./embedded-agent-subscribe.openai-responses.test-helpers.js";
+import { readSubagentRunAnnounceResultUsing } from "./subagents/announce/subagent-announce-result.js";
+import type { SubagentRunRecord } from "./subagents/registry/subagent-registry.types.js";
 import { textAssistant } from "./test-helpers/sparse-transcript.test-support.js";
 
 type Options = Omit<Parameters<typeof createSubscribedSessionHarness>[0], "runId">;
@@ -606,6 +610,19 @@ describe("Responses final delivery", () => {
         reply: { disposition: "silent" },
       },
       {
+        name: "interim progress before a later NO_REPLY does not replace the completed answer",
+        delivery: "deferred",
+        requests: [
+          answered,
+          { items: [finalAnswer("msg_progress", "Exporting the rest now.")], endTurn: false },
+          "NO_REPLY",
+        ],
+        transcript: [...answeredTail, "stop:text"],
+        delivered: ["Use counter B."],
+        reply: keptReply,
+        announce: true,
+      },
+      {
         name: "quiet mode keeps the completed answer private",
         delivery: "deferred",
         requests: [answered, "NO_REPLY"],
@@ -800,6 +817,56 @@ describe("Responses final delivery", () => {
             rawText: prepared.finalAssistantRawText,
           }),
         ).toEqual(row.reply);
+      }
+      if ("announce" in row) {
+        // A parent's sub-agent announcement hydrates the answer from the persisted rows.
+        const events = messages.map((message, index) => ({
+          type: "message",
+          id: `entry-${index}`,
+          message: attachSessionTranscriptRunId(message, "run"),
+        }));
+        const child: SubagentRunRecord = {
+          runId: "run",
+          childSessionKey: "agent:main:subagent:astra",
+          requesterSessionKey: "agent:main:main",
+          requesterDisplayKey: "main",
+          task: "Where do I store my bag?",
+          cleanup: "keep",
+          createdAt: 1,
+          execution: {
+            status: "terminal",
+            outcome: { status: "ok" },
+            transcriptTarget: {
+              agentId: "main",
+              sessionId: "session",
+              sessionKey: "agent:main:subagent:astra",
+              storePath: "/tmp/openclaw-test/sessions.json",
+            },
+          },
+          completion: {
+            required: true,
+            terminalReply: buildAgentRunTerminalReplySnapshot({
+              visibleText: prepared.finalAssistantVisibleText,
+              rawText: prepared.finalAssistantRawText,
+            }),
+          },
+        };
+        const unexpected = () => {
+          throw new Error("unexpected session fallback");
+        };
+        const announced = await readSubagentRunAnnounceResultUsing(child, {
+          readSubagentRun: () => child,
+          findTranscriptEvent: async (_target, match) => {
+            const event = events.findLast((candidate) => matchesTranscriptEvent(candidate, match));
+            return event === undefined ? undefined : { event };
+          },
+          findSessionTranscriptArchiveEventReadOnly: async () => undefined,
+          getRuntimeConfig: unexpected,
+          readSubagentSessionEntry: unexpected,
+          resolveAgentIdFromSessionKey: unexpected,
+          resolveSessionStorePathCore: unexpected,
+        });
+        expect(announced.text).toBe("Use counter B.");
       }
     });
   });
