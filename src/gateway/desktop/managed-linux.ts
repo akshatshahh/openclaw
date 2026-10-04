@@ -320,7 +320,7 @@ export function createManagedLinuxDesktop(
       throw new Error("managed Linux desktop stopped during startup");
     }
     throw new Error(
-      `managed Linux desktop did not become ready on 127.0.0.1:${active.port} within ${readinessTimeoutMs}ms (last probe: ${lastProbe})`,
+      `managed Linux desktop did not become ready on 127.0.0.1:${active.port} within ${readinessTimeoutMs}ms (last check: ${lastProbe})`,
     );
   };
 
@@ -372,16 +372,18 @@ export function createManagedLinuxDesktop(
   };
 
   const waitForRun = (run: ManagedRun): Promise<RunExit> => {
-    const pending = run.wait().catch((error: unknown): RunExit => ({
-      reason: "spawn-error",
-      exitCode: null,
-      exitSignal: null,
-      durationMs: Math.max(0, nowMs() - run.startedAtMs),
-      stdout: "",
-      stderr: error instanceof Error ? error.message : String(error),
-      timedOut: false,
-      noOutputTimedOut: false,
-    }));
+    const pending = run.wait().catch(
+      (error: unknown): RunExit => ({
+        reason: "spawn-error",
+        exitCode: null,
+        exitSignal: null,
+        durationMs: Math.max(0, nowMs() - run.startedAtMs),
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        timedOut: false,
+        noOutputTimedOut: false,
+      }),
+    );
     activeWaits.add(pending);
     void pending.finally(() => activeWaits.delete(pending));
     return pending;

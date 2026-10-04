@@ -113,7 +113,7 @@ it.each([
         scenario.stage === "unavailable"
           ? "Task Scheduler probe failed (exit 2)."
           : scenario.stage === "command then runtime"
-            ? "Scheduled Task probe timed out after 47000 ms (ETIMEDOUT)."
+            ? "Scheduled Task check timed out after 47000 ms (ETIMEDOUT)."
             : "Task Scheduler probe timed out after 47000 ms.",
       );
       if (scenario.stage !== "command then runtime") {

@@ -916,7 +916,7 @@ describe("mcp cli", () => {
       });
 
       expect(JSON.parse(lastLogLine())).toMatchObject({ servers: {}, diagnostics: [] });
-      expect(lastErrorLine()).toBe(`MCP probe did not connect to "incomplete" in ${configPath}.`);
+      expect(lastErrorLine()).toBe(`MCP check did not connect to "incomplete" in ${configPath}.`);
 
       await writeMcpServers(home, {
         healthy: { command: "node" },

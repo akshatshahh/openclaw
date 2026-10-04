@@ -186,7 +186,7 @@ describe("Feishu monitor startup preflight", () => {
       await betaStarted.promise;
       expect(started).toEqual(["alpha", "beta"]);
       expect(runtime.error).toHaveBeenCalledWith(
-        "feishu[alpha]: bot info probe timed out after 30000ms; continuing startup",
+        "feishu[alpha]: bot info check timed out after 30000ms; continuing startup",
       );
       abort.abort();
       await monitor;

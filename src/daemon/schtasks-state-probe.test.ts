@@ -87,7 +87,7 @@ it.each([
         detail:
           expected === 0
             ? "Scheduled Task inspection deadline expired."
-            : `Scheduled Task probe timed out after ${expected} ms (ETIMEDOUT).`,
+            : `Scheduled Task check timed out after ${expected} ms (ETIMEDOUT).`,
         timeoutMs: expected,
         diagnostic: { kind: "timeout", timeoutMs: expected },
       });

@@ -674,7 +674,7 @@ describe("noteMemorySearchHealth", () => {
           checked: false,
           ready: false,
           error:
-            "memory embedding readiness not checked; run `openclaw memory status --deep` to probe",
+            "memory embedding readiness not checked; run `openclaw memory status --deep` to check",
           skipped: true,
         },
       },
@@ -692,7 +692,7 @@ describe("noteMemorySearchHealth", () => {
           checked: false,
           ready: false,
           error:
-            "memory embedding readiness not checked; run `openclaw memory status --deep` to probe",
+            "memory embedding readiness not checked; run `openclaw memory status --deep` to check",
           skipped: true,
         },
       },
@@ -1099,7 +1099,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: {
         checked: false,
         ready: false,
-        error: "gateway memory probe timed out: gateway timeout after 8000ms",
+        error: "gateway memory check timed out: gateway timeout after 8000ms",
         skipped: false,
       },
     });

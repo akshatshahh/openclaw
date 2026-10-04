@@ -1097,7 +1097,7 @@ describe("gateway/node-registry", () => {
     (oldSocket as unknown as EventEmitter).emit("pong");
 
     await expect(connectivity).resolves.toEqual(
-      failure("NOT_CONNECTED", "node connection changed during connectivity probe"),
+      failure("NOT_CONNECTED", "node connection changed during connectivity check"),
     );
     await expect(invoke).resolves.toEqual(
       failure("DISCONNECTED", "node disconnected (debug.ping)"),
@@ -1142,7 +1142,7 @@ describe("gateway/node-registry", () => {
     resolveProbe?.({ ok: true });
 
     await expect(connectivity).resolves.toEqual(
-      failure("NOT_CONNECTED", "node connection changed during connectivity probe"),
+      failure("NOT_CONNECTED", "node connection changed during connectivity check"),
     );
     expect(registry.get("node-1")).toBe(replacement);
   });
@@ -1158,7 +1158,7 @@ describe("gateway/node-registry", () => {
 
     const result = await registry.checkConnectivity("node-1", 1);
 
-    expect(result).toEqual(failure("TIMEOUT", "node connectivity probe timed out"));
+    expect(result).toEqual(failure("TIMEOUT", "node connectivity check timed out"));
   });
 
   it("settles zero-timeout MCP calls without disconnecting the replacement node", async () => {

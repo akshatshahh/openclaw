@@ -114,7 +114,7 @@ describe("assertMxcReadiness", () => {
     mockProbe({ probe: new Error("Command failed: wxc-exec.exe --probe") });
 
     expect(() => assertMxcReadiness({ executablePath: MXC_EXE })).toThrow(
-      /host probe failed: Command failed.*older executor.*unset plugins\.entries\.mxc\.config\.mxcBinaryPath/u,
+      /host check failed: Command failed.*older executor.*unset plugins\.entries\.mxc\.config\.mxcBinaryPath/u,
     );
   });
 
@@ -133,7 +133,7 @@ describe("assertMxcReadiness", () => {
       assertMxcReadiness({
         executablePath: "C:\\override\\wxc-exec.exe",
       }),
-    ).toThrow(/host probe failed: spawn C:\\override\\wxc-exec\.exe ENOENT/u);
+    ).toThrow(/host check failed: spawn C:\\override\\wxc-exec\.exe ENOENT/u);
   });
 
   test("does not gate activation on system-drive preparation", () => {

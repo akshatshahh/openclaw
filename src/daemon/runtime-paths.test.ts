@@ -244,7 +244,7 @@ describe("resolvePreferredNodePath", () => {
       });
     };
     await expect(install()).rejects.toThrow(
-      /Node runtime probe failed.*\/usr\/bin\/node.*cwd.*EACCES/s,
+      /Node runtime check failed.*\/usr\/bin\/node.*cwd.*EACCES/s,
     );
   });
 
@@ -717,7 +717,7 @@ describe("resolveSystemNodeInfo", () => {
       execFile: vi.fn().mockRejectedValue(cause),
     });
     const warning = renderSystemNodeWarning(info, "/selected/node");
-    expect(warning).toContain("probe failed");
+    expect(warning).toContain("check failed");
     expect(warning).toContain("EACCES");
     expect(warning).toContain(darwinNode);
     expect(warning).not.toContain("Install Node");

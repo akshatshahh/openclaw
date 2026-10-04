@@ -3296,8 +3296,8 @@ describe("Codex app-server supervised branch lifecycle", () => {
         }),
       ).rejects.toThrow(
         returnedId === "thread-source"
-          ? "model probe reused an existing thread"
-          : "model probe may have materialized without a safe thread id",
+          ? "model test reused an existing thread"
+          : "model test may have materialized without a safe thread id",
       );
       expect(request.mock.calls.map(([method]) => method)).toEqual([
         "config/read",

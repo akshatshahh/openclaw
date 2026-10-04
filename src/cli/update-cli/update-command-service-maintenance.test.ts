@@ -479,7 +479,7 @@ it.each([
     });
 
     if (scenario.admitted) {
-      await expect(inspection).rejects.toThrow("Scheduled Task probe timed out after 30000 ms");
+      await expect(inspection).rejects.toThrow("Scheduled Task check timed out after 30000 ms");
     } else {
       const inspected = await inspection;
       expect(inspected.blockMessage).toBeUndefined();
@@ -493,7 +493,7 @@ it.each([
         );
         if (scenario.code === "ETIMEDOUT") {
           expect(inspected.serviceMutationSkipMessage).toContain(
-            "Scheduled Task probe timed out after 30000 ms",
+            "Scheduled Task check timed out after 30000 ms",
           );
           expect(inspected.serviceMutationSkipMessage).toContain("ETIMEDOUT");
         }

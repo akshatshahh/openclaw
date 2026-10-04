@@ -949,7 +949,7 @@ describe("probeGatewayMemoryStatus", () => {
     const result = await probeGatewayMemoryStatus({ cfg });
     expect(result.checked).toBe(false);
     expect(result.ready).toBe(false);
-    expect(result.error).toContain("gateway memory probe timed out");
+    expect(result.error).toContain("gateway memory check timed out");
     expect(result.skipped).toBe(false);
   });
 
@@ -963,7 +963,7 @@ describe("probeGatewayMemoryStatus", () => {
         ok: false,
         checked: false,
         error:
-          "memory embedding readiness not checked; run `openclaw memory status --deep` to probe",
+          "memory embedding readiness not checked; run `openclaw memory status --deep` to check",
       },
     });
 

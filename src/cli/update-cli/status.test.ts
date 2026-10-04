@@ -298,17 +298,16 @@ describe("update status Node runtime findings", () => {
         prepare: (this: DatabaseSync, sql: string) => ReturnType<DatabaseSync["prepare"]>;
       } = DatabaseSync.prototype;
       const realPrepare = sqlitePrototype.prepare;
-      const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
-        this: DatabaseSync,
-        sql,
-      ) {
-        return realPrepare.call(
-          this,
-          sql === "SELECT sqlite_version() AS version"
-            ? `SELECT '${sqliteVersion}' AS version`
-            : sql,
-        );
-      });
+      const prepare = vi
+        .spyOn(DatabaseSync.prototype, "prepare")
+        .mockImplementation(function (this: DatabaseSync, sql) {
+          return realPrepare.call(
+            this,
+            sql === "SELECT sqlite_version() AS version"
+              ? `SELECT '${sqliteVersion}' AS version`
+              : sql,
+          );
+        });
       const freshGuard = await import("../../infra/runtime-guard.js");
       vi.spyOn(freshGuard, "detectRuntime").mockResolvedValue({
         kind: "node",
@@ -415,7 +414,7 @@ describe("update status Node runtime findings", () => {
         sqliteVersion: state === "unsupported" ? "3.50.2" : "3.53.0",
         nodeSharedSqlite: false,
         ...(state === "admitted"
-          ? { note: "Node 24.15.0: unsupported version, capability probe passed." }
+          ? { note: "Node 24.15.0: unsupported version, capability check passed." }
           : {}),
       });
     }
@@ -441,7 +440,7 @@ describe("update status Node runtime findings", () => {
     }
     await updateStatusCommand({});
     if (state === "admitted") {
-      expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("capability probe passed"));
+      expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("capability check passed"));
       expect(runtime.log).not.toHaveBeenCalledWith(undefined);
     } else {
       const output = runtime.log.mock.calls.map(([line]) => String(line)).join("\n");
