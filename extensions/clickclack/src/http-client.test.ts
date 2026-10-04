@@ -154,9 +154,9 @@ describe("ClickClack HTTP client", () => {
   it.each([false, true])(
     "rechecks the message caller after effect preparation (retired=%s)",
     async (retired) => {
-      const preparing = createDeferred<void>();
-      const prepared = createDeferred<void>();
-      const dispatched = createDeferred<void>();
+      const preparing = createDeferred();
+      const prepared = createDeferred();
+      const dispatched = createDeferred();
       const response = createDeferred<Response>();
       const caller = new AbortController();
       const failure = new Error("ClickClack caller retired");
@@ -186,7 +186,9 @@ describe("ClickClack HTTP client", () => {
           }),
         ]);
         expect(fetch).not.toHaveBeenCalled();
-        if (retired) caller.abort(failure);
+        if (retired) {
+          caller.abort(failure);
+        }
         prepared.resolve();
         if (!retired) {
           await dispatched.promise;

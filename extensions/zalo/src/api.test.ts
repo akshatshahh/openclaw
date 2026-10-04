@@ -111,9 +111,9 @@ describe("Zalo API request methods", () => {
   it.each([false, true])(
     "rechecks the send caller after effect preparation (retired=%s)",
     async (retired) => {
-      const preparing = createDeferred<void>();
-      const prepared = createDeferred<void>();
-      const dispatched = createDeferred<void>();
+      const preparing = createDeferred();
+      const prepared = createDeferred();
+      const dispatched = createDeferred();
       const response = createDeferred<Response>();
       const caller = new AbortController();
       const failure = new Error("Zalo caller retired");
@@ -145,7 +145,9 @@ describe("Zalo API request methods", () => {
           }),
         ]);
         expect(fetch).not.toHaveBeenCalled();
-        if (retired) caller.abort(failure);
+        if (retired) {
+          caller.abort(failure);
+        }
         prepared.resolve();
         if (!retired) {
           await dispatched.promise;

@@ -410,9 +410,9 @@ describe("createFeishuClient HTTP timeout", () => {
   it.each([false, true])(
     "rechecks the caller at the SDK handoff after effect preparation (retired=%s)",
     async (retired) => {
-      const preparing = createDeferred<void>();
-      const prepared = createDeferred<void>();
-      const dispatched = createDeferred<void>();
+      const preparing = createDeferred();
+      const prepared = createDeferred();
+      const dispatched = createDeferred();
       const response = createDeferred<{ code: number }>();
       const caller = new AbortController();
       const failure = new Error("Feishu caller retired");
@@ -448,7 +448,9 @@ describe("createFeishuClient HTTP timeout", () => {
           }),
         ]);
         expect(mockBaseHttpInstance.request).not.toHaveBeenCalled();
-        if (retired) caller.abort(failure);
+        if (retired) {
+          caller.abort(failure);
+        }
         prepared.resolve();
         if (!retired) {
           await dispatched.promise;

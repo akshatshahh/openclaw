@@ -84,7 +84,9 @@ describe("Zalouser registered send handoff", () => {
           }),
         ]);
         expect(harness.requests).toEqual([]);
-        if (retired) caller.abort(new Error("caller retired during effect preparation"));
+        if (retired) {
+          caller.abort(new Error("caller retired during effect preparation"));
+        }
         preparation.release.resolve();
         if (!retired) {
           await response.entered.promise;

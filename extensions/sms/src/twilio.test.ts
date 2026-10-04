@@ -92,9 +92,9 @@ describe("Twilio SMS helpers", () => {
   it.each([false, true])(
     "rechecks custom-fetch credentials after effect preparation (replaced=%s)",
     async (replaced) => {
-      const preparing = createDeferred<void>();
-      const prepared = createDeferred<void>();
-      const dispatched = createDeferred<void>();
+      const preparing = createDeferred();
+      const prepared = createDeferred();
+      const dispatched = createDeferred();
       const response = createDeferred<Response>();
       const account = createAccount();
       setRuntimeConfigSnapshot({ channels: { sms: account } } as never);
@@ -130,7 +130,9 @@ describe("Twilio SMS helpers", () => {
           }),
         ]);
         expect(fetchImpl).not.toHaveBeenCalled();
-        if (replaced) replace();
+        if (replaced) {
+          replace();
+        }
         prepared.resolve();
         if (!replaced) {
           await dispatched.promise;

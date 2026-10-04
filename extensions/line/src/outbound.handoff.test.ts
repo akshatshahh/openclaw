@@ -268,7 +268,9 @@ describe("registered LINE send handoff", () => {
           }),
         ]);
         expect(startedWhileActive).toEqual([]);
-        if (retired) retire();
+        if (retired) {
+          retire();
+        }
         prepared.resolve();
         expect(await sending).toMatchObject(
           retired

@@ -98,9 +98,9 @@ describe("Mattermost request boundary", () => {
   it.each([false, true])(
     "rechecks custom message transports after effect preparation (retired=%s)",
     async (retired) => {
-      const preparing = createDeferred<void>();
-      const prepared = createDeferred<void>();
-      const dispatched = createDeferred<void>();
+      const preparing = createDeferred();
+      const prepared = createDeferred();
+      const dispatched = createDeferred();
       const response = createDeferred<Response>();
       const caller = new AbortController();
       const failure = new Error("Mattermost caller retired");
@@ -129,7 +129,9 @@ describe("Mattermost request boundary", () => {
           }),
         ]);
         expect(fetchImpl).not.toHaveBeenCalled();
-        if (retired) caller.abort(failure);
+        if (retired) {
+          caller.abort(failure);
+        }
         prepared.resolve();
         if (!retired) {
           await dispatched.promise;
