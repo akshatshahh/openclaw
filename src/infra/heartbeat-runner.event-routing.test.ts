@@ -3,7 +3,13 @@ import { createDeferred } from "../../test/helpers/promise.js";
 import { resetProcessRegistryForTests } from "../agents/bash-process-registry.test-support.js";
 import { createExecTool } from "../agents/bash-tools.exec-run.js";
 import { buildPayloads } from "../agents/embedded-agent-runner/run/payloads.test-helpers.js";
+import { resolveEmbeddedRunTerminal } from "../agents/embedded-agent-runner/run/terminal-resolution.js";
+import { makeTerminalInput } from "../agents/embedded-agent-runner/run/terminal-resolution.test-support.js";
 import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../agents/failover/user-copy.js";
+import {
+  buildEmbeddedRunnerAssistant,
+  makeEmbeddedRunnerAttempt,
+} from "../agents/test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import type { InternalGetReplyOptions } from "../auto-reply/reply/get-reply.types.js";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import { getReplySystemEventContext } from "../auto-reply/reply/system-event-session-key.js";
@@ -634,6 +640,13 @@ describe("Heartbeat event routing", () => {
       reply: "printed with status",
       sends: true,
     },
+    {
+      name: "answer cut off by the output limit",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "truncated",
+      sends: true,
+    },
   ])(
     "answers a forum topic's own background command under quiet heartbeats ($name)",
     async ({ name, isolatedSession, trigger, reply, sends, stored, accountId, target }) => {
@@ -680,6 +693,31 @@ describe("Heartbeat event routing", () => {
               { text: "The job printed RESULT-7F3A." },
               { text: "🧩 Active Memory: status=policy-disabled", isStatusNotice: true },
             ]);
+          } else if (reply === "truncated") {
+            // Real terminal resolution of a length stop: the partial answer, then the host's label.
+            const assistant = buildEmbeddedRunnerAssistant({
+              stopReason: "length",
+              content: [{ type: "text", text: "The job printed RESULT-7F3A." }],
+            });
+            const resolved = await resolveEmbeddedRunTerminal(
+              makeTerminalInput({
+                attempt: makeEmbeddedRunnerAttempt({
+                  assistantTexts: ["The job printed RESULT-7F3A."],
+                  lastAssistant: assistant,
+                  currentAttemptAssistant: assistant,
+                  currentAttemptReplayMetadata: {
+                    hadPotentialSideEffects: false,
+                    replaySafe: true,
+                  },
+                }),
+                attemptAssistant: assistant,
+                payloadsWithToolMedia: [{ text: "The job printed RESULT-7F3A." }],
+              }),
+            );
+            expect(resolved.action).toBe("complete");
+            replySpy.mockResolvedValue(
+              resolved.action === "complete" ? resolved.result.payloads : undefined,
+            );
           } else {
             replySpy.mockResolvedValue({
               text: reply === "printed" ? "The job printed RESULT-7F3A." : reply,
