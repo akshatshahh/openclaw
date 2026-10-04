@@ -93,9 +93,7 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
   const initial = input.initial;
   let attempt = initial.attempt;
   let lastRunPromptUsage = input.lastRunPromptUsage;
-  // Sealed same-input answers belong to the current input's delivery window.
-  const minimumAssistantMessageIndex =
-    (attempt.answerSegments?.findLast((segment) => !segment.continued)?.messageEnd ?? -1) + 1;
+  const minimumAssistantMessageIndex = (attempt.answerSegments?.at(-1)?.messageEnd ?? -1) + 1;
   const observeSourceDelivery = () =>
     observeReplyDelivery(
       input.terminalBase.runParams.resolveReplyDelivery,
