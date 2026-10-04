@@ -354,7 +354,8 @@ export function createBlockReplyPipeline(params: {
   };
 
   // A final payload joins every text item of its physical assistant message, and each item
-  // streamed under its own consecutive index, so also match item runs back to the message start.
+  // streamed under its own index (hidden commentary items take indexes without blocks), so
+  // also match item runs back to the message start.
   const matchingAttempts = (payload: ReplyPayload) => {
     const index = getReplyPayloadMetadata(payload)?.assistantMessageIndex;
     if (index === undefined) {
@@ -362,13 +363,12 @@ export function createBlockReplyPipeline(params: {
     }
     const start = blockAttemptsByMessage.get(index)?.[0]?.messageStart ?? index;
     const runs: BlockAttempt[][] = [];
-    for (
-      let item = index, run: BlockAttempt[] = [];
-      item >= start && blockAttemptsByMessage.get(item)?.length;
-      item--
-    ) {
-      run = [...(blockAttemptsByMessage.get(item) ?? []), ...run];
-      runs.push(run);
+    for (let item = index, run: BlockAttempt[] = []; item >= start; item--) {
+      const attempts = blockAttemptsByMessage.get(item);
+      if (attempts?.length) {
+        run = [...attempts, ...run];
+        runs.push(run);
+      }
     }
     return runs;
   };
