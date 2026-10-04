@@ -466,6 +466,34 @@ describe("Responses final delivery", () => {
         reply: { disposition: "visible", text: "First part.\nSecond part." },
       },
       {
+        name: "a live answer followed by commentary is not resent after NO_REPLY",
+        delivery: "live",
+        requests: [
+          [
+            lookupCall,
+            finalAnswer("msg_answer", "Alpha."),
+            { ...finalAnswer("msg_note", "Wrapping up."), phase: "commentary" },
+          ],
+          "NO_REPLY",
+        ],
+        transcript: ["toolUse:toolCall", "stop:text+text", "stop:text"],
+        delivered: ["Alpha."],
+        reply: { disposition: "visible", text: "Alpha." },
+      },
+      {
+        name: "a live answer followed by commentary is not resent",
+        delivery: "live",
+        requests: [
+          [
+            finalAnswer("msg_answer", "Alpha."),
+            { ...finalAnswer("msg_note", "Wrapping up."), phase: "commentary" },
+          ],
+        ],
+        transcript: ["stop:text+text"],
+        delivered: ["Alpha."],
+        reply: { disposition: "visible", text: "Alpha." },
+      },
+      {
         name: "live blocks of a two-item terminal answer are not resent",
         delivery: "live",
         requests: [
