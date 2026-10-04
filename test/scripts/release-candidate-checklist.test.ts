@@ -50,7 +50,6 @@ import {
   isDirectReleaseCandidateExecution,
   loadCandidateShippedBaseline,
   parseArgs,
-  parseRunIdFromDispatchOutput,
   preflightCorePackageTarballs,
   preflightDependencyTarballs,
   reconcileReleaseCandidateState,
@@ -2315,14 +2314,6 @@ describe("release candidate checklist", () => {
         "@openclaw/diffs",
       ]),
     ).toThrow("release candidates publish OpenClaw with --plugin-publish-scope all-publishable");
-  });
-
-  it("extracts a workflow run id from gh dispatch output", () => {
-    expect(
-      parseRunIdFromDispatchOutput(
-        "https://github.com/openclaw/openclaw/actions/runs/25922042055\n",
-      ),
-    ).toBe("25922042055");
   });
 
   it("fails closed when gh dispatch output does not include the run url", () => {

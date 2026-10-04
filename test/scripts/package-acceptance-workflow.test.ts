@@ -84,6 +84,8 @@ const CI_WORKFLOW = ".github/workflows/ci.yml";
 const PERFORMANCE_WORKFLOW = ".github/workflows/openclaw-performance.yml";
 const PUBLICATION_CONTRACT_FILES = [
   "scripts/full-release-publication-contract.mjs",
+  "scripts/lib/full-release-publication-inputs.mjs",
+  "scripts/lib/release-upgrade-baseline.mjs",
   "scripts/clawhub-prepared-artifact.mjs",
   "scripts/clawhub-parent-authorization.mjs",
   "scripts/plugin-publication-artifact.mjs",
@@ -220,6 +222,9 @@ let fixtureGitPath: string | undefined;
 const frozenAdmissionClosure = [
   "scripts/preflight-frozen-target-contracts.mjs",
   "scripts/lib/frozen-target-source.mjs",
+  "scripts/lib/frozen-target-workflow-request.mjs",
+  "scripts/lib/release-upgrade-baseline.mjs",
+  "scripts/lib/canonical-json.mjs",
   "scripts/lib/docker-e2e-plan.mts",
   "scripts/lib/docker-e2e-scenarios.mts",
   "scripts/lib/official-external-channel-catalog.json",
