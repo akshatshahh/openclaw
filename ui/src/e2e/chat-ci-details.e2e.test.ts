@@ -455,9 +455,7 @@ suite.define(() => {
         });
       }
     }
-    // Trial clicks leave focus on the titled CI trigger. Focus inside the menu
-    // so its tooltip cannot consume the Escape meant to dismiss the popover.
-    await linuxJob.locator(".chat-ci__job-link").press("Escape");
+    await page.keyboard.press("Escape");
     await expect.poll(() => page.locator(".chat-pr__checks[open]").count()).toBe(0);
     await expect.poll(() => menu.isVisible()).toBe(false);
   });
