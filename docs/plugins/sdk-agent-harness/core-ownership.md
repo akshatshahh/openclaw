@@ -31,8 +31,9 @@ observation, not a native ownership claim. Bound native sessions use the separat
 ownership contract below.
 
 Await `params.hostCapabilities.createToolSurfaceAsync(options)` to construct
-OpenClaw tools with fresh exec policy for each construction. Policy-read failure
-or loss of the admitted host authority rejects construction. The host captures
+OpenClaw tools with fresh exec policy for each construction. Ordinary exec-approval
+read errors use conservative deny defaults. Migration errors or loss of the
+admitted host authority reject construction. The host captures
 publication availability for the admitted attempt and
 applies it when building the surface; harnesses do not need to forward that fact,
 and plugin-supplied options cannot replace it. Tool profiles still filter the

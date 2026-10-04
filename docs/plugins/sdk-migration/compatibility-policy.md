@@ -70,8 +70,9 @@ need to provide it.
 
 Harnesses should await `params.hostCapabilities.createToolSurfaceAsync(options,
 bindingOptions?)`. Each construction reads fresh exec policy through the existing
-worker, then binds tools to the exact admitted host. Read failures and authority
-loss reject construction; callers must not retry through the synchronous factory.
+worker, then binds tools to the exact admitted host. Ordinary exec-approval read
+errors use conservative deny defaults. Migration errors and authority loss reject
+construction; callers must not retry through the synchronous factory.
 The public `createOpenClawCodingToolsAsync(options?)` factory from
 `openclaw/plugin-sdk/agent-harness` provides the same awaited preparation for
 non-harness callers. Harnesses use the host capability to retain its source
