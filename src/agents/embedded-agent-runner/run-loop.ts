@@ -340,6 +340,7 @@ export async function runPreparedEmbeddedLoop(
             sessionPromptState,
             terminalRetryState,
             replayState: accumulatedReplayState,
+            inputAnswer: attemptCarryover.inputAnswer,
             provider,
             modelId,
             startupStagesEmitted,

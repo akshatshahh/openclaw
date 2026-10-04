@@ -5,6 +5,7 @@ import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { applyAssistantDeliveryDirectives } from "../config/sessions/transcript-assistant-delivery.js";
 import { coerceChatContentText } from "../shared/chat-content.js";
 import { resolveAssistantMessagePhase } from "../shared/chat-message-content.js";
 import {
@@ -67,9 +68,10 @@ export function handleMessageEnd(
       messageEnd: ctx.state.assistantMessageIndex,
       finalMessageStart: ctx.state.assistantMessageStartIndex,
       lastAssistant: ctx.state.lastAssistant,
-      answer: ctx.state.inputAnswer,
+      keptAnswer: ctx.state.keptAnswer,
     });
     ctx.state.inputAnswer = undefined;
+    ctx.state.keptAnswer = undefined;
     ctx.state.sourceReplyDeliveryState = "missing";
     ctx.state.messageToolOnlySourceReplyDelivered = false;
     ctx.state.deterministicApprovalPromptPending = false;
@@ -273,18 +275,29 @@ export function handleMessageEnd(
     addedDuringMessage,
     chunkerHasBuffered,
   });
-  if (
+  const answersInput =
     !ctx.params.silentExpected &&
     assistantMessage.stopReason === "stop" &&
     assistantMessage.endTurn !== false &&
     !parsedText.isSilent &&
-    (cleanedText.trim() || mediaUrls.length > 0)
-  ) {
+    Boolean(cleanedText.trim() || mediaUrls.length > 0);
+  if (answersInput) {
+    // Like the completed terminal, retain this run's prepared bytes; projections mutate the original.
     ctx.state.inputAnswer = {
-      assistant: assistantMessage,
+      assistant: applyAssistantDeliveryDirectives(structuredClone(assistantMessage)),
       messageIndex: ctx.state.assistantMessageIndex,
     };
   }
+  // A NO_REPLY or empty stop without attachment or speech adds nothing to an answer this
+  // input already completed, so that answer stays the turn's reply.
+  ctx.state.keptAnswer =
+    assistantMessage.stopReason === "stop" &&
+    (parsedText.isSilent || !cleanedText.trim()) &&
+    mediaUrls.length === 0 &&
+    !parsedText.audioAsVoice &&
+    !assistantMessage.openclawDelivery?.tts?.text?.trim()
+      ? ctx.state.inputAnswer
+      : undefined;
 
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(

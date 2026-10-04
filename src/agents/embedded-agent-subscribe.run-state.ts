@@ -18,6 +18,7 @@ export function createEmbeddedAgentSubscribeState(
     | "onBeforeTerminalDelivery"
     | "deferTerminalDelivery"
     | "initialReplayState"
+    | "initialInputAnswer"
   >,
 ): EmbeddedAgentSubscribeState {
   const reasoningMode = params.reasoningMode ?? "off";
@@ -26,6 +27,7 @@ export function createEmbeddedAgentSubscribeState(
   return {
     assistantTexts: [],
     answerSegments: [],
+    inputAnswer: params.initialInputAnswer,
     toolMetas: [],
     acceptedSessionSpawns: [],
     toolMetaById: new Map(),

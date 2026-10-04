@@ -544,6 +544,7 @@ export async function prepareAndDispatchEmbeddedRunAttempt(
     authProfileId: runtime.lastProfileId,
     authProfileIdSource,
     initialReplayState: input.replayState,
+    initialInputAnswer: input.inputAnswer,
     authStorage,
     authProfileStore,
     toolAuthProfileStore,

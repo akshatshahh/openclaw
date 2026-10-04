@@ -67,7 +67,7 @@ import { buildFailureWarning } from "./tool-error-warning.js";
 export function buildEmbeddedRunPayloads(params: {
   assistantTexts: string[];
   answerSegments?: EmbeddedAgentSubscribeState["answerSegments"];
-  inputAnswer?: CompletedAssistantAnswer;
+  keptAnswer?: CompletedAssistantAnswer;
   assistantMessageIndex?: number;
   assistantTranscriptOwned?: boolean;
   assistantTranscriptIdempotencyKey?: string;
@@ -149,35 +149,23 @@ export function buildEmbeddedRunPayloads(params: {
     lastAssistant,
     currentAssistant,
     assistantMessageIndex: terminalMessageIndex,
-    answer,
+    keptAnswer,
   }: Pick<
     typeof params,
-    "assistantTexts" | "lastAssistant" | "currentAssistant" | "assistantMessageIndex"
-  > & { answer?: CompletedAssistantAnswer }) => {
+    "assistantTexts" | "lastAssistant" | "currentAssistant" | "assistantMessageIndex" | "keptAnswer"
+  >) => {
     // Silence belongs to this input's answer. An earlier steered input must not
     // hide a later input that actually failed without producing an answer.
     hasIntentionalSilentFinal = false;
     const nonEmptyAssistantTexts = assistantTexts
       .map((text) => sanitizeAssistantVisibleStreamText(text))
       .filter((text) => text.trim().length > 0);
-    const terminalAssistant =
-      currentAssistant ?? (nonEmptyAssistantTexts.length === 1 ? undefined : lastAssistant);
-    const terminalAnswer =
-      answer && terminalAssistant?.stopReason === "stop"
-        ? parseReplyDirectives(resolveRawAssistantAnswerText(terminalAssistant))
-        : undefined;
-    // A later NO_REPLY or empty stop adds nothing to an answer the model already
-    // completed for this input, so that answer stays the reply, as if it had ended the turn.
-    const keptAnswer =
-      terminalAnswer &&
-      (terminalAnswer.isSilent || !terminalAnswer.text.trim()) &&
-      !terminalAnswer.mediaUrls?.length &&
-      !terminalAnswer.audioAsVoice &&
-      !terminalAssistant?.openclawDelivery?.tts?.text?.trim()
-        ? answer
-        : undefined;
-    const assistantForPayload = keptAnswer?.assistant ?? terminalAssistant;
-    const assistantMessageIndex = keptAnswer ? keptAnswer.messageIndex : terminalMessageIndex;
+    // The subscriber decides when an earlier completed answer stays the reply.
+    const assistantForPayload =
+      keptAnswer?.assistant ??
+      currentAssistant ??
+      (nonEmptyAssistantTexts.length === 1 ? undefined : lastAssistant);
+    const assistantMessageIndex = keptAnswer?.messageIndex ?? terminalMessageIndex;
     // Pre-upgrade recovered messages have no stored facts, and recovery intentionally does not
     // reparse text; one in-flight reply can lose delivery or speech intent across this boundary.
     const storedDelivery = assistantForPayload?.openclawDelivery;
@@ -370,7 +358,7 @@ export function buildEmbeddedRunPayloads(params: {
       lastAssistant: segment.lastAssistant,
       currentAssistant: segment.lastAssistant,
       assistantMessageIndex: segment.messageEnd,
-      answer: segment.answer,
+      keptAnswer: segment.keptAnswer,
     });
     for (const reply of replyItems.slice(replyStart)) {
       setReplyPayloadMetadata(reply, { precedingInputAnswer: true });
@@ -382,7 +370,7 @@ export function buildEmbeddedRunPayloads(params: {
     lastAssistant: params.lastAssistant,
     currentAssistant: params.currentAssistant,
     assistantMessageIndex: params.assistantMessageIndex,
-    answer: params.inputAnswer,
+    keptAnswer: params.keptAnswer,
   });
   // A conversational NO_REPLY is an authored outcome, not a missing answer.
   // Native shell calls are conservatively classified as mutating even when
