@@ -1,13 +1,22 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { PluginHostCleanupTimeoutError } from "../plugins/host-hook-cleanup-timeout.js";
 import { getPluginRuntimeGeneration, PluginRuntimeApplicationError } from "../plugins/lifecycle.js";
+import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
+import { createTestPluginRegistry } from "../plugins/registry-runtime.test-helpers.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
+import { createPluginRecord } from "../plugins/status.test-helpers.js";
+import { createDeferredCore } from "../shared/deferred.js";
+import type { GatewayReloadPlan } from "./config-reload-plan.js";
 import {
   closeTestConfigReloaders,
   createReloaderHarness,
+  flushReload,
   flushWatcherChange,
   makeSnapshot,
   prepareConfigReloadTest,
 } from "./config-reload.test-support.js";
+import { PluginAdmittedWorkTimeoutError } from "./server-plugin-reload-cleanup.js";
 
 vi.mock("../config/io.audit.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config/io.audit.js")>()),
@@ -25,9 +34,56 @@ beforeEach((context) => {
 });
 afterEach(async () => {
   await closeTestConfigReloaders();
+  resetPluginRuntimeStateForTest();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+/** Active Codex generation holding admitted work, as during a long agent turn. */
+function holdCodexWork() {
+  const builder = createTestPluginRegistry();
+  const record = createPluginRecord({ id: "codex", source: "/synthetic/codex.ts" });
+  builder.registry.plugins.push(record);
+  builder.createApi(record, { config: {} });
+  setActivePluginRegistry(builder.registry);
+  const instance = getPluginInstance(record);
+  assert(instance);
+  const runtime = {
+    operationId: "codex-replacement",
+    generation: getPluginRuntimeGeneration(),
+    pluginIds: ["codex"],
+  };
+  // Stands in for the reload owner's 60s pre-stop drain expiring on the held work.
+  const onHotReload = async (plan: GatewayReloadPlan) => {
+    if (!plan.reloadPlugins) {
+      return "applied" as const;
+    }
+    if (
+      !plan.pluginLifecycle?.waitForDrain &&
+      instance.retainedWorkCount > 0 &&
+      plan.changedPaths.some((path) => path.startsWith("plugins.entries.codex"))
+    ) {
+      throw new PluginRuntimeApplicationError(
+        "admitted work did not settle",
+        {
+          operationId: "failed-automatic-drain",
+          generation: getPluginRuntimeGeneration(),
+          pluginIds: ["codex"],
+          phase: "drain",
+          committed: false,
+        },
+        {
+          cause: new PluginAdmittedWorkTimeoutError(
+            new Set(["codex"]),
+            new PluginHostCleanupTimeoutError("plugin codex admitted work"),
+          ),
+        },
+      );
+    }
+    return { status: "applied" as const, runtime };
+  };
+  return { instance, release: instance.retainWork(), runtime, onHotReload };
+}
 
 it("hot-applies model settings without replacing the Codex generation", async () => {
   const initialConfig: OpenClawConfig = {
@@ -57,6 +113,44 @@ it("hot-applies model settings without replacing the Codex generation", async ()
   expect(harness.onRestart).not.toHaveBeenCalled();
 });
 
+it("replays a deferred plugin replacement with later edits once its admitted work settles", async () => {
+  const codex = (sandbox: string) => ({ enabled: true, config: { sandbox } });
+  const initialConfig: OpenClawConfig = {
+    plugins: { entries: { codex: codex("read-only") } },
+    agents: { entries: { main: {} } },
+  };
+  let config: OpenClawConfig = {
+    ...initialConfig,
+    plugins: { entries: { codex: codex("workspace-write") } },
+  };
+  const work = holdCodexWork();
+  const harness = createReloaderHarness(async () => makeSnapshot({ config }), {
+    initialConfig,
+    onHotReload: work.onHotReload,
+  });
+  await harness.reloader.ready;
+  await flushWatcherChange(harness);
+  config = { ...config, agents: { entries: { main: { skills: [] } } } };
+  await flushWatcherChange(harness);
+  expect(harness.onHotReload).toHaveBeenCalledOnce();
+  expect(harness.onConfigApplied).not.toHaveBeenCalled();
+
+  // The pre-stop drain also joins cleanup calls, so the retry waits for them too.
+  const cleanup = createDeferredCore();
+  const cleanupCall = work.instance.runCleanup(() => cleanup.promise);
+  work.release();
+  await flushReload(harness.reloader);
+  expect(harness.onHotReload).toHaveBeenCalledOnce();
+
+  cleanup.resolve();
+  await cleanupCall;
+  await flushReload(harness.reloader);
+  expect(harness.onHotReload).toHaveBeenCalledTimes(2);
+  expect(harness.onHotReload.mock.lastCall?.[0].reloadPlugins).toBe(true);
+  expect(harness.onConfigApplied.mock.lastCall?.[1]).toEqual(config);
+  expect(harness.log.error).toHaveBeenCalledOnce();
+});
+
 it.each(["explicit wait", "revert", "revert with model edit"] as const)(
   "retains a failed automatic plugin drain until recovery: %s",
   async (recovery) => {
@@ -66,32 +160,17 @@ it.each(["explicit wait", "revert", "revert with model edit"] as const)(
     let config: OpenClawConfig = {
       plugins: { entries: { codex: { enabled: true, config: { sandbox: "workspace-write" } } } },
     };
-    const failure = new PluginRuntimeApplicationError("admitted work did not settle", {
-      operationId: "failed-automatic-drain",
-      generation: getPluginRuntimeGeneration(),
-      pluginIds: ["codex"],
-      phase: "drain",
-      committed: false,
-    });
-    const runtime = {
-      operationId: "explicit-wait-recovery",
-      generation: getPluginRuntimeGeneration(),
-      pluginIds: ["codex"],
-    };
+    const work = holdCodexWork();
     const harness = createReloaderHarness(async () => makeSnapshot({ config }), {
       initialConfig,
-      onHotReload: async (plan) => {
-        if (plan.reloadPlugins && !plan.pluginLifecycle?.waitForDrain) {
-          throw failure;
-        }
-        return plan.reloadPlugins ? { status: "applied", runtime } : "applied";
-      },
+      onHotReload: work.onHotReload,
     });
     await harness.reloader.ready;
     await flushWatcherChange(harness);
     expect(harness.onHotReload).toHaveBeenCalledOnce();
 
     await flushWatcherChange(harness);
+    expect(harness.onHotReload).toHaveBeenCalledOnce();
     config = {
       ...config,
       agents: { defaults: { models: { "openai/gpt-5.6-sol": { alias: "primary" } } } },
@@ -127,7 +206,7 @@ it.each(["explicit wait", "revert", "revert with model edit"] as const)(
         pluginIds: ["codex"],
         reason: "reload",
       }),
-    ).rejects.toBe(failure);
+    ).rejects.toBeInstanceOf(PluginRuntimeApplicationError);
     expect(harness.onHotReload).toHaveBeenCalledOnce();
     await expect(
       harness.reloader.applyPluginLifecycleChange({
@@ -136,7 +215,7 @@ it.each(["explicit wait", "revert", "revert with model edit"] as const)(
         reason: "reload",
         waitForDrain: true,
       }),
-    ).resolves.toBe(runtime);
+    ).resolves.toBe(work.runtime);
     expect(harness.onHotReload).toHaveBeenCalledTimes(2);
     expect(harness.onConfigApplied.mock.lastCall?.[1]).toEqual(config);
 
@@ -171,19 +250,12 @@ it.each([
     let config: OpenClawConfig = {
       plugins: { entries: { codex: pendingCodex, ...(existingEntries ? { other } : {}) } },
     };
+    const work = holdCodexWork();
     const harness = createReloaderHarness(async () => makeSnapshot({ config }), {
       initialConfig,
+      onHotReload: work.onHotReload,
     });
     await harness.reloader.ready;
-    harness.onHotReload.mockRejectedValueOnce(
-      new PluginRuntimeApplicationError("admitted work did not settle", {
-        operationId: "failed-codex-drain",
-        generation: getPluginRuntimeGeneration(),
-        pluginIds: ["codex"],
-        phase: "drain",
-        committed: false,
-      }),
-    );
     await flushWatcherChange(harness);
     expect(harness.onHotReload).toHaveBeenCalledOnce();
 
