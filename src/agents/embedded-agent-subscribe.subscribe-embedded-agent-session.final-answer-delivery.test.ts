@@ -11,6 +11,7 @@ import { createBlockReplyPipeline } from "../auto-reply/reply/block-reply-pipeli
 import { createBlockReplyDeliveryHandler } from "../auto-reply/reply/reply-delivery.js";
 import { createTypingSignaler } from "../auto-reply/reply/typing-mode.js";
 import { createTypingController } from "../auto-reply/reply/typing.js";
+import { applyAssistantDeliveryDirectives } from "../config/sessions/transcript-assistant-delivery.js";
 import { runAgentLoop } from "../plugin-sdk/agent-core.js";
 import { createTestAdmittedRunContext } from "./admitted-run-context.test-support.js";
 import { buildAgentRunTerminalReplySnapshot } from "./agent-run-terminal-reply.js";
@@ -345,7 +346,12 @@ describe("Responses final delivery", () => {
       phase: "final_answer",
       content: [{ type: "output_text", text, annotations: [] }],
     });
-    type WireItem = typeof lookupCall | ReturnType<typeof finalAnswer>;
+    const reasoning = {
+      type: "reasoning" as const,
+      id: "rs_answer",
+      summary: [{ type: "summary_text", text: "Counter B is next to the entrance." }],
+    };
+    type WireItem = typeof lookupCall | typeof reasoning | ReturnType<typeof finalAnswer>;
     type Request =
       | string
       | readonly WireItem[]
@@ -477,6 +483,15 @@ describe("Responses final delivery", () => {
         delivered: ["/tmp/openclaw/tts-a/voice-a.opus"],
       },
       {
+        name: "a later voice NO_REPLY that persistence normalized first supersedes the completed answer",
+        delivery: "deferred",
+        requests: [answered, "NO_REPLY [[audio_as_voice]]"],
+        transcript: answeredTail,
+        delivered: [],
+        reply: { disposition: "silent" },
+        persistedFirst: true,
+      },
+      {
         name: "a later NO_REPLY keeps pre-tool progress silent",
         delivery: "deferred",
         requests: [[finalAnswer("msg_progress", "Checking counter B."), lookupCall], "NO_REPLY"],
@@ -504,6 +519,18 @@ describe("Responses final delivery", () => {
         reply: keptReply,
         quiet: true,
       },
+      {
+        name: "reasoning sent with the completed answer is not repeated after NO_REPLY",
+        delivery: "live",
+        requests: [
+          [lookupCall, reasoning, finalAnswer("msg_answer", "Use counter B.")],
+          "NO_REPLY",
+        ],
+        transcript: answeredTail,
+        delivered: ["Counter B is next to the entrance.", "Use counter B."],
+        reply: keptReply,
+        reasoning: true,
+      },
     ] as const)("$name", async ({ delivery, requests, transcript, delivered, ...row }) => {
       const heartbeat = "heartbeat" in row;
       const quiet = "quiet" in row;
@@ -529,6 +556,7 @@ describe("Responses final delivery", () => {
           isHeartbeat: heartbeat,
         }),
         blockStreamingEnabled,
+        reasoningPayloadsEnabled: "reasoning" in row,
         blockReplyPipeline: pipeline,
         directBlockDeliveries: [],
       });
@@ -537,6 +565,7 @@ describe("Responses final delivery", () => {
         onBlockReply: handler,
         blockReplyBreak: "message_end",
         ...(delivery === "deferred" ? { onBeforeTerminalDelivery: async () => undefined } : {}),
+        ...("reasoning" in row ? { reasoningMode: "on" as const } : {}),
       });
       const lookup = vi.fn(async () => ({
         content: [{ type: "text" as const, text: "Counter B is open." }],
@@ -571,6 +600,10 @@ describe("Responses final delivery", () => {
             ),
         },
         async (event) => {
+          if ("persistedFirst" in row && event.type === "message_end") {
+            // A backpressured subscriber sees the message after persistence normalized it.
+            applyAssistantDeliveryDirectives(event.message);
+          }
           h.emit(event);
           await h.subscription.waitForPendingEvents();
         },
@@ -634,6 +667,7 @@ describe("Responses final delivery", () => {
           timeoutMs: 60_000,
           trigger: heartbeat ? "heartbeat" : "user",
           ...(quiet ? { sourceReplyDeliveryMode: "message_tool_only" as const } : {}),
+          ...("reasoning" in row ? { reasoningLevel: "on" as const } : {}),
         },
         attempt,
         currentAttemptCompletedAssistant: completed,

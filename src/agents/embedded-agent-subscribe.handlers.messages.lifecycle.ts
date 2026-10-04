@@ -291,12 +291,14 @@ export function handleMessageEnd(
     };
   }
   // A NO_REPLY or empty stop without attachment or speech adds nothing to an answer this
-  // input already completed, so that answer stays the turn's reply.
+  // input already completed, so that answer stays the turn's reply. Persistence may already
+  // have moved voice and TTS directives into delivery facts.
   ctx.state.keptAnswer =
     assistantMessage.stopReason === "stop" &&
     (parsedText.isSilent || !cleanedText.trim()) &&
     mediaUrls.length === 0 &&
     !parsedText.audioAsVoice &&
+    !assistantMessage.openclawDelivery?.audioAsVoice &&
     !assistantMessage.openclawDelivery?.tts?.text?.trim()
       ? ctx.state.inputAnswer
       : undefined;
