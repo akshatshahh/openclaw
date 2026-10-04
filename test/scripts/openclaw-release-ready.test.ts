@@ -38,19 +38,99 @@ import {
 import { preparedNpmArtifactName } from "../../scripts/plugin-npm-prepared-release.mjs";
 import { expectedChildDispatches } from "../../scripts/release-ci-summary.mjs";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
-import {
-  REPOSITORY,
-  SOURCE_SHA,
-  TOOLING_SHA,
-  TOOLING,
-  inputs,
-  descriptor,
-  readyRelease,
-  readinessDescriptor,
-  publicationRequest,
-} from "./openclaw-release-ready.test-support.js";
 
+const REPOSITORY = "openclaw/openclaw";
+const SOURCE_SHA = "a".repeat(40);
+const TOOLING_SHA = "b".repeat(40);
+const TOOLING = {
+  ref: `release-publish/${TOOLING_SHA.slice(0, 12)}-123`,
+  fullRef: `refs/tags/release-publish/${TOOLING_SHA.slice(0, 12)}-123`,
+  sha: TOOLING_SHA,
+};
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+function inputs(overrides: Record<string, unknown> = {}) {
+  return {
+    tag: "v2026.9.2-beta.1",
+    npm_dist_tag: "beta",
+    preflight_run_id: "100",
+    full_release_validation_run_id: "200",
+    full_release_validation_run_attempt: "1",
+    ...overrides,
+  };
+}
+
+function descriptor(target: "npm" | "clawhub") {
+  const value = {
+    repository: REPOSITORY,
+    runId: target === "npm" ? 300 : 400,
+    runAttempt: 1,
+    workflowPath: `.github/workflows/plugin-${target}-release.yml`,
+    workflowEvent: "workflow_dispatch",
+    workflowHeadBranch: TOOLING.ref,
+    workflowSha: TOOLING_SHA,
+    artifactId: target === "npm" ? 500 : 600,
+    artifactName: `prepared-${target}`,
+    artifactDigest: `sha256:${"c".repeat(64)}`,
+    artifactSizeBytes: 100,
+  };
+  if (target === "npm") {
+    value.artifactName = preparedNpmArtifactName(SOURCE_SHA, value);
+  }
+  return value;
+}
+
+function readyRelease() {
+  return {
+    schema: "openclaw.release-ready/v1",
+    repository: REPOSITORY,
+    sourceSha: SOURCE_SHA,
+    tooling: { ...TOOLING },
+    inputs: validateReleaseButtonInputs(inputs()),
+    plugins: { npm: descriptor("npm"), clawhub: descriptor("clawhub") },
+  };
+}
+
+function readinessDescriptor() {
+  return {
+    ...descriptor("npm"),
+    workflowPath: ".github/workflows/openclaw-release-prepare.yml",
+    artifactName: readyArtifactName(SOURCE_SHA, 300, 1),
+  };
+}
+
+function publicationRequest(ready = readyRelease(), resumeRunId = "") {
+  const effectiveInputs = {
+    ...ready.inputs,
+    ...(resumeRunId ? { openclaw_npm_resume_run_id: resumeRunId } : {}),
+    prepared_plugins: JSON.stringify(ready.plugins),
+  };
+  return {
+    schema: "openclaw.release-dispatch/v1",
+    repository: REPOSITORY,
+    workflowPath: ".github/workflows/openclaw-release-publish.yml",
+    workflowEvent: "workflow_dispatch",
+    state: "acknowledged",
+    button: { runId: 900, runAttempt: 1 },
+    expectedReleaseRunAttempt: 1,
+    releaseRunId: 700,
+    releaseRunAttempt: 1,
+    producer: {
+      repository: REPOSITORY,
+      runId: 700,
+      runAttempt: 1,
+      workflowPath: ".github/workflows/openclaw-release-publish.yml",
+      workflowEvent: "workflow_dispatch",
+      workflowHeadBranch: TOOLING.ref,
+      workflowSha: TOOLING_SHA,
+    },
+    sourceSha: ready.sourceSha,
+    tooling: TOOLING,
+    preparedArtifact: readinessDescriptor(),
+    inputs: effectiveInputs,
+    openclawNpmResumeRunId: effectiveInputs.openclaw_npm_resume_run_id ?? null,
+  };
+}
 
 describe("release readiness contract", () => {
   it.each([
@@ -215,7 +295,7 @@ function bridgeFixture(releaseRunAttempt = 1, conclusion = "success") {
       `${moduleName}.mjs`,
       `
       import { trace, preparedPackage } from './fixture-trace.mjs';
-      export { prepared${prefix}ArtifactName } from ${JSON.stringify(pathToFileURL(resolve(`scripts/${moduleName}.mjs`)).href)};
+      export { prepared${prefix}ArtifactName${target === "npm" ? ", validatePreparedNpmArtifactDescriptor" : ""} } from ${JSON.stringify(pathToFileURL(resolve(`scripts/${moduleName}.mjs`)).href)};
       export async function downloadPrepared${prefix}Release(options) {
         trace('manifest', { target: '${target}', sourceSha: options.sourceSha ?? options.candidateSha,
           toolingSha: options.workflowSha ?? options.toolingSha, selectionMode: options.selectionMode });
@@ -316,7 +396,7 @@ describe("release readiness executable handoff", () => {
     expect(
       runInNewContext(workflow.jobs[jobName].if, {
         github: { repository: REPOSITORY, ref: "refs/heads/main" },
-        inputs: { operation: "prepare" },
+        inputs: { operation: workflowName === "prepare" ? "prepare" : operation },
         startsWith: (value: string, prefix: string) => value.startsWith(prefix),
       }),
     ).toBe(true);
@@ -820,7 +900,7 @@ function preparationRequest() {
     sourceSha: SOURCE_SHA,
     tooling: TOOLING,
     inputs: validateReleaseButtonInputs(inputs()),
-    npmRunId: 300,
+    npmArtifact: descriptor("npm"),
     clawhubRunId: 400,
   };
 }
@@ -1104,6 +1184,7 @@ async function preparationEvidence(
     publicationAdmission: admission,
     sourceParentRunAttempt: 1,
     executionPlanSha256: plan.sha256,
+    publicationArtifacts: { pluginNpm: descriptor("npm") },
     childEvidence,
     childRuns: Object.fromEntries(
       planned.map((child) => [
@@ -1604,7 +1685,7 @@ describe("release preparation recovery", () => {
       expect(result.status, result.stderr).toBe(scenario === "valid" ? 0 : 1);
       expect(
         fixture.trace().filter((entry) => entry.event === "preparation-dispatch"),
-      ).toHaveLength(scenario === "valid" ? 2 : 0);
+      ).toHaveLength(scenario === "valid" ? 1 : 0);
       expect(existsSync(fixture.requestPath)).toBe(scenario === "valid");
       if (scenario === "valid") {
         expect(
@@ -1722,8 +1803,8 @@ describe("release preparation recovery", () => {
     mkdirSync(fixture.env.GITHUB_STEP_SUMMARY);
     expect(fixture.prepare().status).toBe(1);
     expect(JSON.parse(readFileSync(fixture.requestPath, "utf8"))).toMatchObject({
-      npmRunId: 300,
-      clawhubRunId: null,
+      npmArtifact: descriptor("npm"),
+      clawhubRunId: 400,
     });
     expect(fixture.trace().filter((entry) => entry.args?.includes("POST"))).toHaveLength(1);
   });
@@ -1756,15 +1837,11 @@ describe("release preparation recovery", () => {
     const result = fixture.prepare();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ClawHub dispatch response lost after acceptance");
-    const request = { ...preparationRequest(), npmRunId: null, clawhubRunId: null };
+    const request = { ...preparationRequest(), clawhubRunId: null };
     expect(fixture.trace().filter((entry) => entry.event === "preparation-dispatch")).toEqual([
-      { event: "preparation-dispatch", target: "npm", request },
-      { event: "preparation-dispatch", target: "clawhub", request: { ...request, npmRunId: 300 } },
+      { event: "preparation-dispatch", target: "clawhub", request },
     ]);
-    expect(JSON.parse(readFileSync(fixture.requestPath, "utf8"))).toEqual({
-      ...request,
-      npmRunId: 300,
-    });
+    expect(JSON.parse(readFileSync(fixture.requestPath, "utf8"))).toEqual(request);
     expect(existsSync(fixture.env.GITHUB_OUTPUT)).toBe(false);
   });
 
@@ -1776,13 +1853,8 @@ describe("release preparation recovery", () => {
     expect(JSON.parse(readFileSync(fixture.requestPath, "utf8"))).toEqual(request);
     expect(fixture.trace().filter((entry) => entry.args?.includes("POST"))).toEqual([]);
     expect(
-      fixture
-        .trace()
-        .filter((entry) => /\/actions\/runs\/(?:300|400)$/u.test(entry.args?.[1] ?? "")),
-    ).toEqual([
-      { event: "gh", args: ["api", `repos/${REPOSITORY}/actions/runs/300`] },
-      { event: "gh", args: ["api", `repos/${REPOSITORY}/actions/runs/400`] },
-    ]);
+      fixture.trace().filter((entry) => (entry.args?.[1] ?? "").endsWith("/actions/runs/400")),
+    ).toEqual([{ event: "gh", args: ["api", `repos/${REPOSITORY}/actions/runs/400`] }]);
     expect(readFileSync(fixture.env.GITHUB_OUTPUT, "utf8")).toContain(
       `request=${JSON.stringify(request)}\n`,
     );
@@ -1796,9 +1868,10 @@ describe("release preparation recovery", () => {
     ["frozen inputs", { inputs: validateReleaseButtonInputs(inputs({ preflight_run_id: "999" })) }],
     ["unnormalized inputs", { inputs: inputs() }],
     ["unconfirmed child", { clawhubRunId: null }],
-    ["string child ID", { npmRunId: "300" }],
-    ["zero child ID", { npmRunId: 0 }],
-    ["unsafe child ID", { npmRunId: Number.MAX_SAFE_INTEGER + 1 }],
+    ["changed npm artifact", { npmArtifact: { ...descriptor("npm"), artifactId: 0 } }],
+    ["string child ID", { clawhubRunId: "400" }],
+    ["zero child ID", { clawhubRunId: 0 }],
+    ["unsafe child ID", { clawhubRunId: Number.MAX_SAFE_INTEGER + 1 }],
   ] satisfies Array<[string, Record<string, unknown>]>)(
     "rejects recovery with %s before producing a handoff",
     async (_label, overrides) => {
