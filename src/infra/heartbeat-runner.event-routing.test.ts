@@ -22,6 +22,7 @@ import { enqueueCommandInLane, type CommandLaneTaskMarker } from "../process/com
 import { CommandLane } from "../process/lanes.js";
 import { racePromiseWithAbortSignal } from "./abort-signal.js";
 import type { HeartbeatConfig } from "./heartbeat-config.js";
+import type { HeartbeatRunOptions } from "./heartbeat-runner-execution.js";
 import { runHeartbeatOnce, startHeartbeatRunner } from "./heartbeat-runner.js";
 import {
   type HeartbeatReplySpy,
@@ -35,6 +36,7 @@ import {
   setupTelegramHeartbeatPluginRuntimeForTests,
   withTempHeartbeatSandbox,
 } from "./heartbeat-runner.test-utils.js";
+import type { HeartbeatRunResult } from "./heartbeat-wake-contracts.js";
 import {
   HEARTBEAT_SKIP_CRON_IN_PROGRESS,
   requestHeartbeatAndWait,
@@ -609,7 +611,7 @@ describe("Heartbeat event routing", () => {
             return;
           }
           expect(ctx).toMatchObject({ SessionKey: sessionKey, InternalTurnSource: "exec" });
-          expect(ctx.Body.includes("RESULT-7F3A")).toBe(sends);
+          expect(ctx.Body?.includes("RESULT-7F3A")).toBe(sends);
           expect(options.bootstrapContextMode).toBeUndefined();
           expect(sendTelegram.mock.calls.map((call) => call.slice(0, 2))).toEqual(
             sends ? [[topic, "The job printed RESULT-7F3A."]] : [],
@@ -625,6 +627,87 @@ describe("Heartbeat event routing", () => {
       );
     },
   );
+
+  it("answers a background command started by the topic's own completion turn", async () => {
+    await withRouting(
+      async ({ cfg, storePath, replySpy, sendTelegram }) => {
+        const sessionKey = "agent:main:telegram:group:-100155462274:topic:42";
+        const topic = "telegram:-100155462274:topic:42";
+        await writeTelegramSessionStore(storePath, sessionKey, {
+          sessionId: "topic-conversation",
+          lastTo: topic,
+          lastThreadId: 42,
+          chatType: "group",
+        });
+        cfg.channels!.telegram = { allowFrom: ["*"] };
+        const runs: HeartbeatRunOptions[] = [];
+        const firstRun = createDeferred<HeartbeatRunResult>();
+        const runner = startHeartbeatRunner({
+          cfg,
+          runOnce: (opts) => {
+            runs.push(opts);
+            const run = runHeartbeatOnce({
+              ...opts,
+              cfg,
+              deps: { getReplyFromConfig: replySpy, telegram: sendTelegram },
+            });
+            firstRun.resolve(run);
+            return run;
+          },
+        });
+        onTestFinished(() => {
+          runner.stop();
+          resetProcessRegistryForTests();
+        });
+        const execFor = (defaults: { trigger: string; continuesConversation?: boolean }) =>
+          createExecTool({
+            host: "gateway",
+            security: "full",
+            ask: "off",
+            allowBackground: true,
+            timeoutSec: 10,
+            agentId: "main",
+            sessionKey,
+            messageProvider: "telegram",
+            currentChannelId: topic,
+            currentThreadTs: "42",
+            ...defaults,
+          });
+        replySpy.mockImplementationOnce(async (_ctx, options) => {
+          // The completion turn runs as a heartbeat and starts the next command.
+          await execFor({
+            trigger: "heartbeat",
+            continuesConversation: options?.continuesConversation,
+          }).execute("call-second", { command: "echo RESULT-2B4C", background: true });
+          return { text: "First printed RESULT-7F3A; started the next one." };
+        });
+        replySpy.mockResolvedValue({ text: "Second printed RESULT-2B4C." });
+
+        await execFor({ trigger: "user" }).execute("call-first", {
+          command: "echo RESULT-7F3A",
+          background: true,
+        });
+        await expect(firstRun.promise).resolves.toMatchObject({ status: "ran" });
+        await vi.waitFor(() => expect(peekSystemEvents(sessionKey)).toHaveLength(1));
+        // The scheduler spaces event turns by 30s; run the retried wake directly.
+        await expect(
+          runHeartbeatOnce({
+            ...runs[0],
+            cfg,
+            deps: { getReplyFromConfig: replySpy, telegram: sendTelegram },
+          }),
+        ).resolves.toMatchObject({ status: "ran" });
+
+        expect(replySpy.mock.calls[1]?.[0].Body).toContain("RESULT-2B4C");
+        expect(sendTelegram.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+          [topic, "First printed RESULT-7F3A; started the next one."],
+          [topic, "Second printed RESULT-2B4C."],
+        ]);
+      },
+      true,
+      { target: "none", lightContext: true },
+    );
+  });
 });
 
 describe("Heartbeat cron and exec event ownership", () => {

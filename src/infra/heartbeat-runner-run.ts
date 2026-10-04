@@ -140,6 +140,7 @@ export async function runHeartbeatOnce(opts: HeartbeatRunOptions): Promise<Heart
             heartbeat?.lightContext === true && !wake.preflight.conversationRoute
               ? "lightweight"
               : undefined,
+          continuesConversation: Boolean(wake.preflight.conversationRoute),
           disableBlockStreaming: true,
           suppressToolProgressMessages: true,
           suppressDefaultToolProgressMessages: true,

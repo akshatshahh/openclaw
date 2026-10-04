@@ -261,6 +261,7 @@ export function createOpenClawCodingToolsInternal(
             reviewer: options?.exec?.reviewer ?? execConfig.reviewer,
             reviewTranscript: options?.exec?.reviewTranscript,
             trigger: options?.trigger,
+            continuesConversation: options?.continuesConversation,
             node: options?.exec?.node ?? execConfig.node,
             pathPrepend: mergeGatewayAgentCliPath(
               options?.exec?.pathPrepend ?? execConfig.pathPrepend,
