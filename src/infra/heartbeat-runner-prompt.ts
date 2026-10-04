@@ -18,6 +18,7 @@ import {
   buildCronEventPrompt,
   buildExecEventPrompt,
   isCronSystemEvent,
+  isConversationExecCompletion,
   isExecCompletionEvent,
   isHeartbeatDeliveryAwarenessEvent,
   isRelayableExecCompletionEvent,
@@ -81,8 +82,7 @@ function resolveConversationCompletionRoute(
   return route &&
     events.every(
       (event) =>
-        event.fromConversationTurn === true &&
-        isExecCompletionEvent(event.text) &&
+        isConversationExecCompletion(event) &&
         channelRouteTargetsMatchExact({ left: event.deliveryContext, right: route }),
     ) &&
     isStoredConversationRoute({ ...route, entry })
@@ -149,10 +149,7 @@ export async function resolveHeartbeatPreflight(params: {
     Number.isSafeInteger(params.scheduledEveryMs) &&
     params.scheduledEveryMs > 0;
   const conversationRoute =
-    wakeFlags.isExecEventWake &&
-    params.sessionKey?.trim() &&
-    !authoritativeScheduledTick &&
-    !params.scheduledTasks?.length
+    wakeFlags.isExecEventWake && !authoritativeScheduledTick && !params.scheduledTasks?.length
       ? resolveConversationCompletionRoute(pendingEventEntries, queue.entry)
       : undefined;
   // Isolation saves periodic-poll history cost; a conversation's continuation needs its history.

@@ -42,6 +42,7 @@ import {
   requestHeartbeatAndWait,
   setHeartbeatWakeHandler,
 } from "./heartbeat-wake.js";
+import { resolveSystemEventQueueKey } from "./system-event-ownership.js";
 import {
   consumeSelectedSystemEventEntries,
   enqueueSystemEvent,
@@ -550,12 +551,25 @@ describe("Heartbeat event routing", () => {
       reply: "printed",
       sends: false,
     },
+    {
+      name: "global session",
+      isolatedSession: true,
+      trigger: "user",
+      reply: "printed",
+      sends: true,
+    },
   ])(
     "answers a forum topic's own background command under target none ($name)",
-    async ({ isolatedSession, trigger, reply, sends }) => {
+    async ({ name, isolatedSession, trigger, reply, sends }) => {
       await withRouting(
         async ({ cfg, storePath, replySpy, sendTelegram }) => {
-          const sessionKey = "agent:main:telegram:group:-100155462274:topic:42";
+          const sessionKey =
+            name === "global session"
+              ? "global"
+              : "agent:main:telegram:group:-100155462274:topic:42";
+          if (name === "global session") {
+            cfg.session = { ...cfg.session, scope: "global" };
+          }
           const topic = "telegram:-100155462274:topic:42";
           await writeTelegramSessionStore(storePath, sessionKey, {
             sessionId: "topic-conversation",
@@ -616,7 +630,7 @@ describe("Heartbeat event routing", () => {
           expect(sendTelegram.mock.calls.map((call) => call.slice(0, 2))).toEqual(
             sends ? [[topic, "The job printed RESULT-7F3A."]] : [],
           );
-          expect(peekSystemEvents(sessionKey)).toEqual([]);
+          expect(peekSystemEvents(resolveSystemEventQueueKey(sessionKey, "main"))).toEqual([]);
         },
         isolatedSession,
         {

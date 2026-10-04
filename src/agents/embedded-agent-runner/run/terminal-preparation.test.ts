@@ -71,6 +71,7 @@ async function prepareAttempt(input: {
   admittedRunContext?: ReturnType<typeof createTestAdmittedRunContext>;
   currentAttemptCompletedAssistant?: AssistantMessage;
   sourceReplyDeliveryMode?: "message_tool_only";
+  heartbeat?: { continuesConversation: boolean };
   terminalState: EmbeddedRunTerminalState;
 }) {
   const { prepareEmbeddedRunTerminal } = await import("./terminal-preparation.js");
@@ -81,7 +82,8 @@ async function prepareAttempt(input: {
       runId: "run-focused",
       workspaceDir: "/tmp/openclaw-test",
       prompt: "hi",
-      trigger: "user",
+      trigger: input.heartbeat ? "heartbeat" : "user",
+      ...(input.heartbeat?.continuesConversation ? { continuesConversation: true } : {}),
       timeoutMs: 60_000,
       ...(input.sourceReplyDeliveryMode
         ? { sourceReplyDeliveryMode: input.sourceReplyDeliveryMode }
@@ -598,6 +600,28 @@ describe("prepareEmbeddedRunTerminal", () => {
       expect.objectContaining({ runAborted: true, runStopReason: "restart" }),
     );
   });
+
+  it.each([
+    { continuesConversation: false, periodic: true },
+    { continuesConversation: true, periodic: false },
+  ])(
+    "renders a heartbeat that continues a conversation ($continuesConversation) as a conversational turn",
+    async ({ continuesConversation, periodic }) => {
+      await prepareAttempt({
+        attempt: attemptResult(),
+        heartbeat: { continuesConversation },
+        terminalState: {
+          outcome: { reason: "completed", status: "ok", stopReason: "stop" },
+          signalOwnedInterruption: false,
+        },
+      });
+
+      // Periodic heartbeats report tool failures despite NO_REPLY; conversations keep silence.
+      expect(payloadMocks.buildEmbeddedRunPayloads).toHaveBeenCalledWith(
+        expect.objectContaining({ isHeartbeatTrigger: periodic }),
+      );
+    },
+  );
 });
 
 describe("prepareEmbeddedRunTerminal run stats", () => {
