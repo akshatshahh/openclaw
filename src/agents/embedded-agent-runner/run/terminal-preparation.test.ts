@@ -602,13 +602,28 @@ describe("prepareEmbeddedRunTerminal", () => {
   });
 
   it.each([
-    { continuesConversation: false, periodic: true },
-    { continuesConversation: true, periodic: false },
+    { continuesConversation: false, warns: true },
+    { continuesConversation: true, warns: false },
   ])(
-    "renders a heartbeat that continues a conversation ($continuesConversation) as a conversational turn",
-    async ({ continuesConversation, periodic }) => {
-      await prepareAttempt({
-        attempt: attemptResult(),
+    "keeps a failed command's NO_REPLY silent only when the heartbeat continues a conversation ($continuesConversation)",
+    async ({ continuesConversation, warns }) => {
+      const actual = await vi.importActual<{
+        buildEmbeddedRunPayloads: typeof buildEmbeddedRunPayloads;
+      }>("./payloads.js");
+      payloadMocks.buildEmbeddedRunPayloads.mockImplementation(actual.buildEmbeddedRunPayloads);
+      const silent: AssistantMessage = {
+        ...assistantMessage("stop"),
+        content: [{ type: "text", text: "NO_REPLY" }],
+      };
+      const prepared = await prepareAttempt({
+        attempt: attemptResult({
+          assistantTexts: ["NO_REPLY"],
+          messagesSnapshot: [silent],
+          lastAssistant: silent,
+          currentAttemptAssistant: silent,
+          currentAttemptCompletedAssistant: silent,
+          lastToolError: { toolName: "exec", error: "Command exited with code 1" },
+        }),
         heartbeat: { continuesConversation },
         terminalState: {
           outcome: { reason: "completed", status: "ok", stopReason: "stop" },
@@ -616,10 +631,7 @@ describe("prepareEmbeddedRunTerminal", () => {
         },
       });
 
-      // Periodic heartbeats report tool failures despite NO_REPLY; conversations keep silence.
-      expect(payloadMocks.buildEmbeddedRunPayloads).toHaveBeenCalledWith(
-        expect.objectContaining({ isHeartbeatTrigger: periodic }),
-      );
+      expect(prepared.payloads.some((payload) => payload.isError === true)).toBe(warns);
     },
   );
 });

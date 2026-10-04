@@ -296,7 +296,7 @@ function maybeNotifyOnExit(
     sessionKey: eventSessionKey,
     contextKey: `exec:${session.id}`,
     deliveryContext: session.notifyDeliveryContext,
-    fromConversationTurn: session.notifyFromConversationTurn === true,
+    fromConversationTurn: session.notifyFromConversationTurn,
   };
   const remove = enqueueSystemEventWithReceipt(
     eventText,
