@@ -49,7 +49,6 @@ export type SqliteWorkerOperationAdmission = SqliteWorkerNativeSettlementOwner &
   readonly failureSource: AdmissionFailureSource | undefined;
   readonly cleanupFailures: readonly unknown[];
   observeRequests(observer: (request: SqliteWorkerAdmissionRequest) => void): void;
-  observeCommitted(observer: (committed: { facts: unknown }) => void): void;
   service(): void;
   finish(): void;
   bindDatabaseAuthority(authority: {
@@ -64,6 +63,24 @@ export type SqliteWorkerAdmissionFactory = (operation: RetainedWorkerTransaction
   admission: SqliteWorkerOperationAdmission;
   nativeLocations: readonly string[];
 };
+
+type CommitObserver = (committed: { facts: unknown }) => void;
+const commitObserverBindings = new WeakMap<
+  SqliteWorkerOperationAdmission,
+  (observer: CommitObserver) => void
+>();
+
+/** Private publication binding leaves released SDK admission factories structurally unchanged. */
+export function observeSqliteWorkerCommittedFacts(
+  admission: SqliteWorkerOperationAdmission,
+  observer: CommitObserver,
+): void {
+  const bind = commitObserverBindings.get(admission);
+  if (!bind) {
+    throw new SqliteWorkerError("SQLite admission has no native receipt owner", "unavailable");
+  }
+  bind(observer);
+}
 
 /** The caller retains real source custody before invoking the synchronous grant. */
 export function createSqliteWorkerOperationAdmission(
@@ -286,7 +303,7 @@ export function createSqliteWorkerOperationAdmission(
       receive(queued.message);
     }
   };
-  return {
+  const admission: SqliteWorkerOperationAdmission = {
     port: port2,
     observeRequests(observer) {
       if (closed || observeRequest) {
@@ -296,15 +313,6 @@ export function createSqliteWorkerOperationAdmission(
         );
       }
       observeRequest = observer;
-    },
-    observeCommitted(observer) {
-      if (closed || observeCommit || started) {
-        throw new SqliteWorkerError(
-          "SQLite commit observation is already bound or started",
-          "closed",
-        );
-      }
-      observeCommit = observer;
     },
     bindDatabaseAuthority(authority) {
       if (closed || databaseAuthority) {
@@ -380,6 +388,16 @@ export function createSqliteWorkerOperationAdmission(
       }
     },
   };
+  commitObserverBindings.set(admission, (observer) => {
+    if (closed || observeCommit || started) {
+      throw new SqliteWorkerError(
+        "SQLite commit observation is already bound or started",
+        "closed",
+      );
+    }
+    observeCommit = observer;
+  });
+  return admission;
 }
 
 export type SqliteWorkerOperationContext = {

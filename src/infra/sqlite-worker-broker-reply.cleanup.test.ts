@@ -68,7 +68,6 @@ function jobWithCleanup(admissionFailures: readonly unknown[] = []) {
     settlement: undefined,
     waitForSettlement: effects.forbidden,
     observeRequests: effects.forbidden,
-    observeCommitted: effects.forbidden,
     service: effects.forbidden,
     bindDatabaseAuthority: effects.forbidden,
     finish() {

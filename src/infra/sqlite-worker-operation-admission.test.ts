@@ -15,6 +15,7 @@ import type { Job } from "./sqlite-worker-broker.types.js";
 import {
   createSqliteWorkerOperationAdmission,
   deferSqliteWorkerCommitReceipt,
+  observeSqliteWorkerCommittedFacts,
   requestSqliteWorkerOperationAdmission,
   requestSqliteWorkerSchemaMaintenance,
   settleSqliteWorkerOperationContext,
@@ -279,7 +280,7 @@ it.each(["rollback", "unknown", "later rollback", "later commit"] as const)(
     db.exec("CREATE TABLE proof (value INTEGER)");
     const admission = createSqliteWorkerOperationAdmission((_request, grant) => grant());
     const published = vi.fn();
-    admission.observeCommitted(published);
+    observeSqliteWorkerCommittedFacts(admission, published);
     const owner: SqliteWorkerOperationContext = { port: admission.port };
     try {
       const write = (value: number, rollback = false) =>
@@ -377,7 +378,7 @@ it.each([
         throw failure;
       }
     });
-    admission.observeCommitted(publish);
+    observeSqliteWorkerCommittedFacts(admission, publish);
     const postMessage = admission.port.postMessage.bind(admission.port);
     if (receipt === "settlement fallback") {
       vi.spyOn(admission.port, "postMessage").mockImplementation((message) => {

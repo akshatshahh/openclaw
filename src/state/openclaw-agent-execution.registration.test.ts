@@ -182,7 +182,6 @@ function retireFailedReply(
         settlement: undefined,
         waitForSettlement: edge.forbidden,
         observeRequests: edge.forbidden,
-        observeCommitted: edge.forbidden,
         service: edge.forbidden,
         bindDatabaseAuthority: edge.forbidden,
         finish() {},

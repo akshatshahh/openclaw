@@ -476,22 +476,20 @@ it.each(["publication", "business notification"] as const)(
           if (failureSite === "business notification") throw failure;
         });
         let installed = 0;
-        const create = workerAdmission.createSqliteWorkerOperationAdmission;
+        const observe = workerAdmission.observeSqliteWorkerCommittedFacts;
         const factory = vi
-          .spyOn(workerAdmission, "createSqliteWorkerOperationAdmission")
-          .mockImplementation((...args) => {
-            const admission = create(...args);
-            if (failureSite === "publication") {
-              const observe = admission.observeCommitted.bind(admission);
-              vi.spyOn(admission, "observeCommitted").mockImplementation((observer) =>
-                observe((receipt) => {
-                  observer(receipt);
-                  installed++;
-                  throw failure;
-                }),
-              );
-            }
-            return admission;
+          .spyOn(workerAdmission, "observeSqliteWorkerCommittedFacts")
+          .mockImplementation((admission, observer) => {
+            observe(
+              admission,
+              failureSite === "publication"
+                ? (receipt) => {
+                    observer(receipt);
+                    installed++;
+                    throw failure;
+                  }
+                : observer,
+            );
           });
         try {
           await expect(owner.mutate({ ...owner.job, enabled: false }, { publish })).rejects.toThrow(

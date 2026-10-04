@@ -4,7 +4,10 @@ import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { acquireFileLock, type FileLockHandle } from "../../infra/file-lock.js";
 import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
-import type { SqliteWorkerOperationAdmission } from "../../infra/sqlite-worker-operation-admission.js";
+import {
+  observeSqliteWorkerCommittedFacts,
+  type SqliteWorkerOperationAdmission,
+} from "../../infra/sqlite-worker-operation-admission.js";
 import type { RetainedWorkerTransactionAdmission } from "../../infra/sqlite-worker-operation-settlement.js";
 import { AsyncWorkScope, runOutsideAsyncWorkScope } from "../../shared/async-work-scope.js";
 import { createDeferredCore } from "../../shared/deferred.js";
@@ -381,7 +384,7 @@ export function withCronReceiptAuthorityMutation<T>(
         publish,
         observe(admission, settlement) {
           retained.push({ admission, owner: settlement });
-          admission.observeCommitted(({ facts }) => {
+          observeSqliteWorkerCommittedFacts(admission, ({ facts }) => {
             if (!isRecord(facts) || !isRecord(facts.receiptAuthority)) {
               throw unavailable();
             }
